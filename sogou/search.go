@@ -120,6 +120,9 @@ func (sog *Sogou) Name() string {
 // It may return core.ErrCaptcha or core.ErrSearchTimeout.
 func (sog *Sogou) Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, sog.Name())
+	if profileID := strings.TrimSpace(sog.ProfileID); profileID != "" {
+		ctx = core.WithForcedProfileID(ctx, profileID)
+	}
 	scoped := *sog
 	scoped.logger = sog.logger.WithRequest(ctx)
 	if scoped.Browser.WaitLoadTime == 0 || scoped.Browser.WaitLoadTime > 250*time.Millisecond {

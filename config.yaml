@@ -102,6 +102,7 @@ yandex:
 baidu:
   rate_requests: 12 # 百度对同 IP 高频访问会弹图形验证码，默认 12 次/分钟
   rate_burst: 2
+  profile: chrome-win-uhd620 # 桌面 Windows 指纹比 Linux headless 更不容易被反爬拦截
   # 国内主力引擎
   # No proxy tag means direct traffic
 
@@ -128,10 +129,12 @@ ecosia:
 sogou:
   rate_requests: 8 # 搜狗反爬很敏感：默认 8 次/分钟、突发 1，避免触发验证码
   rate_burst: 1
+  profile: chrome-win-uhd620
   # No proxy tag means direct traffic
 
 # 360 搜索（www.so.com）。同样走浏览器模式；结果直达链接在 data-mdurl 上。
 so360:
   rate_requests: 20
   rate_burst: 2
+  profile: chrome-win-uhd620
   # No proxy tag means direct traffic

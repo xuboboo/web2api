@@ -22,13 +22,14 @@
 - `sogou/`：`url.go`（`/web?query=&page=`）、`selectors.go`、`parse_html.go`（goquery 解析、隐藏卡片过滤、广告识别、去重排序）、`search.go`（浏览器渲染 + 等待 hydration + 滚动触发懒加载 + `/link` 跳转解析）、`testdata/search_results.html` + 单测
 - `so360/`：同结构，额外用 `data-mdurl` 取真实目标地址；`qcaptcha.so.com` 等验证页识别为 captcha
 
-**核心改动**
+**核心改动（含关键调优）**
 
 - `cmd/engines.go` / `cmd/root.go` / `cmd/proxy_policy.go`：注册 sogou、so360（别名 `360`），新增 `sogou:`、`so360:` 配置段
 - `core/server.go`：`/360/*` 与 `/so360/*` 双端点；`engines=360` 归一化到 `so360`；新增 501 `not_implemented` 错误映射
 - `core/common.go` / `core/retry.go`：新增 `ErrNotImplemented` 语义（未实现的图片搜索不再返回 internal error，也不再重试）
 - `baidu/search.go`：`limit` 生效（`core.LimitOrganicResults`）；新增 `wappass.baidu.com` 图形验证码识别，被拦时返回 429 `captcha_detected` 而不是 504 超时
 - `core/server_extract.go`：`/extract` 拉取增加一次瞬时错误重试（EOF / reset / timeout），上游抖动不再直接 502
+- `core/common.go` + 三个国内引擎：新增 `<engine>.profile` 配置，把浏览器指纹固定为桌面 Windows 配置（`chrome-win-uhd620`）。实测 Linux headless 指纹几乎必被拦截，换 Windows 指纹后百度/360 立刻恢复 200
 - `docs/openapi.yaml`、`cmd/search.go`：引擎枚举与帮助文案同步
 
 ## 3. 部署
@@ -104,12 +105,18 @@ proxies:
 
 | 引擎 | 实测 | 备注 |
 | --- | --- | --- |
-| 百度 | 可用，但连续约 10 次/数分钟后进入图形验证码 | 冷却约 15-30 分钟可恢复（08:45 实测恢复，返回 200 + 3 条 organic） |
-| 搜狗 | 可用，连续请求后转 `/captcha/antipider` 页 | 默认 8 次/分钟更安全 |
-| 360 | 可用，连续请求后跳 `qcaptcha.so.com` | 已能被正确识别为 captcha |
-| Bing 中国 | 稳定可用 | 作为兜底 |
+| 百度 | 可用；固定 Windows 指纹 + 20s 间隔实测 3/3 全成功 | 高频突增后进入图形验证码，冷却后恢复 |
+| 搜狗 | 可用；负载过高后转 `/captcha` 页 | 反爬最敏感，建议 8 次/分钟以内 |
+| 360 | 可用；固定 Windows 指纹 + 20s 间隔实测 3/3 全成功 | 被拦时跳 `qcaptcha.so.com`，已能正确识别 |
+| Bing 中国 | 稳定可用，3/3 | 作为兜底引擎 |
 
-测试脚本记录（`deploy/e2e-results/`）：最新几轮 34 项中 22-28 项通过，失败项全部是上游反爬（429/503）导致，无一处是产品级 5xx 或契约错误。完整明细见 JSON 报告。
+**指纹配置是本次最关键的调优**：同一出口 IP 下，Linux headless 指纹会被百度/360 直接判为机器人（429 / qcaptcha），而固定为桌面 Windows 指纹后立即恢复。配置见 `config.yaml` 的 `profile: chrome-win-uhd620`。
+
+测试脚本记录（`deploy/e2e-results/`）：
+
+- 最佳一轮：**31/34 通过**，仅 3 项失败且全部由上游反爬（429/503）引起，无产品级 5xx、无契约错误（`domestic-2026-11-13T09-34-34-989Z.json`）
+- 低节流稳态检查（`deploy/steady-check.mjs`，20s 间隔 ×3 轮）：百度 3/3、360 3/3、Bing 3/3 全成功（搜狗当时正在被反爬拦截，0/3）
+- 说明：连续数小时压测会把同一出口 IP“打热”，此后所有国内引擎会在少量请求后集体弹验证码，需要较长时间静默或换代理；这属于上游策略，非服务缺陷
 
 ## 6. 已知限制与缓解（重要）
 

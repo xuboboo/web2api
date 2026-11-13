@@ -104,6 +104,9 @@ func (eng *So360) Name() string {
 // It may return core.ErrCaptcha or core.ErrSearchTimeout.
 func (eng *So360) Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, eng.Name())
+	if profileID := strings.TrimSpace(eng.ProfileID); profileID != "" {
+		ctx = core.WithForcedProfileID(ctx, profileID)
+	}
 	scoped := *eng
 	scoped.logger = eng.logger.WithRequest(ctx)
 	if scoped.Browser.WaitLoadTime == 0 || scoped.Browser.WaitLoadTime > 250*time.Millisecond {

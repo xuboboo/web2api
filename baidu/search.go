@@ -89,6 +89,9 @@ func (baid *Baidu) classifyBlockPage(page *rod.Page, url string) error {
 // It may return core.ErrCaptcha or core.ErrSearchTimeout.
 func (baid *Baidu) Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, baid.Name())
+	if profileID := strings.TrimSpace(baid.ProfileID); profileID != "" {
+		ctx = core.WithForcedProfileID(ctx, profileID)
+	}
 	scoped := *baid
 	scoped.logger = baid.logger.WithRequest(ctx)
 	if scoped.Browser.WaitLoadTime == 0 || scoped.Browser.WaitLoadTime > 250*time.Millisecond {

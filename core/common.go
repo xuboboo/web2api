@@ -554,6 +554,10 @@ type SearchEngineOptions struct {
 	// IsSolveCaptcha enables automatic captcha solving when engine support and
 	// solver credentials are configured.
 	IsSolveCaptcha bool `mapstructure:"captcha"`
+	// ProfileID pins the browser profile (and therefore device/UA fingerprint)
+	// for this engine. Domestic engines are challenged far less often with a
+	// desktop Windows/macOS profile than with a Linux headless one.
+	ProfileID string `mapstructure:"profile"`
 
 	limiterState *rateLimiterState
 }
