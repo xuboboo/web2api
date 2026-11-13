@@ -92,7 +92,17 @@ proxies:
 - **节流参数**：`E2E_PACE_MS`（组间/探针间隔）、`E2E_SOAK_PACE_MS`（串行压测间隔，默认 12s），适配单 IP 反爬。
 - **多引擎回退**：格式、内联提取、缓存等能力用例在可用引擎间轮换重试。
 
-## 5. 测试结果（关键结论）
+## 5. 运行策略：浏览器 + HTTP 双通道
+
+国内三家的反爬是“按出口 IP + 指纹 + 频次”综合判定，且刷新很快。为此每个国内引擎都有两条通道：
+
+1. **浏览器通道**（默认）：真实渲染，能拿到 JS 水合出来的结果，且固定 Windows 桌面指纹；
+2. **HTTP 通道**（兜底）：同一 URL 的纯 HTTP 拉取 + 同一套解析器，命中 `*/search_raw.go`；
+3. **CAPTCHA 门控**：浏览器通道一旦被判（429/504/qcaptcha/antipeder），10 分钟内直接优先走 HTTP 通道，既不浪费浏览器请求，也减少继续触发反爬。
+
+实测效果：360 在浏览器必被判死的情况下，HTTP 通道仍稳定返回 3-5 条结果；百度同理（`baidu browser path failed (captcha detected); served 12 results over HTTP` 见日志）。
+
+## 6. 测试结果（关键结论）
 
 功能与契约层面（多次运行一致通过）：
 
@@ -113,6 +123,20 @@ proxies:
 | Bing 中国 | 稳定可用，3/3 | 作为兜底引擎 |
 
 **指纹配置是本次最关键的调优**：同一出口 IP 下，Linux headless 指纹会被百度/360 直接判为机器人（429 / qcaptcha），而固定为桌面 Windows 指纹后立即恢复。配置见 `config.yaml` 的 `profile: chrome-win-uhd620`。
+
+### 运行方式
+
+```powershell
+# 常规验收（单 IP 建议放宽节流）
+$env:E2E_PACE_MS='8000'; $env:E2E_SOAK_PACE_MS='20000'
+$env:E2E_SOAK_RUNS='3'; $env:E2E_CONCURRENCY='2'
+node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+
+# 低节流稳态检查（每个引擎 3 次、间隔 20s）
+node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
+```
+
+### 记录
 
 测试脚本记录（`deploy/e2e-results/`）：
 
