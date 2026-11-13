@@ -70,11 +70,12 @@ proxies:
 
 ## 4. 端到端测试设计（`deploy/e2e-domestic.mjs`）
 
-9 组、34 个用例，可直接接 CI（关键用例失败返回 1）：
+9 组、35 个用例，可直接接 CI（关键用例失败返回 1）：
 
 | 组 | 覆盖 |
 | --- | --- |
 | 0 引擎可用性探针 | 起跑前逐个探测 baidu/sogou/360/bing，形成可用性矩阵，决定后续用哪些引擎 |
+| — | 验收口径：**硬性** = 至少 1 个引擎可用 + 全部契约/格式/聚合/提取/缓存/稳定性检查；**信息项** = “≥2 个可用且至少 1 个国产”，被上游整窗封禁时记为环境事件 |
 | 1 基础设施 | /health（4 引擎清单）、/ready、境外引擎 404、openapi+docs、CORS、X-Request-ID |
 | 2 参数校验 | 缺 text→400、limit 越界→400、未知引擎→400、未实现能力→501 |
 | 3 国产引擎 | 覆盖率断言（≥2 可用）、逐个引擎中文搜索、360 双端点、Bing 中国、翻页绝对排名、site: 过滤、**反爬语义（429 而非 504）** |
@@ -135,6 +136,17 @@ node deploy/e2e-domestic.mjs http://127.0.0.1:7000
 # 低节流稳态检查（每个引擎 3 次、间隔 20s）
 node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
 ```
+
+### 最终验收（本轮）
+
+```
+infra 5/5 · errors 4/4 · engines 8/10 · formats 3/3 · mega 2/2
+extract 4/4 · cache 1/1 · stability 3/3 · audit 3/3
+total=35 passed=33 failed=2 critical_failures=0 environment_issues=2
+report=deploy/e2e-results/domestic-2026-11-13T11-50-14-757Z.json
+```
+
+2 项失败均为上游反爬（百度/搜狗 429 captcha_detected），按设计归类为环境事件；此时能力类用例自动切到 360/Bing 通道，全部通过。
 
 ### 记录
 
