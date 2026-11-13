@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -74,6 +75,8 @@ func serve(cmd *cobra.Command, args []string) error {
 	corsCfg.AllowMethods = config.CORS.AllowMethods
 	corsCfg.AllowHeaders = config.CORS.AllowHeaders
 	corsCfg.MaxAge = config.CORS.MaxAge
+
+	warnIfExposedWithoutAuth(config.Server.Host, corsCfg.AllowOrigins)
 
 	captchaSolverEnabled, captchaSolverAPIKey, err := resolveCaptchaSolverConfig()
 	if err != nil {
@@ -175,6 +178,34 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 }
 
 const gracefulShutdownTimeout = 30 * time.Second
+
+// warnIfExposedWithoutAuth shouts when the API will be reachable beyond
+// loopback while CORS lets any origin in and there is no auth layer — the API
+// can drive browser renders per request, so this combination turns the service
+// into a browser-reachable compute amplifier.
+func warnIfExposedWithoutAuth(host, allowOrigins string) {
+	if isLoopbackHost(host) {
+		return
+	}
+	if strings.TrimSpace(allowOrigins) != "*" {
+		return
+	}
+	logrus.Warn("SECURITY: server host is not loopback while CORS allows all origins and the API has no auth layer. " +
+		"Any website can drive this service from a visitor's browser. Bind to 127.0.0.1, restrict cors.allow_origins, or put an authenticating reverse proxy in front.")
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return true
+	}
+	// "" binds all interfaces and 0.0.0.0 is not loopback — both stay exposed.
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
 
 func listenWithGracefulShutdown(serv *core.Server, onShutdown func() error) (err error) {
 	if onShutdown != nil {

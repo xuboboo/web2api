@@ -32,11 +32,16 @@ const useProfileHeader = "X-Use-Profile"
 
 const exposedResponseHeaders = "X-Request-ID, X-Cache, X-Fallback-Engine, X-Proxy-Mode, X-Proxy-Tag, X-Proxy-Used, X-Proxy-Attempts, X-Network-Bytes, " + browserProfileIDHeader
 
+// DefaultCORSAllowHeaders is the single source of truth for the CORS
+// allow-headers default, shared by DefaultCORSConfig and the viper defaults
+// in cmd/root.go so the two cannot drift.
+const DefaultCORSAllowHeaders = "Origin, Content-Type, Accept, Authorization, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant, X-Use-Profile"
+
 func DefaultCORSConfig() CORSConfig {
 	return CORSConfig{
 		AllowOrigins: "*",
 		AllowMethods: "GET, POST, OPTIONS",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant, X-Use-Profile",
+		AllowHeaders: DefaultCORSAllowHeaders,
 		MaxAge:       86400,
 	}
 }
@@ -191,11 +196,13 @@ func JSONErrorMiddleware() fiber.ErrorHandler {
 		if e, ok := err.(*fiber.Error); ok {
 			code = e.Code
 		}
+		isAPIError := false
 		if apiErr, ok := err.(*APIError); ok {
 			code = apiErr.HTTPStatus
 			errorCode = apiErr.ErrorCode
 			reason = apiErr.Reason
 			meta = apiErr.Meta
+			isAPIError = true
 		}
 		if errorCode == "" {
 			errorCode = statusText(code)
@@ -205,11 +212,27 @@ func JSONErrorMiddleware() fiber.ErrorHandler {
 			requestID = strings.TrimSpace(c.Get("X-Request-ID"))
 		}
 
+		// Keep error details out of 5xx bodies: unknown internal errors
+		// (library panics, proxy URLs) are logged in full server-side and
+		// returned to the client as a generic message. APIError responses
+		// have already been sanitized by their producers; fiber.NewError
+		// texts keep their detail but credential-bearing URLs get masked.
+		message := err.Error()
+		if code >= 500 && !isAPIError {
+			if _, isFiberErr := err.(*fiber.Error); !isFiberErr {
+				logrus.WithError(err).WithField("request_id", requestID).
+					Error("Unhandled internal error")
+				message = "internal server error"
+			} else {
+				message = maskCredentialedURLs(message)
+			}
+		}
+
 		resp := JSONErrorResponse{
 			Error:     errorCode,
 			Code:      code,
 			RequestID: requestID,
-			Message:   err.Error(),
+			Message:   message,
 			Reason:    reason,
 			Meta:      meta,
 		}

@@ -73,5 +73,5 @@ func SearchRaw(ctx context.Context, query core.Query) (results []core.SearchResu
 	)
 
 	deduped := core.StripResultFeatures(core.DeduplicateResults(parsedResults), query.Features)
-	return deduped, nil
+	return core.LimitOrganicResults(deduped, query.Limit), nil
 }

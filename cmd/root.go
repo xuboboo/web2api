@@ -495,7 +495,7 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("cors.enabled", true)
 	v.SetDefault("cors.allow_origins", "*")
 	v.SetDefault("cors.allow_methods", "GET, POST, OPTIONS")
-	v.SetDefault("cors.allow_headers", "Origin, Content-Type, Accept, Authorization, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant")
+	v.SetDefault("cors.allow_headers", core.DefaultCORSAllowHeaders)
 	v.SetDefault("cors.max_age", 86400)
 	v.SetDefault("captcha.solver_enabled", false)
 	for _, s := range engineSpecs() {

@@ -75,6 +75,30 @@ func TestBuildURL(t *testing.T) {
 			query:   core.Query{},
 			wantErr: true,
 		},
+		{
+			name: "malformed date interval without separator returns error",
+			query: core.Query{
+				Text:         "golang",
+				DateInterval: "20250101",
+			},
+			wantErr: true,
+		},
+		{
+			name: "date interval with extra separators returns error",
+			query: core.Query{
+				Text:         "golang",
+				DateInterval: "20250101..20250201..20250301",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid date values return error",
+			query: core.Query{
+				Text:         "golang",
+				DateInterval: "notadate..20250201",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

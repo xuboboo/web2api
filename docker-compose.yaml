@@ -4,14 +4,15 @@ services:
     init: true
     # Chrome crashes with "Out of memory" on page loads when /dev/shm is the default 64MB. Prefer an enlarged shm over `ipc:host` to keep the container isolated from the host IPC namespace.
     shm_size: 2gb
-    image: karust/openserp:latest
-    # To build from source instead of pulling the prebuilt image,
-    # uncomment and run `docker compose up --build`:
-    #build:
-    #  context: .
-    ports: 
-      - 7000:7000
-    command: serve -l
+    # Build from source so the image always matches this tree.
+    build:
+      context: .
+    image: openserp:local
+    # Loopback only: the API has no auth layer, never expose it beyond localhost.
+    ports:
+      - "127.0.0.1:7000:7000"
+    command: serve
+    restart: unless-stopped
     volumes:
       - ./config.yaml:/usr/src/app/config.yaml:ro
 
@@ -23,10 +24,9 @@ services:
     #       tags: [google]
     # google:
     #   proxy: google
-    
+
+    # Rate limits and every other engine knob live in config.yaml (bind-mounted
+    # above) so there is a single source of truth; do not override them here.
     environment:
       OPENSERP_SERVER_HOST: "0.0.0.0"
       OPENSERP_SERVER_PORT: 7000
-      OPENSERP_BAIDU_RATE_REQUESTS: 6   # Number of requests per Minute
-      OPENSERP_BAIDU_RATE_BURST: 2      # Number of non-ratelimited requests per Minute
-    

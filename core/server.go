@@ -146,6 +146,15 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	app := fiber.New(fiber.Config{
 		ErrorHandler: JSONErrorMiddleware(),
 		BodyLimit:    10 * 1024 * 1024,
+		// Bounded server defaults: without these fasthttp accepts unbounded
+		// connections and never times them out, so a slow client (or an
+		// exposed 0.0.0.0 host) can exhaust memory. Read covers a 10MB parse
+		// body on a slow link; handler time is governed separately by the
+		// request-timeout middleware, and keep-alive Concurrency is left at
+		// fasthttp defaults so in-process rate-limiter queuing still works.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	})
 
 	serv := Server{
@@ -823,10 +832,15 @@ func (s *Server) parseFingerprintCheckRequest(c *fiber.Ctx) (fingerprintCheckReq
 	browserOpts.Timeout = time.Duration(timeoutMs) * time.Millisecond
 	browserOpts.LeavePageOpen = false
 	browserOpts.UserAgent = strings.TrimSpace(c.Query("user_agent", browserOpts.UserAgent))
-	browserOpts.ProxyURL = strings.TrimSpace(c.Query("proxy", browserOpts.ProxyURL))
 	browserOpts.LanguageCode = strings.TrimSpace(c.Query("language", browserOpts.LanguageCode))
 
+	// The ?proxy= query goes through the exact same gate as the X-Proxy-URL
+	// header so it cannot bypass AllowRequestProxyURL.
+	requestProxyURL := strings.TrimSpace(c.Query("proxy", ""))
 	if headerProxyURL := strings.TrimSpace(c.Get("X-Proxy-URL")); headerProxyURL != "" {
+		requestProxyURL = headerProxyURL
+	}
+	if requestProxyURL != "" {
 		if !s.opts.Resilience.Proxy.Proxies.AllowRequestProxyURL {
 			return fingerprintCheckRequest{}, &APIError{
 				HTTPStatus: fiber.StatusBadRequest,
@@ -835,7 +849,7 @@ func (s *Server) parseFingerprintCheckRequest(c *fiber.Ctx) (fingerprintCheckReq
 				Message:    "X-Proxy-URL is disabled by server configuration",
 			}
 		}
-		normalized, err := NormalizeProxyURL(headerProxyURL)
+		normalized, err := NormalizeProxyURL(requestProxyURL)
 		if err != nil {
 			return fingerprintCheckRequest{}, errInvalidParam(fmt.Sprintf("X-Proxy-URL: %v", err))
 		}
@@ -1244,10 +1258,15 @@ func (s *Server) resolveEngines(ctx context.Context, enginesParam string) []Sear
 	engineNames := strings.Split(enginesParam, ",")
 	for _, name := range engineNames {
 		name = strings.TrimSpace(strings.ToLower(name))
-		if name == "" || seen[name] {
+		if name == "" {
 			continue
 		}
+		// Dedupe on the resolved name so aliases of the same engine
+		// ("duck,ddg") don't run one engine twice.
 		name = resolveEngineAlias(name)
+		if seen[name] {
+			continue
+		}
 		matched := false
 		for _, engine := range s.searchEngines {
 			if strings.ToLower(engine.Name()) == name {

@@ -42,6 +42,9 @@ func BuildURL(q core.Query) (string, error) {
 
 	if q.DateInterval != "" {
 		dateInterval := strings.Split(q.DateInterval, "..")
+		if len(dateInterval) != 2 {
+			return "", errors.New("incorrect date interval provided, expected format: YYYYMMDD..YYYYMMDD")
+		}
 
 		ts1, err := dateToTimestamp(dateInterval[0])
 		if err != nil {

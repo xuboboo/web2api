@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -329,6 +330,15 @@ func EnrichEnvelopeWithExtraction(ctx context.Context, env *Envelope, q Query, f
 	defer cancel()
 
 	extractOne := func(idx int) {
+		// These workers run on their own goroutine, outside fiber's recover:
+		// a panic inside a third-party HTML parser would kill the process.
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				WithRequest(ctx).WithField("url", env.Results[idx].URL).
+					Errorf("Extract worker panic recovered: %v", recovered)
+				env.Results[idx].Extracted = &ExtractedContent{Error: "internal extraction error"}
+			}
+		}()
 		// Skip the fetch entirely if the batch budget is already spent.
 		if err := ctx.Err(); err != nil {
 			env.Results[idx].Extracted = &ExtractedContent{Error: SanitizeExtractError(err)}
@@ -465,6 +475,18 @@ func SanitizeExtractError(err error) string {
 	return msg
 }
 
+// LogSafeURL strips the query string for logging: target URLs can carry
+// tokens or signed parameters that must not reach the log file.
+func LogSafeURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return raw
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
 const maxBatchExtractURLs = 20
 
 type batchExtractPayload struct {
@@ -556,9 +578,18 @@ func dedupeBatchURLs(raw []string) []string {
 }
 
 // batchExtractOne extracts a single URL, folding failures into the item.
-func batchExtractOne(ctx context.Context, extractor extractpkg.Extractor, req extractpkg.ExtractRequest, url string) batchExtractItem {
+// Runs on a bare worker goroutine, so it recovers panics from untrusted-HTML
+// parsing libraries instead of letting them kill the process.
+func batchExtractOne(ctx context.Context, extractor extractpkg.Extractor, req extractpkg.ExtractRequest, url string) (item batchExtractItem) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			WithRequest(ctx).WithField("url", LogSafeURL(url)).
+				Errorf("Batch extract panic recovered: %v", recovered)
+			item = batchExtractItem{Metadata: map[string]string{"source": url, "error": "internal extraction error"}}
+		}
+	}()
 	fail := func(err error) batchExtractItem {
-		WithRequest(ctx).WithError(err).WithField("url", url).Warn("Batch extract failed")
+		WithRequest(ctx).WithError(err).WithField("url", LogSafeURL(url)).Warn("Batch extract failed")
 		return batchExtractItem{Metadata: map[string]string{"source": url, "error": SanitizeExtractError(err)}}
 	}
 	// Skip the fetch once the batch budget is spent.
