@@ -39,6 +39,11 @@ var ErrParser = errors.New("parser failure")
 // panic and converted it into a typed error.
 var ErrEngineInternal = errors.New("engine internal error")
 
+// ErrNotImplemented is returned by engines that do not support a capability
+// (for example image search) so callers get 501 instead of a misleading
+// empty result set or an internal error.
+var ErrNotImplemented = errors.New("not implemented")
+
 // ErrProxyConnect is returned when the proxy cannot establish a network
 // connection. Proxy health is degraded on this error.
 var ErrProxyConnect = errors.New("proxy_connect")

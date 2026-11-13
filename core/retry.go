@@ -135,6 +135,7 @@ var nonRetryableSentinels = []struct {
 	{ErrProxyUnavailable, "Proxy unavailable"},
 	{ErrParser, "Parser failure"},
 	{ErrEngineInternal, "Engine panic recovered"},
+	{ErrNotImplemented, "Capability not implemented"},
 }
 
 func nonRetryableReason(err error) (string, bool) {

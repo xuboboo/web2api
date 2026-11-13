@@ -476,6 +476,8 @@ func mapSearchError(err error) searchErrorSpec {
 		return searchErrorSpec{status: fiber.StatusBadGateway, code: "parser_failure", message: "parser failure"}
 	case errors.Is(err, ErrEngineInternal):
 		return searchErrorSpec{status: fiber.StatusBadGateway, code: "engine_internal", message: "engine internal error"}
+	case errors.Is(err, ErrNotImplemented):
+		return searchErrorSpec{status: fiber.StatusNotImplemented, code: "not_implemented", message: "capability not implemented for this engine"}
 	case errors.Is(err, ErrAllEnginesFailed):
 		return searchErrorSpec{status: fiber.StatusBadGateway, code: "all_engines_failed", message: "all search engines failed"}
 	case errors.Is(err, ErrCircuitOpen):
@@ -1264,8 +1266,13 @@ func (s *Server) resolveEngines(ctx context.Context, enginesParam string) []Sear
 
 func engineEndpointName(name string) string {
 	name = strings.ToLower(name)
-	if name == "duckduckgo" {
+	switch name {
+	case "duckduckgo":
 		return "duck"
+	case "so360":
+		// 360 Search is best known as "360"; serve /360/* and keep /so360/*
+		// (the canonical engine name) working too.
+		return "360"
 	}
 	return name
 }
@@ -1274,6 +1281,10 @@ func resolveEngineAlias(name string) string {
 	switch strings.ToLower(name) {
 	case "duck", "ddg":
 		return "duckduckgo"
+	case "360", "so", "so.com":
+		return "so360"
+	case "sougou":
+		return "sogou"
 	default:
 		return strings.ToLower(name)
 	}

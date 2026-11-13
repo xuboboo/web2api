@@ -148,12 +148,27 @@ func RawExtractFetch(ctx context.Context, req extractpkg.ExtractRequest, cfg ext
 	if err := validateExtractTargetURL(ctx, req.URL, cfg.AllowPrivateNetworks); err != nil {
 		return nil, err
 	}
-	resp, err := RawSearchRequest(ctx, req.URL, Query{
+	fetchQuery := Query{
 		ProxyURL:             req.ProxyURL,
 		LangCode:             req.LangCode,
 		Insecure:             insecure,
 		GuardPrivateNetworks: !cfg.AllowPrivateNetworks,
-	})
+	}
+	// One retry for transient transport errors (EOF/reset/timeout): upstream
+	// edges reset idle keep-alive connections, which must not surface as a 502.
+	var (
+		resp *http.Response
+		err  error
+	)
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err = RawSearchRequest(ctx, req.URL, fetchQuery)
+		if err == nil || !isTransientFetchError(err) {
+			break
+		}
+		if sleepErr := SleepContext(ctx, 200*time.Millisecond); sleepErr != nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +190,24 @@ func RawExtractFetch(ctx context.Context, req extractpkg.ExtractRequest, cfg ext
 		out.FinalURL = resp.Request.URL.String()
 	}
 	return out, nil
+}
+
+// isTransientFetchError reports whether an extraction fetch failed in a way
+// that a single retry can plausibly fix.
+func isTransientFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{"eof", "connection reset", "broken pipe", "timeout", "temporarily unavailable", "server closed idle connection"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) renderedExtractFetch(ctx context.Context, req extractpkg.ExtractRequest) (*extractpkg.FetchResponse, error) {

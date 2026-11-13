@@ -14,6 +14,8 @@ func buildEngineProxyPolicyMap() map[string]string {
 		"bing":       config.BingConfig.Proxy,
 		"duckduckgo": config.DuckDuckGoConfig.Proxy,
 		"ecosia":     config.EcosiaConfig.Proxy,
+		"sogou":      config.SogouConfig.Proxy,
+		"so360":      config.So360Config.Proxy,
 	}
 }
 

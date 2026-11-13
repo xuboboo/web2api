@@ -32,7 +32,8 @@ paths:
       operationId: searchWeb
       summary: Search web results from a specific engine
       description: >
-        Engine path values are `google`, `yandex`, `baidu`, `bing`, `duck`, and `ecosia`
+        Engine path values are `google`, `yandex`, `baidu`, `bing`, `duck`, `ecosia`,
+        `sogou` (Sogou) and `so360`/`360` (360 Search)
         (`duck` maps to DuckDuckGo internally). Use `?format=markdown|text|ndjson`
         for alternative output formats.
       parameters:
@@ -710,7 +711,7 @@ components:
       description: Search engine endpoint alias (`duck` is DuckDuckGo).
       schema:
         type: string
-        enum: [google, yandex, baidu, bing, duck, ecosia]
+        enum: [google, yandex, baidu, bing, duck, ecosia, sogou, so360, "360"]
     TextQuery:
       name: text
       in: query

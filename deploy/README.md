@@ -1,161 +1,147 @@
-# OpenSERP 本地部署与端到端测试交付
+# OpenSERP 国内搜索引擎版：部署 · 适配 · 端到端测试交付
 
-> 交付时间：2026-11-13  ·  环境：Windows + Docker Desktop 29.7.2  ·  代码版本：`929310a`（本仓库 main）+ 本次修复
+> 交付时间：2026-11-13 · 运行环境：Windows + Docker Desktop 29.7.2 · 代码基线：`929310a` + 本次改动（未推送 origin）
 
-## 1. 交付物清单
+## 1. 这一版做了什么
 
-| 文件 | 说明 |
-| --- | --- |
-| `deploy/docker-compose.yml` | 独立部署编排（构建本仓库源码、127.0.0.1:7000、healthcheck、日志轮转） |
-| `deploy/docker-compose.local.yaml` | 可选覆盖层，用于复用上游 `docker-compose.yaml` 时改用本地镜像 |
-| `deploy/e2e.mjs` | 端到端测试套件（31 个用例，Node 18+，零依赖） |
-| `deploy/run-e2e.ps1` | PowerShell 包装器：`./deploy/run-e2e.ps1 [baseUrl]` |
-| `deploy/e2e-results/*.json` | 每次运行的机器可读测试报告（含最终通过报告） |
-| `baidu/search.go` | 修复：Baidu 搜索结果未遵守 `limit` 参数 |
+按“只要国内搜索引擎”的要求，把 OpenSERP 从“六引擎国际版”收敛为**国内可用引擎为主**，并补齐两个国产引擎：
 
-## 2. 部署架构
-
-```
-Dockerfile（多阶段）
-  ├─ builder: golang:1.24.6-bookworm   → go mod download / CGO_ENABLED=0 go build
-  └─ runtime: chromedp/headless-shell  → Chrome + openserp 二进制 + config.yaml
-                                         (tini 作为 PID 1，chrome 用户非 root)
-```
-
-- 镜像：`openserp:local`（395 MB，由当前仓库源码构建）
-- 容器：`serp`，`init: true`，`shm_size: 2gb`（Chrome 渲染必需），`restart: unless-stopped`
-- 端口：`127.0.0.1:7000 -> 7000`（仅回环，避免暴露到局域网）
-- 配置：仓库 `config.yaml` 以只读方式挂载到 `/usr/src/app/config.yaml`
-- 健康检查：容器内 `wget --spider http://127.0.0.1:7000/health`，30s 间隔
-
-## 3. 部署步骤（可复现）
-
-```powershell
-# 1) 构建并用本地源码启动
-docker compose -f deploy/docker-compose.yml up -d --build
-
-# 2) 等待健康（首次启动约 10-20s，Chrome 池初始化）
-docker compose -f deploy/docker-compose.yml ps
-curl.exe -s http://127.0.0.1:7000/health
-
-# 3) 端到端测试
-node deploy/e2e.mjs http://127.0.0.1:7000
-
-# 4) 查看日志 / 停止 / 升级
-docker logs -f serp
-docker compose -f deploy/docker-compose.yml down
-docker compose -f deploy/docker-compose.yml up -d --build   # 重新构建并替换
-```
-
-快速冒烟（部署后手工验证）：
-
-```powershell
-curl.exe -s "http://127.0.0.1:7000/bing/search?text=golang&limit=3"
-curl.exe -s "http://127.0.0.1:7000/mega/search?text=golang&limit=5&mode=balanced&engines=google,bing"
-curl.exe -s "http://127.0.0.1:7000/extract?url=https://example.com&format=markdown"
-curl.exe -s -X POST "http://127.0.0.1:7000/extract/batch" -H "Content-Type: application/json" -d '{"urls":["https://example.com"],"mode":"fast"}'
-```
-
-## 4. 端到端测试设计（`deploy/e2e.mjs`）
-
-7 组、31 个用例，覆盖从进程健康到业务契约的完整链路：
-
-| 分组 | 覆盖点 |
-| --- | --- |
-| `infra` (8) | `/health`（6 引擎状态与 degraded 语义一致）、`/ready`、`/mega/engines`、`/openapi.yaml`、`/docs`、4 个 `/stats/*`、CORS 预检、`X-Request-ID` 透传 |
-| `errors` (4) | 缺 `text` → 400、未知路由 → 404、未知引擎 → 400、`limit` 越界 → 400 |
-| `engines` (6+1) | 6 个引擎独立搜索 + 聚合覆盖率断言（≥3 个引擎可用，且失败必须是环境类） |
-| `formats` (3) | `format=markdown/text/ndjson` 的 Content-Type 与结构 |
-| `images` (1) | `/bing/image` 图片结果 |
-| `mega` + `extract` (7) | balanced/any/fast 三种聚合模式、`clusters` 去重聚合、单页提取、批量提取（死链不拖垮批次）、`extract=N` 内联正文 |
-| `cache` (1) | 相同请求第二次命中缓存（`X-Cache: HIT`） |
-
-测试设计要点：
-
-- **对抗反爬波动**：搜索引擎会对自动化请求返回 403/429/captcha/circuit_open。用例按“引擎级失败 = 环境事件、覆盖率断言 = 产品契约”分层，避免环境噪声掩盖真实回归；只有非环境类引擎故障才会让测试失败。
-- **多引擎回退**：格式、内联提取、缓存等能力用例在 google/bing/duckduckgo/baidu 间回退，单个引擎被临时封禁时不误报。
-- **瞬时故障重试**：提取类用例允许 1 次重试（实测出现过一次上游 `EOF`）。
-- **缓存屏蔽**：探针查询按分钟轮换，避免上一轮缓存掩盖引擎真实可用性。
-- **退出码**：仅“关键用例失败”返回 1，可直接接入 CI。
-
-## 5. 测试结果（最终一轮）
-
-命令：`node deploy/e2e.mjs http://127.0.0.1:7000`
-报告：`deploy/e2e-results/e2e-2026-11-13T07-26-32-509Z.json`
-
-```
-infra      pass=8 fail=0
-errors     pass=4 fail=0
-engines    pass=5 fail=2
-formats    pass=3 fail=0
-images     pass=1 fail=0
-mega       pass=3 fail=0
-extract    pass=4 fail=0
-cache      pass=1 fail=0
-----------------------------------------------
-total=31 passed=29 failed=2 critical_failures=0 environment_issues=2
-duration=95.0s
-退出码：0
-```
-
-关键实测指标（同一轮）：
-
-- `/health`：6 个引擎全部 initialized；google/bing/duckduckgo/baidu `ready`
-- 单引擎搜索：google 4.4s、bing 3.5s、duckduckgo 2.4s、baidu 1.6s（limit=5 生效）
-- `/mega/search?mode=balanced`：7.5s，返回 clusters + 逐引擎 rank 归属
-- 容器资源：CPU 0.03%、内存 158 MiB（空闲态）
-
-单元测试（在 `golang:1.24.6-bookworm` 容器内执行 `go test ./baidu/... ./core/...`）：
-
-```
-ok  github.com/karust/openserp/baidu
-ok  github.com/karust/openserp/core
-ok  github.com/karust/openserp/core/browser
-ok  github.com/karust/openserp/core/fpcheck/detectors
-ok  github.com/karust/openserp/core/region
-```
-
-## 6. 测试中发现并修复的缺陷
-
-**Baidu 搜索结果不遵守 `limit`**（`baidu/search.go`）
-
-- 现象：`GET /baidu/search?text=go语言&limit=3` 返回 9 条 organic（limit=5 时同样返回 9 条），与 google/bing/yandex/duckduckgo/ecosia 的行为不一致，也让 `/mega/search` 的结果聚合超出请求上限。
-- 根因：`Baidu.Search` 在返回前只做了 rank 偏移与 `StripResultFeatures`，没有调用 `core.LimitOrganicResults`；其余浏览器引擎都有该调用。
-- 修复：在返回前补上 `core.LimitOrganicResults(searchResults, query.Limit)`（广告等非 organic 行保留、不计数，与其他引擎语义一致）。
-- 验证：重新构建镜像并替换容器后，`limit=3 → 3 条 organic`、`limit=5 → 5 条 organic`；E2E 的 `limit` 断言由失败转为通过。
-- 修复前报告（含缺陷现场）：`deploy/e2e-results/e2e-2026-11-13T07-11-24-830Z.json`
-
-## 7. 已知环境限制（非代码缺陷）
-
-| 引擎 | 现象 | 影响与处置 |
+| 引擎 | 端点 | 说明 |
 | --- | --- | --- |
-| Yandex | `/yandex/search` 返回 429 `captcha_detected`；连续失败后熔断 503 `circuit_open` | 该出口 IP 被 Yandex 判定为机器人。配置代理后即可恢复：在 `config.yaml` 的 `proxies.entries` 中加入代理并给 `yandex` 打 tag |
-| Ecosia | `/ecosia/search` 返回 403 `blocked`，随后熔断 503 | 同上，Ecosia 对数据中心/自动化流量做 IP 级封禁，需代理 |
-| Google | 短时间高频自动化请求会返回 429 `rate_limited` | 属上游限流；测试已内置查询轮换与回退，冷却 1-2 分钟后恢复。生产建议加代理池或降低并发 |
+| 百度 baidu | `/baidu/search` | 原有引擎，修复了 `limit` 不生效问题 |
+| 搜狗 sogou | `/sogou/search`（新增） | 浏览器渲染 + `sogou.com/link` 跳转解析成真实 URL |
+| 360 搜索 so360 | `/360/search`、`/so360/search`（新增，同一引擎双端点） | 浏览器渲染，优先取 `data-mdurl` 直达链接 |
+| Bing 中国 bing | `/bing/search` | 保留（`www.bing.com` 会自动 302 到 `cn.bing.com`） |
 
-其余四个引擎（google/bing/duckduckgo/baidu）在无代理环境下稳定可用，满足“≥3 引擎可用”的覆盖率契约。
+境外引擎（google / yandex / duckduckgo / ecosia）在 `config.yaml` 中默认 `disabled: true`：无代理时会直接吃 403/429/captcha，留着只会污染聚合结果和健康度。接入代理后把对应 `disabled` 改回 `false` 即可恢复，代码路径未删除。
 
-## 8. 运维手册
+## 2. 代码改动清单
+
+**新增引擎（约 1.4k 行，含单元测试）**
+
+- `sogou/`：`url.go`（`/web?query=&page=`）、`selectors.go`、`parse_html.go`（goquery 解析、隐藏卡片过滤、广告识别、去重排序）、`search.go`（浏览器渲染 + 等待 hydration + 滚动触发懒加载 + `/link` 跳转解析）、`testdata/search_results.html` + 单测
+- `so360/`：同结构，额外用 `data-mdurl` 取真实目标地址；`qcaptcha.so.com` 等验证页识别为 captcha
+
+**核心改动**
+
+- `cmd/engines.go` / `cmd/root.go` / `cmd/proxy_policy.go`：注册 sogou、so360（别名 `360`），新增 `sogou:`、`so360:` 配置段
+- `core/server.go`：`/360/*` 与 `/so360/*` 双端点；`engines=360` 归一化到 `so360`；新增 501 `not_implemented` 错误映射
+- `core/common.go` / `core/retry.go`：新增 `ErrNotImplemented` 语义（未实现的图片搜索不再返回 internal error，也不再重试）
+- `baidu/search.go`：`limit` 生效（`core.LimitOrganicResults`）；新增 `wappass.baidu.com` 图形验证码识别，被拦时返回 429 `captcha_detected` 而不是 504 超时
+- `core/server_extract.go`：`/extract` 拉取增加一次瞬时错误重试（EOF / reset / timeout），上游抖动不再直接 502
+- `docs/openapi.yaml`、`cmd/search.go`：引擎枚举与帮助文案同步
+
+## 3. 部署
 
 ```powershell
-docker compose -f deploy/docker-compose.yml ps          # 状态 + 健康
-docker logs serp --tail 100                            # 运行日志（config.yaml: save_log）
-docker stats --no-stream serp                          # 资源占用
-docker compose -f deploy/docker-compose.yml restart     # 重启
-docker compose -f deploy/docker-compose.yml up -d --build --force-recreate   # 重建升级
-docker compose -f deploy/docker-compose.yml down        # 下线
+docker compose -f deploy/docker-compose.yml up -d --build     # 构建 + 启动
+docker compose -f deploy/docker-compose.yml ps                 # 状态（healthy）
+curl.exe -s http://127.0.0.1:7000/health                       # 引擎健康
+node deploy/e2e-domestic.mjs http://127.0.0.1:7000            # 端到端 + 稳定性 + 审计
 ```
 
-常见问题：
+服务：容器 `serp`，镜像 `openserp:local`（395 MB，chromedp/headless-shell 运行时），端口 `127.0.0.1:7000`，`shm_size: 2gb`，`init: true`，健康检查走容器内 `/health`。
 
-1. **端口 7000 被占用**：报错 `failed to bind host port 127.0.0.1:7000` 时，先 `docker ps -a --filter name=serp` 清理残留容器再启动；若仍失败，把 `deploy/docker-compose.yml` 的 `ports` 改成如 `127.0.0.1:7010:7000`，并用 `node deploy/e2e.mjs http://127.0.0.1:7010` 复测。
-2. **不要用 `-f docker-compose.yaml -f deploy/docker-compose.local.yaml` 叠加 `ports`**：Compose 的 `ports` 是追加合并，会同时出现 `7000:7000` 与 `127.0.0.1:7000:7000` 造成绑定冲突。叠加层只改 `image/build/volumes`，端口用独立的 `deploy/docker-compose.yml`。
-3. **Chrome 需要足够的 shm**：务必保留 `shm_size: 2gb`，否则页面加载会出现 OOM。
-4. **首次请求偏慢**：首次调用某引擎需要启动 Chrome 与浏览器 profile，google 首查约 8-9s，之后 2-4s。
+关键配置（`config.yaml`）：
 
-## 9. 验收结论
+```yaml
+# 国内引擎
+baidu:  { rate_requests: 12, rate_burst: 2 }   # 百度同 IP 高频会弹图形验证码
+sogou:  { rate_requests: 8,  rate_burst: 1 }   # 搜狗反爬最敏感
+so360:  { rate_requests: 20, rate_burst: 2 }
+bing:   { rate_requests: 20, rate_burst: 2 }
+# 熔断：反爬波动大，放宽阈值 + 缩短恢复
+circuit_breaker: { failures: 8, recovery_seconds: 20, successes: 1 }
+```
 
-- 服务已以 Docker 方式部署在 `http://127.0.0.1:7000`，容器 `serp` 处于 `healthy`，6 个引擎全部初始化。
-- 端到端套件 31 项：29 通过、2 项为环境类（Yandex/Ecosia 反爬），**关键用例 0 失败，退出码 0**。
-- 测试过程中发现并修复了 Baidu `limit` 失效缺陷，已重新构建镜像、重新部署并回归通过。
-- 单元测试（baidu、core 等包）全部通过。
+需要更高吞吐时接代理（示例，未启用）：
+
+```yaml
+proxies:
+  entries:
+    - url: http://user:pass@proxy-a:8080
+      tags: [baidu, sogou, so360]
+    - url: socks5h://user:pass@proxy-b:1080
+      tags: [sogou]
+```
+
+## 4. 端到端测试设计（`deploy/e2e-domestic.mjs`）
+
+9 组、34 个用例，可直接接 CI（关键用例失败返回 1）：
+
+| 组 | 覆盖 |
+| --- | --- |
+| 0 引擎可用性探针 | 起跑前逐个探测 baidu/sogou/360/bing，形成可用性矩阵，决定后续用哪些引擎 |
+| 1 基础设施 | /health（4 引擎清单）、/ready、境外引擎 404、openapi+docs、CORS、X-Request-ID |
+| 2 参数校验 | 缺 text→400、limit 越界→400、未知引擎→400、未实现能力→501 |
+| 3 国产引擎 | 覆盖率断言（≥2 可用）、逐个引擎中文搜索、360 双端点、Bing 中国、翻页绝对排名、site: 过滤、**反爬语义（429 而非 504）** |
+| 4 输出格式 | markdown / text / ndjson（多引擎回退） |
+| 5 聚合 | balanced（clusters + 引擎归属）、any 顺序回退 |
+| 6 正文提取 | 单页 markdown、POST、批量（死链容错）、搜索内联 extract=N |
+| 7 缓存 | 相同请求二次命中 `X-Cache: HIT` |
+| 8 稳定性 | 串行压测（可配置间隔）、6 路并发、压测后内存/熔断状态 |
+| 9 审计 | 响应结构一致性、stats 端点、404/400 契约在压测后仍成立 |
+
+设计要点：
+
+- **反爬与缺陷分离**：429/403/503（captcha / blocked / circuit_open）判为环境事件，只有 500/502 这类产品级错误才会让用例失败。
+- **可用性驱动**：探针决定后续跑哪些引擎；某个引擎临时被拦不会连累全局，但“至少 2 个国产引擎可用”是硬性验收项。
+- **节流参数**：`E2E_PACE_MS`（组间/探针间隔）、`E2E_SOAK_PACE_MS`（串行压测间隔，默认 12s），适配单 IP 反爬。
+- **多引擎回退**：格式、内联提取、缓存等能力用例在可用引擎间轮换重试。
+
+## 5. 测试结果（关键结论）
+
+功能与契约层面（多次运行一致通过）：
+
+- 基础设施 5/5：/health 报告 baidu、sogou、so360、bing 四引擎且 initialized；境外引擎端点确认为 404；OpenAPI/Swagger/CORS/请求 ID 正常
+- 参数校验 4/4：400/404/400/501 语义正确（未实现的图片搜索返回 501 `not_implemented`）
+- 正文提取 4/4：单页、POST、批量死链容错、内联 extract=N
+- 缓存、格式（markdown/text/ndjson）、聚合（balanced/any）、翻页绝对排名、site: 过滤：通过
+- 反爬语义：百度被拦时返回 429 `captcha_detected`（改造前是 504 超时），360 被拦时识别 `qcaptcha.so.com`
+- 稳定性：并发压测无产品级 5xx，压测后内存 < 200MB、熔断器可恢复
+
+引擎可用性（本次实测，同一出口 IP）：
+
+| 引擎 | 实测 | 备注 |
+| --- | --- | --- |
+| 百度 | 可用，但连续约 10 次/数分钟后进入图形验证码 | 冷却约 15-30 分钟可恢复（08:45 实测恢复，返回 200 + 3 条 organic） |
+| 搜狗 | 可用，连续请求后转 `/captcha/antipider` 页 | 默认 8 次/分钟更安全 |
+| 360 | 可用，连续请求后跳 `qcaptcha.so.com` | 已能被正确识别为 captcha |
+| Bing 中国 | 稳定可用 | 作为兜底 |
+
+测试脚本记录（`deploy/e2e-results/`）：最新几轮 34 项中 22-28 项通过，失败项全部是上游反爬（429/503）导致，无一处是产品级 5xx 或契约错误。完整明细见 JSON 报告。
+
+## 6. 已知限制与缓解（重要）
+
+**单 IP 直连无法支撑持续高频抓取**，这是百度/搜狗/360 共同的反爬事实，不是本服务缺陷：
+
+1. **接代理**：`proxies.entries` 按引擎打 tag（上文示例），出口 IP 轮换后可持续使用；
+2. **降速**：默认限速已调保守（百度 12/min、搜狗 8/min、360 20/min），配合熔断 20s 自愈；
+3. **验证码**：被拦时明确返回 429 `captcha_detected`；如需自动通过可配 2captcha（`2captcha.apikey` + `captcha.solver_enabled: true`）；
+4. **图片搜索**：搜狗/360 暂未实现，返回 501 `not_implemented`（语义清晰，不误导）。
+
+## 7. 运维手册
+
+```powershell
+docker logs -f serp                 # 实时日志（含 engine/request_id/status）
+docker compose -f deploy/docker-compose.yml restart
+docker compose -f deploy/docker-compose.yml up -d --build --force-recreate   # 升级
+docker compose -f deploy/docker-compose.yml down
+$env:E2E_PACE_MS='20000'; node deploy/e2e-domestic.mjs    # 低节流验收
+```
+
+排障要点：
+
+- `429 captcha_detected`：该引擎出口被反爬拦截，等待冷却或换代理；
+- `503 circuit_open`：熔断保护中，默认 20s 后进入半开；
+- `501 not_implemented`：该引擎未实现该能力（当前为图片搜索）；
+- 端口冲突：`deploy/docker-compose.yml` 里改 `127.0.0.1:7000` 为其它端口即可。
+
+## 8. 单元测试
+
+```
+docker exec go-dev go test ./...
+ok  baidu / bing / sogou / so360 / cmd / core / core/browser / core/region / duckduckgo / ecosia / extract / google / yandex
+```
+
+搜狗、360 的 URL 构造、解析（含广告识别、隐藏卡片过滤、`/link` 绝对化、captcha/no-result 分类）均有表驱动单测与真实 SERP 快照（`sogou/testdata`、`so360/testdata`）。

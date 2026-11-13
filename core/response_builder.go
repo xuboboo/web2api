@@ -29,6 +29,8 @@ var featureBaseURLs = map[string]string{
 	"ecosia":     "https://www.ecosia.org/",
 	"yandex":     "https://www.yandex.com/",
 	"baidu":      "https://www.baidu.com/",
+	"sogou":      "https://www.sogou.com/",
+	"so360":      "https://www.so.com/",
 }
 
 // EnrichContext carries request-scoped values needed to enrich a raw result.

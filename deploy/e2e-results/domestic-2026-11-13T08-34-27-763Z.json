@@ -1,0 +1,494 @@
+{
+  "service": "openserp-domestic",
+  "base_url": "http://127.0.0.1:7000",
+  "started_at": "2026-11-13T08:34:27.763Z",
+  "duration_ms": 172124,
+  "totals": {
+    "total": 34,
+    "passed": 21,
+    "failed": 13,
+    "failed_critical": 11,
+    "environment_issues": 2
+  },
+  "by_group": {
+    "infra": {
+      "pass": 5,
+      "fail": 0
+    },
+    "errors": {
+      "pass": 4,
+      "fail": 0
+    },
+    "engines": {
+      "pass": 5,
+      "fail": 4
+    },
+    "formats": {
+      "pass": 2,
+      "fail": 1
+    },
+    "mega": {
+      "pass": 0,
+      "fail": 2
+    },
+    "extract": {
+      "pass": 3,
+      "fail": 1
+    },
+    "cache": {
+      "pass": 0,
+      "fail": 1
+    },
+    "stability": {
+      "pass": 0,
+      "fail": 3
+    },
+    "audit": {
+      "pass": 2,
+      "fail": 1
+    }
+  },
+  "engine_stats": {
+    "sogou": {
+      "organic": 5,
+      "total": 5,
+      "took_ms": 5652,
+      "urls": [
+        "http://mp.weixin.qq.com/s?new=1&signature=t4az8qEA2GM%2ADck8jiNUqyB1w4NNn9Ecszhha9nzjHTLl5oc3MnSoVvUtJMxMIUP-BOn8DPsH0CKhV1yb2w4GDML8DlJb3XVOSYQpJnR9SpuAp7rsvgWGIV2ZykdeoyN&src=11&timestamp=1794558878&ver=7085",
+        "http://finance.people.com.cn/n1/2023/0222/c1004-32628513.html",
+        "http://finance.people.com.cn/n1/2024/0115/c1004-40159113.html",
+        "http://www.shanhubei.com/archives/45342.html",
+        "https://wd.znds.com/188143.html"
+      ]
+    },
+    "bing": {
+      "organic": 3,
+      "total": 3,
+      "took_ms": 3316,
+      "urls": [
+        "https://www.runoob.com/go/go-tutorial.html",
+        "https://www.golangdev.cn/zh-cn",
+        "https://www.golangdev.cn/zh-cn/guide/get-started.html"
+      ]
+    }
+  },
+  "results": [
+    {
+      "group": "infra",
+      "name": "/health 报告 4 个引擎（国产 3 + bing）",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "status": "healthy",
+        "uptime": "1m37s",
+        "engines": [
+          "baidu",
+          "bing",
+          "so360",
+          "sogou"
+        ]
+      }
+    },
+    {
+      "group": "infra",
+      "name": "/ready 返回 200",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "body": "{\"status\":\"ready\"}"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "境外引擎已下线（/google/search -> 404）",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "google": 404,
+        "duck": 404
+      }
+    },
+    {
+      "group": "infra",
+      "name": "/openapi.yaml 与 /docs 可访问",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 7,
+      "detail": {
+        "specBytes": 75520
+      }
+    },
+    {
+      "group": "infra",
+      "name": "CORS 预检与 X-Request-ID 透传",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 6,
+      "detail": {
+        "cors": 204
+      }
+    },
+    {
+      "group": "errors",
+      "name": "缺少 text -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d40b-41ce-7a3b-8b47-95a01a24ccd3",
+        "message": "EMPTY_QUERY: query cannot be empty: provide text, site, or file parameter",
+        "reason": "EMPTY_QUERY"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "limit 越界 -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "status": 400
+      }
+    },
+    {
+      "group": "errors",
+      "name": "未知引擎 -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "status": 400
+      }
+    },
+    {
+      "group": "errors",
+      "name": "未实现的图片搜索 -> 501（而非 5xx 崩溃）",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 6,
+      "detail": {
+        "error": "not_implemented",
+        "code": 501,
+        "request_id": "01a1d40b-41d9-785e-b6d8-3903755fe742",
+        "message": "capability not implemented for this engine",
+        "meta": {
+          "engine": "sogou",
+          "error_detail": "not implemented: sogou image search is not supported",
+          "proxy_used": "direct"
+        }
+      }
+    },
+    {
+      "group": "engines",
+      "name": "国产引擎覆盖：至少 2 个可用（百度/搜狗/360）",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 0,
+      "detail": {
+        "healthy": [
+          "sogou",
+          "360"
+        ],
+        "availability": {
+          "360": {
+            "ok": true,
+            "status": 200,
+            "organic": 3
+          },
+          "baidu": {
+            "ok": false,
+            "status": 429,
+            "organic": 0
+          },
+          "sogou": {
+            "ok": true,
+            "status": 200,
+            "organic": 3
+          },
+          "bing": {
+            "ok": true,
+            "status": 200,
+            "organic": 3
+          }
+        }
+      }
+    },
+    {
+      "group": "engines",
+      "name": "baidu 中文搜索 limit=5",
+      "critical": false,
+      "ok": false,
+      "attempts": 2,
+      "ms": 3739,
+      "error": "HTTP 429 {\"error\":\"captcha_detected\",\"code\":429,\"request_id\":\"01a1d40b-4e09-714a-b9b0-61e5440a454c\",\"message\":\"captcha detected\",\"meta\":{\"engine\":\"baidu\",\"proxy_used\":\"d",
+      "classification": "environment"
+    },
+    {
+      "group": "engines",
+      "name": "sogou 中文搜索 limit=5",
+      "critical": false,
+      "ok": true,
+      "attempts": 1,
+      "ms": 5656,
+      "detail": {
+        "organic": 5,
+        "took_ms": 5652,
+        "first": "http://mp.weixin.qq.com/s?new=1&signature=t4az8qEA2GM%2ADck8jiNUqyB1w4NNn9Ecszhha9nzjHTLl5oc3MnSoVvUtJMxMIUP-BOn8DPsH0CKhV1yb2w4GDML8DlJb3XVOSYQpJnR9SpuAp7rsvgWGIV2ZykdeoyN&src=11&timestamp=1794558878&ver=7085"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "360 中文搜索 limit=5",
+      "critical": false,
+      "ok": false,
+      "attempts": 2,
+      "ms": 27315,
+      "error": "HTTP 504 {\"error\":\"search_timeout\",\"code\":504,\"request_id\":\"01a1d40b-a0fc-76e7-9c2a-3bb47197c214\",\"message\":\"timeout. Cannot find element on page\",\"meta\":{\"engine\":\"so36",
+      "classification": "environment"
+    },
+    {
+      "group": "engines",
+      "name": "360 别名 /so360 与 /360 行为一致",
+      "critical": true,
+      "ok": false,
+      "attempts": 2,
+      "ms": 39214,
+      "error": "statuses 504/503",
+      "classification": "product"
+    },
+    {
+      "group": "engines",
+      "name": "bing(中国) 搜索可用",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3319,
+      "detail": {
+        "organic": 3,
+        "took_ms": 3316
+      }
+    },
+    {
+      "group": "engines",
+      "name": "翻页 start=10 生效且排名绝对化",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 1532,
+      "detail": {
+        "engine": "sogou",
+        "organic": 5,
+        "firstRank": 11
+      }
+    },
+    {
+      "group": "engines",
+      "name": "site: 过滤生效",
+      "critical": true,
+      "ok": false,
+      "attempts": 2,
+      "ms": 10183,
+      "error": "site: filter returned no go.dev hosts: mp.weixin.qq.com,github.com,github.com,hao.studygolang.com,www.163.com",
+      "classification": "product"
+    },
+    {
+      "group": "engines",
+      "name": "反爬语义：被拦时返回 429 captcha_detected 而非 504",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 665,
+      "detail": {
+        "engine": "baidu",
+        "status": 429,
+        "error": "captcha_detected"
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=markdown",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3751,
+      "detail": {
+        "bytes": 1020
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=text",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 7460,
+      "detail": {
+        "bytes": 869
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=ndjson",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 7150,
+      "error": "bad ndjson response",
+      "classification": "product"
+    },
+    {
+      "group": "mega",
+      "name": "balanced 聚合可用国产引擎",
+      "critical": true,
+      "ok": false,
+      "attempts": 2,
+      "ms": 14738,
+      "error": "HTTP 502 {\"error\":\"all_engines_failed\",\"code\":502,\"request_id\":\"01a1d40d-15bc-7c8d-be4d-5a548d3cf6b7\",\"message\":\"all search engines failed\",\"meta\":{\"engine\":\"mega\",\"engi",
+      "classification": "product"
+    },
+    {
+      "group": "mega",
+      "name": "any 顺序回退",
+      "critical": true,
+      "ok": false,
+      "attempts": 2,
+      "ms": 30173,
+      "error": "HTTP 502",
+      "classification": "product"
+    },
+    {
+      "group": "extract",
+      "name": "GET /extract markdown",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 405,
+      "detail": {
+        "bytes": 198
+      }
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract json",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 757,
+      "detail": {
+        "bytes": 4584
+      }
+    },
+    {
+      "group": "extract",
+      "name": "批量提取容错（死链不拖垮批次）",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 330,
+      "detail": {
+        "items": 2
+      }
+    },
+    {
+      "group": "extract",
+      "name": "搜索内联 extract=2",
+      "critical": true,
+      "ok": false,
+      "attempts": 3,
+      "ms": 5680,
+      "error": "status 503",
+      "classification": "product"
+    },
+    {
+      "group": "cache",
+      "name": "重复请求命中缓存",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 3,
+      "error": "first status 503",
+      "classification": "product"
+    },
+    {
+      "group": "stability",
+      "name": "串行压测：9 次请求成功率 >= 90%",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 2790,
+      "error": "success rate 0% < 90%: [{\"engine\":\"360\",\"query\":\"python 数据分析\",\"status\":503,\"ms\":2,\"ok\":false},{\"engine\":\"360\",\"query\":\"java 虚拟机\",\"status\":503,\"ms\":1,\"ok\":false},{\"engine\":\"360\",\"query\":\"mysql 索引优化\",\"status\":503,\"ms\":2,\"ok\":false},{\"engine\":\"360\",\"query\":\"前端性能优化\",\"status\":503,\"ms\":2,\"ok\":false}]",
+      "classification": "product"
+    },
+    {
+      "group": "stability",
+      "name": "并发压测：6 路并发无 5xx，服务保持健康",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 7,
+      "error": "5xx under concurrency: [503,503,503,503,503,503]",
+      "classification": "product"
+    },
+    {
+      "group": "stability",
+      "name": "压测后内存与熔断器状态正常",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 5,
+      "error": "circuit breaker open after soak: {\"circuit_breakers\":[{\"avg_response_ms\":840,\"engine\":\"so360\",\"failure_count\":5,\"last_changed\":\"2026-11-13T08:37:04Z\",\"retry_in\":51,\"state\":\"open\"},{\"avg_response_ms\":3258,\"engine\":\"bing\",\"failure_coun",
+      "classification": "product"
+    },
+    {
+      "group": "audit",
+      "name": "响应结构一致（可用国产引擎字段齐全）",
+      "critical": true,
+      "ok": false,
+      "attempts": 3,
+      "ms": 5021,
+      "error": "sogou status 503",
+      "classification": "product"
+    },
+    {
+      "group": "audit",
+      "name": "stats 端点维护正常",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 9,
+      "detail": {
+        "/stats": 200,
+        "/stats/cache": 200,
+        "/stats/proxy": 200,
+        "/stats/cb": 200
+      }
+    },
+    {
+      "group": "audit",
+      "name": "404/400 契约在压测后仍正确",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "notFound": 404,
+        "badRequest": 400
+      }
+    }
+  ]
+}

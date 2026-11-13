@@ -40,6 +40,9 @@ type Config struct {
 	BingConfig       BingConfig           `mapstructure:"bing"`
 	DuckDuckGoConfig EngineConfig         `mapstructure:"duckduckgo"`
 	EcosiaConfig     EngineConfig         `mapstructure:"ecosia"`
+	// Mainland-China engines.
+	SogouConfig EngineConfig `mapstructure:"sogou"`
+	So360Config EngineConfig `mapstructure:"so360"`
 }
 
 type Config2Captcha struct {
@@ -254,6 +257,8 @@ func sanitizedConfigForLog(cfg Config) map[string]interface{} {
 		"bing":       cfg.BingConfig,
 		"duckduckgo": cfg.DuckDuckGoConfig,
 		"ecosia":     cfg.EcosiaConfig,
+		"sogou":      cfg.SogouConfig,
+		"so360":      cfg.So360Config,
 	}
 }
 
@@ -385,7 +390,7 @@ func initializeConfig(cmd *cobra.Command) error {
 }
 
 func validateEngineProxyTags(v *viper.Viper) error {
-	for _, engineName := range []string{"google", "yandex", "baidu", "bing", "duckduckgo", "ecosia"} {
+	for _, engineName := range []string{"google", "yandex", "baidu", "bing", "duckduckgo", "ecosia", "sogou", "so360"} {
 		key := engineName + ".proxy"
 		if !v.IsSet(key) {
 			continue

@@ -36,7 +36,7 @@ var searchOpts searchFlags
 var searchCMD = &cobra.Command{
 	Use:     "search [engine] [query]",
 	Aliases: []string{"find"},
-	Short:   "Search results using chosen web search engine (google, yandex, baidu, bing, duckduckgo, ecosia)",
+	Short:   "Search results using chosen web search engine (baidu, sogou, so360, bing, google, yandex, duckduckgo, ecosia)",
 	// Validate the engine ourselves; cobra.OnlyValidArgs would also reject the
 	// query arg. ValidArgs still feeds shell completion.
 	Args:      cobra.MatchAll(cobra.ExactArgs(2), validateEngineArg),

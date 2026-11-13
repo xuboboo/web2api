@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -59,6 +60,21 @@ func (baid *Baidu) Name() string {
 // page, so both paths can't drift. ErrEmptyResult is not a block: callers
 // handle that themselves once they've also checked for parsed results.
 func (baid *Baidu) classifyBlockPage(page *rod.Page, url string) error {
+	// Baidu answers throttled or flagged clients by navigating to its 图形验证码
+	// page (wappass.baidu.com/static/captcha/...). Detect it by URL so callers
+	// get ErrCaptcha (429 captcha_detected) instead of a misleading timeout.
+	if page != nil {
+		if info, err := page.Info(); err == nil {
+			if u, err := neturl.Parse(info.URL); err == nil {
+				host := strings.ToLower(u.Hostname())
+				path := strings.ToLower(u.Path)
+				if strings.Contains(host, "wappass") || strings.Contains(path, "captcha") || strings.Contains(path, "verify") {
+					baid.logger.Error("Captcha detected: %s", info.URL)
+					return core.ErrCaptcha
+				}
+			}
+		}
+	}
 	err := core.ClassifyFromPage(page, classifyBaiduDocument)
 	if errors.Is(err, core.ErrEmptyResult) {
 		return nil
@@ -93,6 +109,10 @@ func (baid *Baidu) Search(ctx context.Context, query core.Query) (results []core
 		return nil, err
 	}
 	defer core.DeferClosePage(ctx, page, &baid.Browser)()
+
+	if err := baid.classifyBlockPage(page, url); err != nil {
+		return nil, err
+	}
 
 	searchResults, err := baid.waitForParsedSearchResults(ctx, page, url)
 	if err != nil {

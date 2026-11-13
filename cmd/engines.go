@@ -10,6 +10,8 @@ import (
 	"github.com/karust/openserp/duckduckgo"
 	"github.com/karust/openserp/ecosia"
 	"github.com/karust/openserp/google"
+	"github.com/karust/openserp/so360"
+	"github.com/karust/openserp/sogou"
 	"github.com/karust/openserp/yandex"
 )
 
@@ -43,6 +45,10 @@ func engineSpecs() []engineSpec {
 		{name: "bing", factory: newBing, parseHTMLFn: bing.ParseHTML, cfg: &config.BingConfig.EngineConfig},
 		{name: "duckduckgo", aliases: []string{"duck", "ddg"}, factory: newEngine(duckduckgo.New), parseHTMLFn: duckduckgo.ParseHTML, cfg: &config.DuckDuckGoConfig},
 		{name: "ecosia", factory: newEngine(ecosia.New), rawSearchFn: ecosia.Search, parseHTMLFn: ecosia.ParseHTML, cfg: &config.EcosiaConfig},
+		// Mainland-China engines (browser-only: their SERPs hydrate result
+		// cards client-side, so there is no reliable raw HTTP mode).
+		{name: "sogou", factory: newEngine(sogou.New), parseHTMLFn: sogou.ParseHTML, cfg: &config.SogouConfig},
+		{name: "so360", aliases: []string{"360"}, factory: newEngine(so360.New), parseHTMLFn: so360.ParseHTML, cfg: &config.So360Config},
 	}
 }
 

@@ -57,10 +57,10 @@ resilience:
   max_retries: 1 # Retry attempts per engine request (0 disables retries)
   allow_endpoint_fallback: false # Keep dedicated endpoints engine-pure by default
 
-# circuit_breaker:
-#   failures: 5 # Consecutive failures required to open circuit
-#   recovery_seconds: 60 # Wait time before moving open circuit to half-open
-#   successes: 2 # Consecutive half-open successes required to close circuit
+circuit_breaker:
+  failures: 8 # 连续失败多少次开启熔断（国内引擎反爬波动大，给足重试空间）
+  recovery_seconds: 20 # 熔断后多久进入半开（缩短恢复时间）
+  successes: 1 # 半开状态下 1 次成功即恢复
 
 cors:
   enabled: true
@@ -75,6 +75,15 @@ cors:
 captcha:
   solver_enabled: false # Global captcha solver gate (requires 2captcha.apikey)
 
+# ---------------------------------------------------------------------------
+# 引擎开关（国内部署：只保留境内可直连的搜索引擎）
+#
+#   国内可用：baidu / sogou / so360（另可选 bing，走 cn.bing.com）
+#   境外引擎：无代理时会被 captcha/403/429 拦截，默认 disabled；接入代理后把
+#             disabled 改回 false 即可恢复。
+#
+# 任一行都可以用环境变量覆盖，例如 OPENSERP_GOOGLE_DISABLED=true。
+# ---------------------------------------------------------------------------
 google:
   rate_requests: 60 # Allowed average requests per minute
   rate_burst: 3 # Burst requests before limiter applies
@@ -83,28 +92,46 @@ google:
   resolve_timeout: 3s # Total URL resolution budget per search
   resolve_cooldown: 10m # Pause resolution through an exit after a challenge
   #captcha: true # Engine-level solver flag (also requires captcha.solver_enabled=true)
-  #disabled: true # Leave this engine out of serve: no endpoints, not used by mega (env: OPENSERP_GOOGLE_DISABLED)
+  disabled: true # 境外：直连返回 captcha/429，接入代理后再打开
 
 yandex:
   rate_requests: 60
   rate_burst: 3
+  disabled: true # 境外：直连返回 captcha
 
 baidu:
-  rate_requests: 60
-  rate_burst: 3
+  rate_requests: 12 # 百度对同 IP 高频访问会弹图形验证码，默认 12 次/分钟
+  rate_burst: 2
+  # 国内主力引擎
   # No proxy tag means direct traffic
 
 bing:
   rate_requests: 60
   rate_burst: 3
   search_box: true # Submit through the homepage; false uses legacy /search URLs (env: OPENSERP_BING_SEARCH_BOX)
+  # www.bing.com 会 302 到 cn.bing.com，境内可直连；如只想保留国产引擎可改成 disabled: true
   # No proxy tag means direct traffic
 
 duckduckgo:
   rate_requests: 60
   rate_burst: 3
+  disabled: true # 境外：直连不可用
 
 ecosia:
   rate_requests: 60
   rate_burst: 3
+  disabled: true # 境外：直连 403 blocked
+  # No proxy tag means direct traffic
+
+# 搜狗（www.sogou.com）。SERP 需要 JS 渲染，浏览器模式；结果链接是
+# sogou.com/link?url= 跳转，引擎会自动解析成真实地址。
+sogou:
+  rate_requests: 8 # 搜狗反爬很敏感：默认 8 次/分钟、突发 1，避免触发验证码
+  rate_burst: 1
+  # No proxy tag means direct traffic
+
+# 360 搜索（www.so.com）。同样走浏览器模式；结果直达链接在 data-mdurl 上。
+so360:
+  rate_requests: 20
+  rate_burst: 2
   # No proxy tag means direct traffic
