@@ -1,132 +1,68 @@
-# Contributing to OpenSERP
+# Contributing
 
-## Fastest Path to a Merged PR
+## 快速路径
 
-1. Pick a focused issue, ideally one labeled `good first issue`.
-2. Comment on the issue with the approach you plan to take.
-3. Keep the PR narrow: one bug, one parser fallback, one docs page, or one engine step.
-4. Run `make fmt`, `make lint`, and `make test` before opening the PR.
-5. Explain what changed, why it changed, and how you tested it.
+1. 选一个聚焦的问题（一个 bug、一个解析器修复、一篇文档或一个引擎特性）。
+2. 保持 PR 范围小：不要顺手重构共享的浏览器/服务端/响应结构。
+3. 提交前跑通：`gofmt`、`go vet ./...`、`go test ./...`，涉及真实链路的改动再跑一遍 E2E。
+4. PR 说明里写清“改了什么、为什么、怎么验证的”。
 
-New engine work should start with [`ADDING_AN_ENGINE.md`](https://github.com/karust/openserp/blob/main/docs/ADDING_AN_ENGINE.md).
+新增引擎见 [ADDING_AN_ENGINE.md](ADDING_AN_ENGINE.md)。
 
-## Development Setup
-
-### Prerequisites
+## 开发环境
 
 - Go 1.24+
-- Chromium/Chrome (only required for browser-mode work and integration tests)
-- Optional: Docker
-- Optional: `make` and `golangci-lint` for the same local workflow used by CI
-
-### Clone, build, run
+- Chromium/Chrome（仅浏览器模式与 E2E 需要；容器部署已自带）
+- 可选：Docker（推荐，真实链路更接近线上）
 
 ```bash
-git clone https://github.com/karust/openserp.git
-cd openserp
-make build
-make run
+git clone https://github.com/xuboboo/web2api.git
+cd web2api
+go build -o web2api .
+./web2api search baidu "golang" --format markdown    # CLI，无需启动服务
+./web2api serve -a 127.0.0.1 -p 7000                 # HTTP 服务
 ```
 
-### Test commands
+> 注意：仓库 `config.yaml` 默认把 `server.port` 设为 7000；不带 `-c config.yaml` 时使用内置默认 7070。
 
-Unit tests (default, no browser/network assumptions):
+## 测试
 
 ```bash
-make test
+go test ./...                                  # 单测，无需网络/浏览器
+docker compose -f deploy/docker-compose.yml up -d --build
+node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
 ```
 
-Integration tests (explicitly enabled):
+集成测试由 `testutil.RequireIntegration(t)` 控制（默认跳过）：
 
 ```bash
-make test-integration
+OPENSERP_INTEGRATION_TESTS=1 go test -tags=integration ./...
 ```
 
-Notes:
+约定：
 
-- Integration tests are gated by `testutil.RequireIntegration(t)`.
-- Do not create browser instances in `init()` or package-level variables.
+- 不要在 `init()` 或包级变量里创建浏览器实例。
+- 解析器测试用 `testdata/` 的真实快照，不要访问网络。
+- 选择器统一放在引擎的 `selectors.go`，脆弱处给 2–3 个候选。
 
-## Adding a New Search Engine
-
-### 1) Create engine package
-
-Create a new folder (example: `myengine/`) with:
-
-- `myengine/url.go` (`BuildURL`, and `BuildImageURL` when image support exists)
-- `myengine/search.go` (browser mode implementation)
-- `myengine/search_raw.go` (optional raw mode implementation)
-
-### 2) Implement `core.SearchEngine`
-
-Your engine type must implement:
-
-- `Search(context.Context, core.Query) ([]core.SearchResult, error)`
-- `SearchImage(context.Context, core.Query) ([]core.SearchResult, error)`
-- `IsInitialized() bool`
-- `Name() string`
-- `GetRateLimiter() *rate.Limiter`
-
-Use the existing engines (for example `google/`) as the reference pattern.
-
-### 3) Register the engine in server wiring
-
-Update [`cmd/serve.go`](../cmd/serve.go):
-
-- Add engine spec in `browserEngineSpecs()`
-- Add raw-mode handling if raw support exists
-
-### 4) Add config block
-
-Update [`config.yaml`](../config.yaml) with your engine section:
-
-- `rate_requests`
-- `rate_burst`
-- optional `proxy` tag
-- optional engine-specific fields
-
-### 5) Add tests
-
-- URL builder tests (table-driven)
-- Parser tests (prefer deterministic fixtures in `testdata/`)
-- Integration tests guarded by `testutil.RequireIntegration(t)`
-
-See [`ADDING_AN_ENGINE.md`](https://github.com/karust/openserp/blob/main/docs/ADDING_AN_ENGINE.md) for the full checklist.
-
-## Code Style and Quality Checks
-
-Run these before opening a PR:
+## 提交 PR
 
 ```bash
-make fmt
-make lint
-make test
+gofmt -w <改动目录>
+go vet ./...
+go test ./...
 ```
 
-Guidelines:
+文档改动请同步检查：
 
-- Return `error` values instead of panicking in library code.
-- Reuse existing patterns in `core/` and existing engines.
-- Add comments only for non-obvious decisions (why, not what).
+- 根 `README.md`（对外说明）
+- `docs/CONFIGURATION.md`（新增配置项）
+- `docs/TESTING.md`（新增/调整用例）
+- `docs/openapi.yaml`（端点或参数变化）
 
-## Test Categories
+## 项目约定
 
-- Unit tests: deterministic tests that run with `go test ./...` and do not require browser/network.
-- Integration tests: live/browser/network dependent tests gated by `OPENSERP_INTEGRATION_TESTS=1`.
-
-When adding tests, keep unit and integration behavior clearly separated.
-
-## Pull Request Process
-
-For each PR:
-
-1. Describe what changed and why.
-2. Link the related issue (if available).
-3. Include or update tests for behavior changes.
-4. Include updated docs when API/config/contracts change.
-
-If you change API behavior, update:
-
-- [`openapi.yaml`](openapi.yaml)
-- [`../README.md`](../README.md)
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) when flow/design changes
+- 引擎错误使用 `core` 中的哨兵错误（`ErrCaptcha`、`ErrBlocked`、`ErrRateLimited`、`ErrSearchTimeout`、`ErrParser`、`ErrNotImplemented` …），由服务端统一映射成 HTTP 状态与机器码。
+- 国内引擎保持“浏览器通道 + HTTP 通道 + `CaptchaGate`”的编排，新增逻辑不要绕开它。
+- 修改 `config.yaml` 后，容器需要 `--force-recreate` 才能生效（挂载的是文件）。
