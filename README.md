@@ -24,7 +24,7 @@
 | `/mega/engines` | 引擎清单与熔断状态 |
 | `/extract`（GET/POST） | 单页正文提取，支持 `format=json\|markdown\|text\|ndjson` |
 | `/extract/batch` | 批量提取（≤20 个 URL），失败项以 `metadata.error` 返回，不拖垮整批 |
-| `POST /{engine}/parse` | 传 HTML 直接解析，复用引擎解析器 |
+| `POST /{engine}/parse` | 请求体直接放 HTML（`text/html`），复用对应引擎解析器 |
 | `/health` `/ready` `/stats` `/stats/cache` `/stats/proxy` `/stats/cb` | 健康检查与运行指标 |
 | `/openapi.yaml` `/docs` | OpenAPI 规范与 Swagger UI |
 
