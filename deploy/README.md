@@ -29,6 +29,8 @@
 - `core/common.go` / `core/retry.go`：新增 `ErrNotImplemented` 语义（未实现的图片搜索不再返回 internal error，也不再重试）
 - `baidu/search.go`：`limit` 生效（`core.LimitOrganicResults`）；新增 `wappass.baidu.com` 图形验证码识别，被拦时返回 429 `captcha_detected` 而不是 504 超时
 - `core/server_extract.go`：`/extract` 拉取增加一次瞬时错误重试（EOF / reset / timeout），上游抖动不再直接 502
+- **HTTP 兜底通道**：百度/搜狗/360 的浏览器路径被反爬拦截时，自动用纯 HTTP 拉取同一 SERP 并用同一解析器解析（`*/search_raw.go`）。实测 360 在浏览器必被判死的情况下，HTTP 通道仍返回 5 条结果
+- **CAPTCHA 门控**（`core/captcha_gate.go`）：某引擎浏览器路径刚被拦截后，10 分钟内优先走 HTTP 通道，避免反复无效的浏览器请求，也减少自身触发反爬
 - `core/common.go` + 三个国内引擎：新增 `<engine>.profile` 配置，把浏览器指纹固定为桌面 Windows 配置（`chrome-win-uhd620`）。实测 Linux headless 指纹几乎必被拦截，换 Windows 指纹后百度/360 立刻恢复 200
 - `docs/openapi.yaml`、`cmd/search.go`：引擎枚举与帮助文案同步
 

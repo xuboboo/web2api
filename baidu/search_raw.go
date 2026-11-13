@@ -18,7 +18,9 @@ func classifyBaiduRawHTML(body []byte) error {
 	return classifyBaiduDocument(doc)
 }
 
-func Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
+// SearchRaw fetches a Baidu SERP over plain HTTP and parses it. It backs the
+// browser engine's fallback path and the CLI's raw mode.
+func SearchRaw(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, "baidu")
 
 	searchURL, err := BuildURL(query)

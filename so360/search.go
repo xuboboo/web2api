@@ -84,11 +84,14 @@ type So360 struct {
 	core.Browser
 	core.SearchEngineOptions
 	logger *core.EngineLogger
+	// gate remembers a recent browser-side challenge so the plain-HTTP path is
+	// preferred while it is active.
+	gate *core.CaptchaGate
 }
 
 // New creates a 360 Search engine instance with browser/runtime options applied.
 func New(browser core.Browser, opts core.SearchEngineOptions) *So360 {
-	eng := So360{Browser: browser}
+	eng := So360{Browser: browser, gate: &core.CaptchaGate{}}
 	opts.Init()
 	eng.SearchEngineOptions = opts
 	eng.logger = core.NewEngineLogger("360")
@@ -101,8 +104,36 @@ func (eng *So360) Name() string {
 }
 
 // Search executes a 360 Search web search and returns normalized results.
-// It may return core.ErrCaptcha or core.ErrSearchTimeout.
-func (eng *So360) Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
+// When the browser session is challenged (captcha / timeout / block), it falls
+// back to the plain-HTTP path, which 360 gates far less aggressively.
+func (eng *So360) Search(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
+	rawQuery := query
+	rawQuery.Insecure = rawQuery.Insecure || eng.Browser.Insecure
+
+	// While the browser path is known to be challenged, try the plain-HTTP path
+	// first: it stays usable much longer on a shared exit IP.
+	if eng.gate.Blocked() {
+		if raw, rawErr := SearchRaw(ctx, rawQuery); rawErr == nil && len(raw) > 0 {
+			return raw, nil
+		}
+	}
+
+	results, err := eng.searchBrowser(ctx, query)
+	if err == nil {
+		eng.gate.Clear()
+		return results, nil
+	}
+	if errors.Is(err, core.ErrCaptcha) || errors.Is(err, core.ErrSearchTimeout) || errors.Is(err, core.ErrBlocked) || errors.Is(err, core.ErrParser) {
+		eng.gate.Trip(0)
+		if raw, rawErr := SearchRaw(ctx, rawQuery); rawErr == nil && len(raw) > 0 {
+			eng.logger.WithRequest(ctx).Info("360 browser path failed (%v); served %d results over HTTP", err, len(raw))
+			return raw, nil
+		}
+	}
+	return nil, err
+}
+
+func (eng *So360) searchBrowser(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, eng.Name())
 	if profileID := strings.TrimSpace(eng.ProfileID); profileID != "" {
 		ctx = core.WithForcedProfileID(ctx, profileID)

@@ -100,11 +100,14 @@ type Sogou struct {
 	core.Browser
 	core.SearchEngineOptions
 	logger *core.EngineLogger
+	// gate remembers a recent browser-side challenge so the plain-HTTP path is
+	// preferred while it is active.
+	gate *core.CaptchaGate
 }
 
 // New creates a Sogou engine instance with browser/runtime options applied.
 func New(browser core.Browser, opts core.SearchEngineOptions) *Sogou {
-	sog := Sogou{Browser: browser}
+	sog := Sogou{Browser: browser, gate: &core.CaptchaGate{}}
 	opts.Init()
 	sog.SearchEngineOptions = opts
 	sog.logger = core.NewEngineLogger("Sogou")
@@ -117,8 +120,35 @@ func (sog *Sogou) Name() string {
 }
 
 // Search executes a Sogou web search and returns normalized search results.
-// It may return core.ErrCaptcha or core.ErrSearchTimeout.
-func (sog *Sogou) Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
+// When the browser session is challenged, it falls back to the plain-HTTP path.
+func (sog *Sogou) Search(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
+	rawQuery := query
+	rawQuery.Insecure = rawQuery.Insecure || sog.Browser.Insecure
+
+	// While the browser path is known to be challenged, try the plain-HTTP path
+	// first: it stays usable much longer on a shared exit IP.
+	if sog.gate.Blocked() {
+		if raw, rawErr := SearchRaw(ctx, rawQuery); rawErr == nil && len(raw) > 0 {
+			return raw, nil
+		}
+	}
+
+	results, err := sog.searchBrowser(ctx, query)
+	if err == nil {
+		sog.gate.Clear()
+		return results, nil
+	}
+	if errors.Is(err, core.ErrCaptcha) || errors.Is(err, core.ErrSearchTimeout) || errors.Is(err, core.ErrBlocked) || errors.Is(err, core.ErrParser) {
+		sog.gate.Trip(0)
+		if raw, rawErr := SearchRaw(ctx, rawQuery); rawErr == nil && len(raw) > 0 {
+			sog.logger.WithRequest(ctx).Info("sogou browser path failed (%v); served %d results over HTTP", err, len(raw))
+			return raw, nil
+		}
+	}
+	return nil, err
+}
+
+func (sog *Sogou) searchBrowser(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, sog.Name())
 	if profileID := strings.TrimSpace(sog.ProfileID); profileID != "" {
 		ctx = core.WithForcedProfileID(ctx, profileID)
@@ -296,7 +326,18 @@ func countOrganic(results []core.SearchResult) int {
 // resolveRedirects replaces Sogou's opaque /link?url= wrappers with the real
 // destination, so callers get usable URLs and accurate domains. Failures keep
 // the wrapper (it still redirects when followed).
+// SearchResolveRedirects is the package-level redirect resolver shared by the
+// browser and plain-HTTP paths.
+func SearchResolveRedirects(ctx context.Context, results []core.SearchResult, query core.Query) []core.SearchResult {
+	return resolveSogouRedirects(ctx, nil, results, query)
+}
+
 func (sog *Sogou) resolveRedirects(ctx context.Context, results []core.SearchResult, query core.Query) []core.SearchResult {
+	query.Insecure = query.Insecure || sog.Browser.Insecure
+	return resolveSogouRedirects(ctx, sog.logger, results, query)
+}
+
+func resolveSogouRedirects(ctx context.Context, logger *core.EngineLogger, results []core.SearchResult, query core.Query) []core.SearchResult {
 	targets := make([]int, 0, len(results))
 	for i, result := range results {
 		if result.Ad || result.URL == "" {
@@ -314,8 +355,7 @@ func (sog *Sogou) resolveRedirects(ctx context.Context, results []core.SearchRes
 	if len(targets) == 0 {
 		return results
 	}
-	query.Insecure = query.Insecure || sog.Browser.Insecure
-	sog.logger.Info("sogou redirect: resolving %d of %d results", len(targets), len(results))
+	logSogouRedirect(logger, "sogou redirect: resolving %d of %d results", len(targets), len(results))
 
 	client := newRedirectClient(query)
 
@@ -344,14 +384,14 @@ func (sog *Sogou) resolveRedirects(ctx context.Context, results []core.SearchRes
 				resp, err = newInsecureRedirectClient().Do(req.Clone(reqCtx))
 			}
 			if err != nil {
-				sog.logger.Warn("sogou redirect request failed: %v", err)
+				logSogouRedirect(logger, "sogou redirect request failed: %v", err)
 				return
 			}
 			defer core.DrainAndCloseResponse(resp)
 
 			target := sogouRedirectTarget(resp)
 			if target == "" {
-				sog.logger.Info("sogou redirect: no target (status %d)", resp.StatusCode)
+				logSogouRedirect(logger, "sogou redirect: no target (status %d)", resp.StatusCode)
 				return
 			}
 			results[idx].URL = target
@@ -407,4 +447,12 @@ func absoluteExternalURL(raw string) string {
 		return ""
 	}
 	return u.String()
+}
+// logSogouRedirect logs through the engine logger when one is attached (the
+// plain-HTTP path has none) and stays silent otherwise.
+func logSogouRedirect(logger *core.EngineLogger, format string, args ...interface{}) {
+	if logger == nil {
+		return
+	}
+	logger.Info(format, args...)
 }

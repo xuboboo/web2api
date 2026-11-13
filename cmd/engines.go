@@ -41,14 +41,14 @@ func engineSpecs() []engineSpec {
 	return []engineSpec{
 		{name: "google", factory: newEngine(google.New), rawSearchFn: google.Search, parseHTMLFn: google.ParseHTML, cfg: &config.GoogleConfig.EngineConfig},
 		{name: "yandex", factory: newEngine(yandex.New), rawSearchFn: yandex.Search, parseHTMLFn: yandex.ParseHTML, cfg: &config.YandexConfig},
-		{name: "baidu", factory: newEngine(baidu.New), rawSearchFn: baidu.Search, parseHTMLFn: baidu.ParseHTML, cfg: &config.BaiduConfig},
+		{name: "baidu", factory: newEngine(baidu.New), rawSearchFn: baidu.SearchRaw, parseHTMLFn: baidu.ParseHTML, cfg: &config.BaiduConfig},
 		{name: "bing", factory: newBing, parseHTMLFn: bing.ParseHTML, cfg: &config.BingConfig.EngineConfig},
 		{name: "duckduckgo", aliases: []string{"duck", "ddg"}, factory: newEngine(duckduckgo.New), parseHTMLFn: duckduckgo.ParseHTML, cfg: &config.DuckDuckGoConfig},
 		{name: "ecosia", factory: newEngine(ecosia.New), rawSearchFn: ecosia.Search, parseHTMLFn: ecosia.ParseHTML, cfg: &config.EcosiaConfig},
 		// Mainland-China engines (browser-only: their SERPs hydrate result
 		// cards client-side, so there is no reliable raw HTTP mode).
-		{name: "sogou", factory: newEngine(sogou.New), parseHTMLFn: sogou.ParseHTML, cfg: &config.SogouConfig},
-		{name: "so360", aliases: []string{"360"}, factory: newEngine(so360.New), parseHTMLFn: so360.ParseHTML, cfg: &config.So360Config},
+		{name: "sogou", factory: newEngine(sogou.New), rawSearchFn: sogou.SearchRaw, parseHTMLFn: sogou.ParseHTML, cfg: &config.SogouConfig},
+		{name: "so360", aliases: []string{"360"}, factory: newEngine(so360.New), rawSearchFn: so360.SearchRaw, parseHTMLFn: so360.ParseHTML, cfg: &config.So360Config},
 	}
 }
 

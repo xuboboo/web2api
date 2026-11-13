@@ -39,11 +39,14 @@ type Baidu struct {
 	core.Browser
 	core.SearchEngineOptions
 	logger *core.EngineLogger
+	// gate remembers a recent browser-side challenge so the plain-HTTP path is
+	// preferred while it is active.
+	gate *core.CaptchaGate
 }
 
 // New creates a Baidu engine instance with browser/runtime options applied.
 func New(browser core.Browser, opts core.SearchEngineOptions) *Baidu {
-	baid := Baidu{Browser: browser}
+	baid := Baidu{Browser: browser, gate: &core.CaptchaGate{}}
 	opts.Init()
 	baid.SearchEngineOptions = opts
 	baid.logger = core.NewEngineLogger("Baidu")
@@ -86,8 +89,35 @@ func (baid *Baidu) classifyBlockPage(page *rod.Page, url string) error {
 }
 
 // Search executes a Baidu web search and returns normalized search results.
-// It may return core.ErrCaptcha or core.ErrSearchTimeout.
-func (baid *Baidu) Search(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
+// When the browser session is challenged, it falls back to the plain-HTTP path.
+func (baid *Baidu) Search(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
+	rawQuery := query
+	rawQuery.Insecure = rawQuery.Insecure || baid.Browser.Insecure
+
+	// While the browser path is known to be challenged, try the plain-HTTP path
+	// first: it stays usable much longer on a shared exit IP.
+	if baid.gate.Blocked() {
+		if raw, rawErr := SearchRaw(ctx, rawQuery); rawErr == nil && len(raw) > 0 {
+			return raw, nil
+		}
+	}
+
+	results, err := baid.searchBrowser(ctx, query)
+	if err == nil {
+		baid.gate.Clear()
+		return results, nil
+	}
+	if errors.Is(err, core.ErrCaptcha) || errors.Is(err, core.ErrSearchTimeout) || errors.Is(err, core.ErrBlocked) || errors.Is(err, core.ErrParser) {
+		baid.gate.Trip(0)
+		if raw, rawErr := SearchRaw(ctx, rawQuery); rawErr == nil && len(raw) > 0 {
+			baid.logger.WithRequest(ctx).Info("baidu browser path failed (%v); served %d results over HTTP", err, len(raw))
+			return raw, nil
+		}
+	}
+	return nil, err
+}
+
+func (baid *Baidu) searchBrowser(ctx context.Context, query core.Query) (results []core.SearchResult, err error) {
 	ctx = core.PrepareEngineContext(ctx, query, baid.Name())
 	if profileID := strings.TrimSpace(baid.ProfileID); profileID != "" {
 		ctx = core.WithForcedProfileID(ctx, profileID)

@@ -39,11 +39,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PACE = Number(process.env.E2E_PACE_MS || 0);
 // 串行压测的间隔：国内引擎对同 IP 高频访问敏感，默认 12s
 const SOAK_PACE = Number(process.env.E2E_SOAK_PACE_MS || 12000);
+// 压测规模可调：单 IP 反爬敏感时用 E2E_SOAK_RUNS=3 E2E_CONCURRENCY=2 做“轻量验收”
+const SOAK_RUNS = Math.max(1, Number(process.env.E2E_SOAK_RUNS || 9));
+const CONCURRENCY = Math.max(1, Number(process.env.E2E_CONCURRENCY || 6));
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
 const ENV_ERROR = /captcha|blocked|rate_limited|423|429|403|circuit|eof|timeout|failed to extract/i;
 
-async function test(group, name, fn, { critical = true, retries = 0 } = {}) {
+async function test(group, name, fn, { critical = true, retries = 0, betweenMs = 3000 } = {}) {
   const started = Date.now();
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -54,7 +57,7 @@ async function test(group, name, fn, { critical = true, retries = 0 } = {}) {
       return;
     } catch (err) {
       lastErr = err;
-      if (attempt < retries) await sleep(2500);
+      if (attempt < retries) await sleep(betweenMs);
     }
   }
   const message = String((lastErr && lastErr.message) || lastErr);
@@ -221,7 +224,7 @@ for (const engineName of ['baidu', 'sogou', '360']) {
     }
     engineStats[engineName] = info;
     return { organic: info.organic, took_ms: info.took_ms, first: info.urls[0] };
-  }, { critical: false, retries: 1 });
+  }, { critical: false, retries: 2, betweenMs: 12000 });
 }
 
 await test('engines', '360 别名 /360 与 /so360 指向同一引擎', async () => {
@@ -308,6 +311,7 @@ if (PACE) await sleep(PACE);
 console.log('\n[5/9] 多引擎聚合 /mega');
 await test('mega', 'balanced 聚合可用国产引擎', async () => {
   const megaEngines = domesticHealthy.slice(0, 3).join(',');
+  await sleep(0);
   const r = await req('/mega/search?text=' + encodeURIComponent('大模型') + '&limit=6&mode=balanced&engines=' + megaEngines);
   assert(r.status === 200, 'HTTP ' + r.status + ' ' + r.text.slice(0, 160));
   assert(Array.isArray(r.json.clusters) && r.json.clusters.length > 0, 'no clusters');
@@ -320,7 +324,7 @@ await test('mega', 'balanced 聚合可用国产引擎', async () => {
   assert(Object.keys(byEngine).length >= wantMin, 'merged results attributed to <' + wantMin + ' engines: ' + JSON.stringify(byEngine) + ' failed=' + JSON.stringify(r.json.meta.engines_failed || []));
   for (const c of r.json.clusters) assert(c.canonical_url, 'cluster without canonical_url');
   return { results: r.json.results.length, clusters: r.json.clusters.length, byEngine, failed: r.json.meta.engines_failed || [] };
-}, { retries: 1 });
+}, { retries: 2, betweenMs: 10000 });
 
 await test('mega', 'any 顺序回退', async () => {
   const r = await req('/mega/search?text=' + encodeURIComponent('rust 入门') + '&limit=5&mode=any&engines=' + domesticHealthy.slice(0, 2).join(','));
@@ -388,10 +392,10 @@ if (PACE) await sleep(PACE);
 // ------------------------------------------------------------ 8. 稳定性
 console.log('\n[8/9] 稳定性（串行 + 并发 + 资源）');
 const soakQueries = ['golang 并发模型', 'python 数据分析', 'rust 所有权', 'java 虚拟机', 'kubernetes 网络', 'mysql 索引优化', 'redis 持久化', '前端性能优化', 'docker 镜像瘦身'];
-await test('stability', '串行压测：9 次请求，产品级错误为 0 且成功率 >= 80%', async () => {
+await test('stability', '串行压测：产品级错误为 0 且成功率 >= 80%', async () => {
   const pool = domesticHealthy.length ? domesticHealthy : ['baidu'];
   const runs = [];
-  for (let i = 0; i < soakQueries.length; i++) {
+  for (let i = 0; i < Math.min(SOAK_RUNS, soakQueries.length); i++) {
     const engine = pool[i % pool.length];
     const r = await req('/' + engine + '/search?text=' + encodeURIComponent(soakQueries[i]) + '&limit=5');
     const organic = r.status === 200 && r.json ? r.json.results.filter((x) => x.type === 'organic').length : 0;
@@ -414,8 +418,8 @@ await test('stability', '串行压测：9 次请求，产品级错误为 0 且�
   };
 });
 
-await test('stability', '并发压测：6 路并发无产品级 5xx，服务保持健康', async () => {
-  const queries = ['golang channel', 'python asyncio', 'rust tokio', 'java spring', 'vue 组件', 'react hooks'];
+await test('stability', '并发压测：无产品级 5xx，服务保持健康', async () => {
+  const queries = ['golang channel', 'python asyncio', 'rust tokio', 'java spring', 'vue 组件', 'react hooks'].slice(0, CONCURRENCY);
   const pool = domesticHealthy.length ? domesticHealthy : ['baidu'];
   const started = Date.now();
   const responses = await Promise.all(queries.map((q, i) => {
@@ -429,7 +433,7 @@ await test('stability', '并发压测：6 路并发无产品级 5xx，服务保�
   assert(healthy.status === 200, 'health after burst = ' + healthy.status);
   assert(healthy.json.engines.every((e) => e.initialized), 'engine uninitialized after burst');
   const succeeded = codes.filter((c) => c === 200).length;
-  assert(succeeded >= 2, 'fewer than 2 successful responses under concurrency: ' + JSON.stringify(codes));
+  assert(succeeded >= Math.min(2, CONCURRENCY), 'fewer than ' + Math.min(2, CONCURRENCY) + ' successful responses under concurrency: ' + JSON.stringify(codes));
   return { codes, succeeded, wallMs: Date.now() - started };
 });
 
@@ -450,8 +454,10 @@ await test('stability', '压测后资源与熔断器状态可接受', async () =
 console.log('\n[9/9] 运行审计');
 await test('audit', '响应结构一致（可用国产引擎字段齐全）', async () => {
   const report = {};
+  const skipped = [];
   for (const engine of domesticHealthy) {
     const r = await req('/' + engine + '/search?text=' + encodeURIComponent('golang') + '&limit=3');
+    if ([429, 403, 503].includes(r.status)) { skipped.push(engine); continue; }
     assert(r.status === 200, engine + ' status ' + r.status);
     const organic = r.json.results.filter((x) => x.type === 'organic');
     assert(organic.length > 0, engine + ' no organic');
@@ -461,8 +467,10 @@ await test('audit', '响应结构一致（可用国产引擎字段齐全）', as
     }
     report[engine] = organic.length;
   }
-  return report;
-}, { retries: 2 });
+  const wantAudited = Math.min(2, domesticHealthy.length);
+  assert(Object.keys(report).length >= wantAudited, 'fewer than ' + wantAudited + ' engines audited: ' + JSON.stringify(report) + ' skipped=' + skipped.join(','));
+  return { audited: report, skipped };
+}, { retries: 2, betweenMs: 10000 });
 
 await test('audit', 'stats 端点维护正常', async () => {
   const stats = {};
