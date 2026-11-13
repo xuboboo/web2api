@@ -1,0 +1,410 @@
+{
+  "service": "openserp",
+  "base_url": "http://127.0.0.1:7000",
+  "started_at": "2026-11-13T07:11:24.830Z",
+  "duration_ms": 84049,
+  "totals": {
+    "total": 29,
+    "passed": 23,
+    "failed": 6,
+    "failed_critical": 6
+  },
+  "by_group": {
+    "infra": {
+      "pass": 8,
+      "fail": 0
+    },
+    "errors": {
+      "pass": 3,
+      "fail": 0
+    },
+    "engines": {
+      "pass": 3,
+      "fail": 3
+    },
+    "formats": {
+      "pass": 3,
+      "fail": 0
+    },
+    "images": {
+      "pass": 1,
+      "fail": 0
+    },
+    "mega": {
+      "pass": 2,
+      "fail": 1
+    },
+    "extract": {
+      "pass": 3,
+      "fail": 1
+    },
+    "cache": {
+      "pass": 0,
+      "fail": 1
+    }
+  },
+  "results": [
+    {
+      "group": "infra",
+      "name": "GET /health returns healthy + 6 engines",
+      "critical": true,
+      "ok": true,
+      "ms": 63,
+      "detail": {
+        "uptime": "50s",
+        "engines": [
+          "google",
+          "yandex",
+          "baidu",
+          "bing",
+          "duckduckgo",
+          "ecosia"
+        ],
+        "go": "go1.24.6"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /ready returns 200",
+      "critical": true,
+      "ok": true,
+      "ms": 4,
+      "detail": {
+        "body": "{\"status\":\"ready\"}"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /mega/engines lists all engines",
+      "critical": true,
+      "ok": true,
+      "ms": 3,
+      "detail": {
+        "engines": [
+          {
+            "initialized": true,
+            "name": "google"
+          },
+          {
+            "initialized": true,
+            "name": "yandex"
+          },
+          {
+            "initialized": true,
+            "name": "baidu"
+          },
+          {
+            "initialized": true,
+            "name": "bing"
+          },
+          {
+            "initialized": true,
+            "name": "duckduckgo"
+          },
+          {
+            "initialized": true,
+            "name": "ecosia"
+          }
+        ],
+        "total": 6
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /openapi.yaml serves the spec",
+      "critical": true,
+      "ok": true,
+      "ms": 4,
+      "detail": {
+        "bytes": 75446
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /docs serves Swagger UI",
+      "critical": true,
+      "ok": true,
+      "ms": 3,
+      "detail": {
+        "bytes": 822
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /stats, /stats/cache, /stats/proxy, /stats/cb respond",
+      "critical": true,
+      "ok": true,
+      "ms": 9,
+      "detail": {
+        "/stats": [
+          "cache",
+          "captcha",
+          "circuit_breakers",
+          "proxy"
+        ],
+        "/stats/cache": [
+          "bypasses",
+          "entries",
+          "evictions",
+          "hits",
+          "max_size",
+          "misses"
+        ],
+        "/stats/proxy": [
+          "configured_count",
+          "healthy_count",
+          "unhealthy_count",
+          "request_proxy_url_enabled",
+          "lanes",
+          "browser_processes"
+        ],
+        "/stats/cb": [
+          "circuit_breakers"
+        ]
+      }
+    },
+    {
+      "group": "infra",
+      "name": "CORS preflight is answered",
+      "critical": true,
+      "ok": true,
+      "ms": 3,
+      "detail": {
+        "status": 204,
+        "allow": "*"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "X-Request-ID is echoed back",
+      "critical": true,
+      "ok": true,
+      "ms": 2,
+      "detail": {
+        "id": "e2e-probe-1234"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "missing text query -> 400",
+      "critical": true,
+      "ok": true,
+      "ms": 2,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d3bf-30fc-7ee2-b5cd-bc4df3718cec",
+        "message": "EMPTY_QUERY: query cannot be empty: provide text, site, or file parameter",
+        "reason": "EMPTY_QUERY"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "unknown route -> 404",
+      "critical": true,
+      "ok": true,
+      "ms": 1,
+      "detail": {
+        "status": 404
+      }
+    },
+    {
+      "group": "errors",
+      "name": "unknown mega engine -> 400",
+      "critical": true,
+      "ok": true,
+      "ms": 2,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d3bf-3100-7b7a-8111-436709c99cab",
+        "message": "NO_ENGINES: no valid search engines specified",
+        "reason": "NO_ENGINES"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /google/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "ms": 7938,
+      "detail": {
+        "organic": 1,
+        "total": 1,
+        "took_ms": 7933,
+        "first": "https://www.google.com/goto?gsessionid=ZxCXcXEbT4bTYgUvB2sejMlnC7WWEByVsu-0ReiE9-VBKD72Fk2wTQ&url=CAEStAEBxCJF16TPVrEBmzGdgXsuvG5ojx99XRMw6T2lgsIFy6xt1nSr33LfWDeeP3z6OSnsAEldC9kINTgWhAB9FT_Ep9saclOSB4MxQ0MXVcjhJ2ebOsgOY_IJT8H75-gSeb4DJheilCnVx_tfbEfuo8BMNgEaXhdqW-iL9gWwdB-rv8BkLDlhU1axeIYYcuP4T2mEowMJc_T5_Z5IFyq0UTT4TKcIPidn9ucsE0n-6Oo0dL5ZeSg"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /bing/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "ms": 3150,
+      "detail": {
+        "organic": 5,
+        "total": 5,
+        "took_ms": 3145,
+        "first": "https://golang.google.cn/"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /yandex/search?limit=5",
+      "critical": true,
+      "ok": false,
+      "ms": 9148,
+      "error": "expected HTTP 200, got 429 {\"error\":\"captcha_detected\",\"code\":429,\"request_id\":\"01a1d3bf-5c55-7d3d-b1e2-d369587a64f8\",\"message\":\"captcha detected\",\"meta\":{\"engine\":\"yandex\",\"proxy_used\":\"direct\"}}"
+    },
+    {
+      "group": "engines",
+      "name": "GET /baidu/search?limit=5",
+      "critical": true,
+      "ok": false,
+      "ms": 1064,
+      "error": "limit not enforced: got 9 organic results for limit 5"
+    },
+    {
+      "group": "engines",
+      "name": "GET /duckduckgo/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "ms": 2471,
+      "detail": {
+        "organic": 5,
+        "total": 6,
+        "took_ms": 2468,
+        "first": "https://go.dev/"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /ecosia/search?limit=5",
+      "critical": true,
+      "ok": false,
+      "ms": 8692,
+      "error": "expected HTTP 200, got 429 {\"error\":\"captcha_detected\",\"code\":429,\"request_id\":\"01a1d3bf-8dde-7f17-8c64-e160a0e0586a\",\"message\":\"captcha detected\",\"meta\":{\"engine\":\"ecosia\",\"proxy_used\":\"direct\"}}"
+    },
+    {
+      "group": "formats",
+      "name": "format=markdown returns markdown document",
+      "critical": true,
+      "ok": true,
+      "ms": 5615,
+      "detail": {
+        "engine": "google",
+        "bytes": 9342
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=text returns plain text",
+      "critical": true,
+      "ok": true,
+      "ms": 7862,
+      "detail": {
+        "bytes": 8784
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=ndjson emits one JSON object per line",
+      "critical": true,
+      "ok": true,
+      "ms": 7504,
+      "detail": {
+        "lines": 5
+      }
+    },
+    {
+      "group": "images",
+      "name": "GET /bing/image?limit=5",
+      "critical": true,
+      "ok": true,
+      "ms": 1575,
+      "detail": {
+        "count": 5,
+        "sample": "{\"id\":\"i_76550e859c8ee4cc\",\"rank\":1,\"type\":\"image\",\"title\":\"十分钟带你入门Go语言(Golang)开发_go语言开发-CSDN博客\",\"image\":{\"url\":\"https://i-blog.csdnimg.cn/blog_migrate/d6dabefdf82a3684d96c94e58182b525.png#pic_center\""
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=balanced returns clusters",
+      "critical": true,
+      "ok": false,
+      "ms": 4495,
+      "error": "missing meta.engines_requested"
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=any ordered fallback",
+      "critical": true,
+      "ok": true,
+      "ms": 3480,
+      "detail": {
+        "results": 5
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=fast",
+      "critical": true,
+      "ok": true,
+      "ms": 3430,
+      "detail": {
+        "results": 5,
+        "took_ms": 3419
+      }
+    },
+    {
+      "group": "extract",
+      "name": "GET /extract?url=...&format=markdown",
+      "critical": true,
+      "ok": true,
+      "ms": 406,
+      "detail": {
+        "bytes": 198,
+        "head": "# Example Domain\n\n<https://example.com>\n\nThis domain is for use in documentation examples without needing permission. Th"
+      }
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract (json body)",
+      "critical": true,
+      "ok": false,
+      "ms": 630,
+      "error": "no extracted content"
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract/batch handles a dead URL without failing the batch",
+      "critical": true,
+      "ok": true,
+      "ms": 514,
+      "detail": {
+        "items": 2,
+        "firstBytes": 156,
+        "error": "lookup this-host-does-not-exist.invalid on 127.0.0.11:53: no such host"
+      }
+    },
+    {
+      "group": "extract",
+      "name": "search with extract=2 inlines page markdown",
+      "critical": true,
+      "ok": true,
+      "ms": 12029,
+      "detail": {
+        "extracted": 1,
+        "engine": "google"
+      }
+    },
+    {
+      "group": "cache",
+      "name": "repeated request served from cache (X-Cache)",
+      "critical": true,
+      "ok": false,
+      "ms": 3938,
+      "error": "first status 403 {\"error\":\"blocked\",\"code\":403,\"request_id\":\"01a1d3c0-6989-7789-a5e1-00a92058f1fa\",\"message\":\"search engine blocked the request\",\"meta\":{\"engine\":\"ecosia\",\"error"
+    }
+  ]
+}

@@ -109,6 +109,9 @@ func (baid *Baidu) Search(ctx context.Context, query core.Query) (results []core
 		searchResults[i].Rank = query.Start + searchResults[i].Rank
 	}
 	searchResults = core.StripResultFeatures(searchResults, query.Features)
+	// Honor the client's limit like every other browser engine does: ads and
+	// typed rows pass through, organic rows are capped at query.Limit.
+	searchResults = core.LimitOrganicResults(searchResults, query.Limit)
 	return searchResults, nil
 }
 

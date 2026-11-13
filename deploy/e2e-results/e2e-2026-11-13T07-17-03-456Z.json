@@ -1,0 +1,487 @@
+{
+  "service": "openserp",
+  "base_url": "http://127.0.0.1:7000",
+  "started_at": "2026-11-13T07:17:03.456Z",
+  "duration_ms": 105054,
+  "totals": {
+    "total": 30,
+    "passed": 27,
+    "failed": 3,
+    "failed_critical": 1,
+    "environment_issues": 2
+  },
+  "by_group": {
+    "infra": {
+      "pass": 8,
+      "fail": 0
+    },
+    "errors": {
+      "pass": 4,
+      "fail": 0
+    },
+    "engines": {
+      "pass": 4,
+      "fail": 2
+    },
+    "formats": {
+      "pass": 3,
+      "fail": 0
+    },
+    "images": {
+      "pass": 1,
+      "fail": 0
+    },
+    "mega": {
+      "pass": 3,
+      "fail": 0
+    },
+    "extract": {
+      "pass": 3,
+      "fail": 1
+    },
+    "cache": {
+      "pass": 1,
+      "fail": 0
+    }
+  },
+  "results": [
+    {
+      "group": "infra",
+      "name": "GET /health returns healthy + 6 ready engines",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 95,
+      "detail": {
+        "uptime": "36s",
+        "engines": [
+          "google",
+          "yandex",
+          "baidu",
+          "bing",
+          "duckduckgo",
+          "ecosia"
+        ],
+        "go": "go1.24.6"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /ready returns 200",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "body": "{\"status\":\"ready\"}"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /mega/engines lists all engines",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "engines": [
+          {
+            "initialized": true,
+            "name": "google"
+          },
+          {
+            "initialized": true,
+            "name": "yandex"
+          },
+          {
+            "circuit_state": "closed",
+            "initialized": true,
+            "name": "baidu"
+          },
+          {
+            "initialized": true,
+            "name": "bing"
+          },
+          {
+            "initialized": true,
+            "name": "duckduckgo"
+          },
+          {
+            "initialized": true,
+            "name": "ecosia"
+          }
+        ],
+        "total": 6
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /openapi.yaml serves the spec",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "bytes": 75446
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /docs serves Swagger UI",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 9,
+      "detail": {
+        "bytes": 822
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /stats, /stats/cache, /stats/proxy, /stats/cb respond",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 13,
+      "detail": {
+        "/stats": [
+          "cache",
+          "captcha",
+          "circuit_breakers",
+          "proxy"
+        ],
+        "/stats/cache": [
+          "bypasses",
+          "entries",
+          "evictions",
+          "hits",
+          "max_size",
+          "misses"
+        ],
+        "/stats/proxy": [
+          "configured_count",
+          "healthy_count",
+          "unhealthy_count",
+          "request_proxy_url_enabled",
+          "lanes",
+          "browser_processes"
+        ],
+        "/stats/cb": [
+          "circuit_breakers"
+        ]
+      }
+    },
+    {
+      "group": "infra",
+      "name": "CORS preflight is answered",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "status": 204,
+        "allow": "*"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "X-Request-ID is echoed back",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "id": "e2e-probe-1234"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "missing text query -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d3c4-5beb-774a-9782-1a2e77ccd676",
+        "message": "EMPTY_QUERY: query cannot be empty: provide text, site, or file parameter",
+        "reason": "EMPTY_QUERY"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "unknown route -> 404",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "status": 404
+      }
+    },
+    {
+      "group": "errors",
+      "name": "unknown mega engine -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 7,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d3c4-5bef-76a6-a5e0-5fe60c150c0f",
+        "message": "NO_ENGINES: no valid search engines specified",
+        "reason": "NO_ENGINES"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "limit out of range -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "status": 400,
+        "body": "bad_request"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /google/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 9280,
+      "detail": {
+        "organic": 5,
+        "total": 5,
+        "took_ms": 9272,
+        "first": "https://www.google.com/goto?gsessionid=JK6cJgaChh1OpWDNmMygayoaPkJFNo_ztQgUHg6P908QtEcRLO1iVQ&url=CAESZwHEIkXXoQpR7dh63b4U8kc295aUOk7cMuJlD8pXYRvQSYy7fsX0rfAiS2eMLnBYYQCeBqqCF1c29ol10bjf9eb3LxldrhN1fmaMhiwPf5RH6Q_6kfq64rkivuP2yWxIzGp9OLCBO8U"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /bing/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3766,
+      "detail": {
+        "organic": 5,
+        "total": 5,
+        "took_ms": 3740,
+        "first": "https://golang.google.cn/"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /duckduckgo/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 9391,
+      "detail": {
+        "organic": 5,
+        "total": 7,
+        "took_ms": 9387,
+        "first": "https://go.dev/"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /baidu/search?limit=5",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 1522,
+      "detail": {
+        "organic": 5,
+        "total": 8,
+        "took_ms": 1516,
+        "first": "https://baike.baidu.com/item/go/953521"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /yandex/search?limit=5",
+      "critical": false,
+      "ok": false,
+      "attempts": 2,
+      "ms": 21515,
+      "error": "expected HTTP 200, got 429 {\"error\":\"captcha_detected\",\"code\":429,\"request_id\":\"01a1d3c4-e8da-7304-b924-29dd19f82b38\",\"message\":\"captcha detected\",\"meta\":{\"engine\":\"yandex\",\"proxy_used\":\"direct\"}}",
+      "classification": "environment"
+    },
+    {
+      "group": "engines",
+      "name": "GET /ecosia/search?limit=5",
+      "critical": false,
+      "ok": false,
+      "attempts": 2,
+      "ms": 15377,
+      "error": "expected HTTP 200, got 403 {\"error\":\"blocked\",\"code\":403,\"request_id\":\"01a1d3c5-3b51-7750-bb40-af2b9a972e7b\",\"message\":\"search engine blocked the request\",\"meta\":{\"engine\":\"ecosia\",\"error_detail\":\"blocked\",\"proxy_used\":\"direct\"",
+      "classification": "environment"
+    },
+    {
+      "group": "formats",
+      "name": "format=markdown returns markdown document",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 7306,
+      "detail": {
+        "engine": "google",
+        "bytes": 3399
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=text returns plain text",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 7792,
+      "detail": {
+        "bytes": 8294
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=ndjson emits one JSON object per line",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 6831,
+      "detail": {
+        "lines": 5
+      }
+    },
+    {
+      "group": "images",
+      "name": "GET /bing/image?limit=5",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2387,
+      "detail": {
+        "count": 5,
+        "sample": "{\"id\":\"i_76550e859c8ee4cc\",\"rank\":1,\"type\":\"image\",\"title\":\"十分钟带你入门Go语言(Golang)开发_go语言开发-CSDN博客\",\"image\":{\"url\":\"https://i-blog.csdnimg.cn/blog_migrate/d6dabefdf82a3684d96c94e58182b525.png#pic_center\""
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=balanced returns clusters",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4937,
+      "detail": {
+        "clusters": 19,
+        "results": 19,
+        "engines": [
+          "baidu",
+          "bing"
+        ],
+        "failed": [
+          "google"
+        ]
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=any ordered fallback",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3860,
+      "detail": {
+        "results": 5
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=fast",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4548,
+      "detail": {
+        "results": 5,
+        "took_ms": 4545
+      }
+    },
+    {
+      "group": "extract",
+      "name": "GET /extract?url=...&format=markdown",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 478,
+      "detail": {
+        "bytes": 198,
+        "head": "# Example Domain\n\n<https://example.com>\n\nThis domain is for use in documentation examples without needing permission. Th"
+      }
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract (json body)",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 950,
+      "detail": {
+        "bytes": 4584,
+        "keys": [
+          "url",
+          "title",
+          "description",
+          "markdown",
+          "text",
+          "headings",
+          "links",
+          "canonical",
+          "lang",
+          "og_tags",
+          "meta"
+        ]
+      }
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract/batch handles a dead URL without failing the batch",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 408,
+      "detail": {
+        "items": 2,
+        "firstBytes": 156,
+        "error": "lookup this-host-does-not-exist.invalid on 127.0.0.11:53: no such host"
+      }
+    },
+    {
+      "group": "extract",
+      "name": "search with extract=2 inlines page markdown",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 1012,
+      "error": "status 403",
+      "classification": "product"
+    },
+    {
+      "group": "cache",
+      "name": "repeated request served from cache (X-Cache)",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3542,
+      "detail": {
+        "first": "MISS",
+        "second": "HIT",
+        "probe": "cache probe 1794554324"
+      }
+    }
+  ]
+}

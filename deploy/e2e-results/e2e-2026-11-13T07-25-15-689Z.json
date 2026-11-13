@@ -1,0 +1,507 @@
+{
+  "service": "openserp",
+  "base_url": "http://127.0.0.1:7000",
+  "started_at": "2026-11-13T07:25:15.689Z",
+  "duration_ms": 58344,
+  "totals": {
+    "total": 31,
+    "passed": 28,
+    "failed": 3,
+    "failed_critical": 1,
+    "environment_issues": 2
+  },
+  "by_group": {
+    "infra": {
+      "pass": 7,
+      "fail": 1
+    },
+    "errors": {
+      "pass": 4,
+      "fail": 0
+    },
+    "engines": {
+      "pass": 5,
+      "fail": 2
+    },
+    "formats": {
+      "pass": 3,
+      "fail": 0
+    },
+    "images": {
+      "pass": 1,
+      "fail": 0
+    },
+    "mega": {
+      "pass": 3,
+      "fail": 0
+    },
+    "extract": {
+      "pass": 4,
+      "fail": 0
+    },
+    "cache": {
+      "pass": 1,
+      "fail": 0
+    }
+  },
+  "results": [
+    {
+      "group": "infra",
+      "name": "GET /health returns healthy + 6 ready engines",
+      "critical": true,
+      "ok": false,
+      "attempts": 1,
+      "ms": 46,
+      "error": "status field: degraded",
+      "classification": "product"
+    },
+    {
+      "group": "infra",
+      "name": "GET /ready returns 200",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 5,
+      "detail": {
+        "body": "{\"status\":\"ready\"}"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /mega/engines lists all engines",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "engines": [
+          {
+            "circuit_state": "closed",
+            "initialized": true,
+            "name": "google"
+          },
+          {
+            "circuit_state": "open",
+            "initialized": true,
+            "name": "yandex"
+          },
+          {
+            "circuit_state": "closed",
+            "initialized": true,
+            "name": "baidu"
+          },
+          {
+            "circuit_state": "closed",
+            "initialized": true,
+            "name": "bing"
+          },
+          {
+            "circuit_state": "closed",
+            "initialized": true,
+            "name": "duckduckgo"
+          },
+          {
+            "circuit_state": "open",
+            "initialized": true,
+            "name": "ecosia"
+          }
+        ],
+        "total": 6
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /openapi.yaml serves the spec",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "bytes": 75446
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /docs serves Swagger UI",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "bytes": 822
+      }
+    },
+    {
+      "group": "infra",
+      "name": "GET /stats, /stats/cache, /stats/proxy, /stats/cb respond",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 9,
+      "detail": {
+        "/stats": [
+          "cache",
+          "captcha",
+          "circuit_breakers",
+          "proxy"
+        ],
+        "/stats/cache": [
+          "bypasses",
+          "entries",
+          "evictions",
+          "hits",
+          "max_size",
+          "misses"
+        ],
+        "/stats/proxy": [
+          "configured_count",
+          "healthy_count",
+          "unhealthy_count",
+          "request_proxy_url_enabled",
+          "lanes",
+          "browser_processes"
+        ],
+        "/stats/cb": [
+          "circuit_breakers"
+        ]
+      }
+    },
+    {
+      "group": "infra",
+      "name": "CORS preflight is answered",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "status": 204,
+        "allow": "*"
+      }
+    },
+    {
+      "group": "infra",
+      "name": "X-Request-ID is echoed back",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "id": "e2e-probe-1234"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "missing text query -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d3cb-de79-7a8d-820a-ffdf34190f48",
+        "message": "EMPTY_QUERY: query cannot be empty: provide text, site, or file parameter",
+        "reason": "EMPTY_QUERY"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "unknown route -> 404",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "status": 404
+      }
+    },
+    {
+      "group": "errors",
+      "name": "unknown mega engine -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "error": "bad_request",
+        "code": 400,
+        "request_id": "01a1d3cb-de7e-7728-92e2-67a654be463d",
+        "message": "NO_ENGINES: no valid search engines specified",
+        "reason": "NO_ENGINES"
+      }
+    },
+    {
+      "group": "errors",
+      "name": "limit out of range -> 400",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "status": 400,
+        "body": "bad_request"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /google/search?limit=5",
+      "critical": false,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "organic": 4,
+        "total": 4,
+        "took_ms": 0,
+        "first": "https://www.google.com/goto?gsessionid=f4D57fSOZPv2F3AgMuBlBBdoigByAC6dmuKoDb9PhuTHnMPhKSjILw&url=CAEShAEBxCJF1w9_FLW7N5eddJ3KJF0H4e-7N6CqFpjQCIDx7MsfHOWJjpyaReNFyoc7JVNTujyAL5-wWEdj1jrpiuPEibwMS-EDuIqlsidMvxRGnGhS5DikNScW9YRozFhYIcfuH8HSWqAMCShaYv6pT2NTe3fXlhFq3drUo4APco-ikQAzWfg"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /bing/search?limit=5",
+      "critical": false,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "organic": 5,
+        "total": 5,
+        "took_ms": 0,
+        "first": "https://go.dev/"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /duckduckgo/search?limit=5",
+      "critical": false,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "organic": 5,
+        "total": 6,
+        "took_ms": 0,
+        "first": "https://go.dev/"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /baidu/search?limit=5",
+      "critical": false,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "organic": 5,
+        "total": 6,
+        "took_ms": 0,
+        "first": "https://baike.baidu.com/item/go/953521"
+      }
+    },
+    {
+      "group": "engines",
+      "name": "GET /yandex/search?limit=5",
+      "critical": false,
+      "ok": false,
+      "attempts": 2,
+      "ms": 13093,
+      "error": "expected HTTP 200, got 503 {\"error\":\"circuit_open\",\"code\":503,\"request_id\":\"01a1d3cc-11b1-735b-af81-9a184ff9467a\",\"message\":\"engine circuit breaker is open\",\"meta\":{\"engine\":\"yandex\",\"error_detail\":\"circuit breaker is open - en",
+      "classification": "environment"
+    },
+    {
+      "group": "engines",
+      "name": "GET /ecosia/search?limit=5",
+      "critical": false,
+      "ok": false,
+      "attempts": 2,
+      "ms": 11277,
+      "error": "expected HTTP 200, got 503 {\"error\":\"circuit_open\",\"code\":503,\"request_id\":\"01a1d3cc-3dbf-7b98-9603-f0f62e3a30e7\",\"message\":\"engine circuit breaker is open\",\"meta\":{\"engine\":\"ecosia\",\"error_detail\":\"circuit breaker is open - en",
+      "classification": "environment"
+    },
+    {
+      "group": "engines",
+      "name": "engine coverage: >=3 engines return organic results",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 0,
+      "detail": {
+        "healthy": [
+          "google",
+          "bing",
+          "duckduckgo",
+          "baidu"
+        ],
+        "blocked": [
+          "GET /yandex/search?limit=5 (environment)",
+          "GET /ecosia/search?limit=5 (environment)"
+        ]
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=markdown returns markdown document",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 6232,
+      "detail": {
+        "engine": "bing",
+        "bytes": 732
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=text returns plain text",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4940,
+      "detail": {
+        "engine": "google",
+        "bytes": 8369
+      }
+    },
+    {
+      "group": "formats",
+      "name": "format=ndjson emits one JSON object per line",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 5404,
+      "detail": {
+        "engine": "google",
+        "lines": 5
+      }
+    },
+    {
+      "group": "images",
+      "name": "GET /bing/image?limit=5",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3,
+      "detail": {
+        "count": 5,
+        "sample": "{\"engine\":\"bing\",\"id\":\"i_76550e859c8ee4cc\",\"image\":{\"thumbnail\":\"https://ts4.mm.bing.net/th?id=OIP.3OD-EVjkPIxqMh1avxh2rQHaEN&pid=15.1\",\"url\":\"https://i-blog.csdnimg.cn/blog_migrate/d6dabefdf82a3684d9"
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=balanced returns clusters",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4,
+      "detail": {
+        "clusters": 23,
+        "results": 23,
+        "engines": [
+          "baidu",
+          "google",
+          "bing"
+        ],
+        "failed": []
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=any ordered fallback",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 2,
+      "detail": {
+        "results": 5
+      }
+    },
+    {
+      "group": "mega",
+      "name": "GET /mega/search mode=fast",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 3269,
+      "detail": {
+        "results": 5,
+        "took_ms": 3262
+      }
+    },
+    {
+      "group": "extract",
+      "name": "GET /extract?url=...&format=markdown",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 102,
+      "detail": {
+        "bytes": 198,
+        "head": "# Example Domain\n\n<https://example.com>\n\nThis domain is for use in documentation examples without needing permission. Th"
+      }
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract (json body)",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 414,
+      "detail": {
+        "bytes": 4584,
+        "keys": [
+          "url",
+          "title",
+          "description",
+          "markdown",
+          "text",
+          "headings",
+          "links",
+          "canonical",
+          "lang",
+          "og_tags",
+          "meta"
+        ]
+      }
+    },
+    {
+      "group": "extract",
+      "name": "POST /extract/batch handles a dead URL without failing the batch",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 352,
+      "detail": {
+        "items": 2,
+        "firstBytes": 156,
+        "error": "lookup this-host-does-not-exist.invalid on 127.0.0.11:53: no such host"
+      }
+    },
+    {
+      "group": "extract",
+      "name": "search with extract=2 inlines page markdown",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 8788,
+      "detail": {
+        "engine": "google",
+        "extracted": 1,
+        "bytes": 632
+      }
+    },
+    {
+      "group": "cache",
+      "name": "repeated request served from cache (X-Cache)",
+      "critical": true,
+      "ok": true,
+      "attempts": 1,
+      "ms": 4361,
+      "detail": {
+        "engine": "bing",
+        "first": "MISS",
+        "second": "HIT",
+        "probe": "cache probe 1794554769"
+      }
+    }
+  ]
+}

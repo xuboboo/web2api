@@ -1,0 +1,16 @@
+# Local deployment overlay: builds/runs the checkout in this repository.
+# Usage (run from the repository root; paths resolve against the project dir):
+#   docker compose -f docker-compose.yaml -f deploy/docker-compose.local.yaml up -d
+services:
+  openserp:
+    image: openserp:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7000:7000"
+    volumes:
+      - ./config.yaml:/usr/src/app/config.yaml:ro
+    labels:
+      org.openserp.role: "api"

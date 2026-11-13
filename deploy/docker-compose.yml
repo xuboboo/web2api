@@ -1,0 +1,39 @@
+# Standalone deployment for this checkout (does not depend on the upstream compose file).
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build   # build + start
+#   docker compose -f deploy/docker-compose.yml ps              # status
+#   docker compose -f deploy/docker-compose.yml down            # stop
+#
+# Serves the API on http://127.0.0.1:7000 (loopback only).
+name: openserp-local
+
+services:
+  openserp:
+    container_name: serp
+    init: true
+    # Chrome OOMs on page loads when /dev/shm is the default 64MB.
+    shm_size: 2gb
+    image: openserp:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7000:7000"
+    command: serve
+    volumes:
+      - ../config.yaml:/usr/src/app/config.yaml:ro
+    environment:
+      OPENSERP_SERVER_HOST: "0.0.0.0"
+      OPENSERP_SERVER_PORT: 7000
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
