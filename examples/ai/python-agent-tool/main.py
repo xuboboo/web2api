@@ -8,7 +8,7 @@ from web2api import Web2API
 
 def web_search(query: str, limit: int = 10) -> list[dict]:
     """Search the web and return a compact list of results."""
-    # Hosted API instead? Get a key at https://web2api.org/dashboard/keys:
+    # Self-hosted only: start the local server with `web2api serve`, then run this example.
     #   with Web2API(api_key="<YOUR_API_TOKEN>") as client:
     with Web2API(base_url="http://localhost:7000") as client:
         response = client.search(engine="google", text=query, limit=limit)

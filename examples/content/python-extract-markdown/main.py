@@ -3,7 +3,7 @@ from web2api import Web2API
 url = "https://go.dev/doc/"
 output_file = "extracted.md"
 
-# Hosted API instead? Get a key at https://web2api.org/dashboard/keys:
+# Self-hosted only: start the local server with `web2api serve`, then run this example.
 #   with Web2API(api_key="<YOUR_API_TOKEN>", timeout=60.0) as client:
 with Web2API(base_url="http://localhost:7000", timeout=60.0) as client:
     # /extract turns a single page into clean Markdown (or plain text).

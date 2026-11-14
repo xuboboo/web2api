@@ -3,8 +3,8 @@
 # Web2API
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/xuboboo/web2api.svg)](https://pkg.go.dev/github.com/xuboboo/web2api)
-[![release](https://img.shields.io/github/v/release/karust/web2api)](https://github.com/xuboboo/web2api/releases)
-[![Docker Pulls](https://img.shields.io/docker/v/karust/web2api)](https://hub.docker.com/r/karust/web2api)
+[![release](https://img.shields.io/github/v/release/xuboboo/web2api)](https://github.com/xuboboo/web2api/releases)
+[![Docker Pulls](https://img.shields.io/docker/v/xuboboo/web2api)](https://hub.docker.com/r/xuboboo/web2api)
 [![CI](https://github.com/xuboboo/web2api/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xuboboo/web2api/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-web2api__cloud-26A5E4?logo=telegram&logoColor=white)](https://t.me/web2api_cloud)
@@ -23,7 +23,7 @@ Works with Claude Code, Cursor, Codex, Claude Desktop and any MCP client, [Open 
 
 ```sh
 # Start the API server
-docker run --rm --init -p 127.0.0.1:7000:7000 karust/web2api serve -a 0.0.0.0 -p 7000
+docker run --rm --init -p 127.0.0.1:7000:7000 xuboboo/web2api serve -a 0.0.0.0 -p 7000
 
 # Search Google and read the top result as Markdown
 curl "http://127.0.0.1:7000/google/search?text=how+do+mcp+servers+work&extract=1"
@@ -45,7 +45,7 @@ git clone https://github.com/xuboboo/web2api.git
 cd web2api && go build -o web2api . && ./web2api serve
 ```
 
-Prebuilt binaries for Linux, macOS and Windows are on the [releases page](https://github.com/xuboboo/web2api/releases). Images: [`karust/web2api`](https://hub.docker.com/r/karust/web2api).
+Prebuilt binaries for Linux, macOS and Windows are on the [releases page](https://github.com/xuboboo/web2api/releases). Images: [`xuboboo/web2api`](https://hub.docker.com/r/xuboboo/web2api).
 
 </details>
 
@@ -161,7 +161,7 @@ Results keep their source engine and rank. Ads are typed separately from organic
 
 ## Compared to Paid Search APIs
 
-| Feature                            | Web2API              | [Cloud](https://web2api.org/cloud/) | [Tavily](https://www.tavily.com/pricing) | [SerpApi](https://serpapi.com/pricing) | [Exa](https://exa.ai/pricing) |
+| Feature                            | Web2API              | [Cloud](https://github.com/xuboboo/web2api) | [Tavily](https://www.tavily.com/pricing) | [SerpApi](https://serpapi.com/pricing) | [Exa](https://exa.ai/pricing) |
 | ---------------------------------- | --------------------- | ------------------------------------ | ---------------------------------------- | -------------------------------------- | ----------------------------- |
 | Google results                     | ✅                    | ✅                                   | 🟨 Undisclosed                           | ✅                                     | ❌                            |
 | Search engines                     | 6                     | 6                                    | Own retrieval                            | Many                                   | Exa index                     |
@@ -372,7 +372,7 @@ Once the server is running, the interactive docs are available locally:
 - Swagger UI: `http://127.0.0.1:7000/docs` - full schemas, error shapes, and the `/health`, `/ready`, `/stats/*` endpoints
 - OpenAPI YAML: `http://127.0.0.1:7000/openapi.yaml`
 
-To browse the spec without running the server, see [docs/openapi.yaml](./docs/openapi.yaml). For how Web2API works internally, see the [architecture docs](https://web2api.org/docs/architecture/).
+To browse the spec without running the server, see [docs/openapi.yaml](./docs/openapi.yaml). For how Web2API works internally, see the [architecture docs](./ARCHITECTURE.md).
 
 ## Contributing
 
@@ -385,7 +385,7 @@ MIT. See [LICENSE](LICENSE).
 ## Feedback & Updates
 
 - [GitHub Issues](https://github.com/xuboboo/web2api/issues) - bugs, feature ideas, and reproducible issues.
-- [feedback@web2api.org](mailto:feedback@web2api.org) - private notes, longer feedback, or anything that does not fit GitHub Issues.
+- [GitHub Issues](https://github.com/xuboboo/web2api/issues) - private notes, longer feedback, or anything that does not fit GitHub Issues.
 - [Telegram](https://t.me/web2api_cloud) - Web2API news, release notes, and project updates.
 
-> Web2API is free and open-source. Only links listed in this repository and on [web2api.org](https://web2api.org) are associated with the project.
+> Web2API is free and open-source. Only links listed in this repository and in this repository are associated with the project.

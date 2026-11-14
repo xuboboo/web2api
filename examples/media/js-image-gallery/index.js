@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { Web2API } from "@web2api/sdk";
 
-// Hosted API instead? Get a key at https://web2api.org/dashboard/keys:
+// Self-hosted only: start the local server with `web2api serve`, then run this example.
 //   const client = new Web2API({ apiKey: "<YOUR_API_TOKEN>" });
 const client = new Web2API({ baseUrl: "http://localhost:7000" });
 

@@ -1595,7 +1595,7 @@ components:
           example: "Web2API is an open-source SERP API."
         link:
           type: string
-          example: https://web2api.org/
+          example: https://github.com/xuboboo/web2api
     FeatureLink:
       type: object
       properties:
@@ -1604,7 +1604,7 @@ components:
           example: Web2API
         url:
           type: string
-          example: https://web2api.org/
+          example: https://github.com/xuboboo/web2api
     SerpFeature:
       type: object
       required: [id, engine, type, extracted_at]

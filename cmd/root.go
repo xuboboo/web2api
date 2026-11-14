@@ -157,7 +157,7 @@ var flagToConfigKey = map[string]string{
 
 var RootCmd = &cobra.Command{
 	Use:          "web2api",
-	Short:        "Open SERP",
+	Short:        "Web2API",
 	Long:         `Get [Google, Yandex, Baidu] search engine results via API or CLI.`,
 	Version:      version,
 	SilenceUsage: true,

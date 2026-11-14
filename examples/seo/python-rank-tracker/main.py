@@ -14,7 +14,7 @@ def matches(domain: str | None, target: str) -> bool:
     return domain == target or domain.endswith(f".{target}")
 
 
-# Hosted API instead? Get a key at https://web2api.org/dashboard/keys:
+# Self-hosted only: start the local server with `web2api serve`, then run this example.
 #   with Web2API(api_key="<YOUR_API_TOKEN>") as client:
 with Web2API(base_url="http://localhost:7000") as client:
     rows = []

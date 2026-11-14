@@ -164,4 +164,4 @@ docs/         架构、配置、测试文档、OpenAPI、上游 README 存档
 
 ## 许可证
 
-MIT，见 [LICENSE](LICENSE)。上游项目：[karust/web2api](https://github.com/xuboboo/web2api)。
+MIT，见 [LICENSE](LICENSE)。上游项目：[karust/openserp](https://github.com/karust/openserp)。
