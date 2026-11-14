@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestInitializeConfigGoogleResolve(t *testing.T) {
@@ -21,7 +21,7 @@ func TestInitializeConfigGoogleResolve(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateConfig(t)
-			t.Setenv("OPENSERP_GOOGLE_RESOLVE_URLS", tc.env)
+			t.Setenv("WEB2API_GOOGLE_RESOLVE_URLS", tc.env)
 			if tc.file != "" {
 				if err := os.WriteFile("config.yaml", []byte("google:\n  resolve_urls: "+tc.file+"\n  resolve_concurrency: 2\n  resolve_timeout: 750ms\n  resolve_cooldown: 1m\n"), 0600); err != nil {
 					t.Fatal(err)

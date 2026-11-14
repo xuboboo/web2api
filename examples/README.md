@@ -1,18 +1,18 @@
-# OpenSERP Examples
+# Web2API Examples
 
-Short, copy-pasteable examples for using OpenSERP from JavaScript and Python.
+Short, copy-pasteable examples for using Web2API from JavaScript and Python.
 Each one runs against a local server.
 
 ## Start a server
 
-Most examples expect OpenSERP running on `http://localhost:7000`.
+Most examples expect Web2API running on `http://localhost:7000`.
 
 ```bash
 # Docker
-docker run --init -p 127.0.0.1:7000:7000 -it karust/openserp serve -a 0.0.0.0 -p 7000
+docker run --init -p 127.0.0.1:7000:7000 -it karust/web2api serve -a 0.0.0.0 -p 7000
 
 # Or from source
-go build -o openserp . && ./openserp serve
+go build -o web2api . && ./web2api serve
 ```
 
 ## Try it without code
@@ -31,10 +31,10 @@ curl "http://localhost:7000/mega/search?text=open+source+search+api&engines=bing
 
 | Tool                    | Package                                                                                      | Install                         |
 | ----------------------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
-| JavaScript / TypeScript | [`@openserp/sdk`](https://www.npmjs.com/package/@openserp/sdk)                               | `npm install @openserp/sdk`     |
-| Python                  | [`openserp`](https://pypi.org/project/openserp/)                                             | `pip install openserp`          |
-| MCP server (AI agents)  | [`@openserp/mcp`](https://www.npmjs.com/package/@openserp/mcp)                               | `npx @openserp/mcp`             |
-| n8n community node      | [`@openserp/n8n-nodes-openserp`](https://www.npmjs.com/package/@openserp/n8n-nodes-openserp) | Install via n8n community nodes |
+| JavaScript / TypeScript | [`@web2api/sdk`](https://www.npmjs.com/package/@web2api/sdk)                               | `npm install @web2api/sdk`     |
+| Python                  | [`web2api`](https://pypi.org/project/web2api/)                                             | `pip install web2api`          |
+| MCP server (AI agents)  | [`@web2api/mcp`](https://www.npmjs.com/package/@web2api/mcp)                               | `npx @web2api/mcp`             |
+| n8n community node      | [`@web2api/n8n-nodes-web2api`](https://www.npmjs.com/package/@web2api/n8n-nodes-web2api) | Install via n8n community nodes |
 
 ## Examples by question
 
@@ -66,4 +66,4 @@ curl "http://localhost:7000/mega/search?text=open+source+search+api&engines=bing
 
 ### Automation
 
-- **I want to wire OpenSERP into a no-code workflow.** - [`@openserp/n8n-nodes-openserp`](https://www.npmjs.com/package/@openserp/n8n-nodes-openserp)
+- **I want to wire Web2API into a no-code workflow.** - [`@web2api/n8n-nodes-web2api`](https://www.npmjs.com/package/@web2api/n8n-nodes-web2api)

@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // resultsPerPage is Bing's first= step between SERP pages.

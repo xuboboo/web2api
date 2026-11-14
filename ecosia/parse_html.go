@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // ParseHTML parses an Ecosia SERP HTML document and returns search results.

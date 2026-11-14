@@ -37,7 +37,7 @@ node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
 集成测试由 `testutil.RequireIntegration(t)` 控制（默认跳过）：
 
 ```bash
-OPENSERP_INTEGRATION_TESTS=1 go test -tags=integration ./...
+WEB2API_INTEGRATION_TESTS=1 go test -tags=integration ./...
 ```
 
 约定：

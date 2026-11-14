@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestParseHTMLFixtureExtractsRealFeatures(t *testing.T) {

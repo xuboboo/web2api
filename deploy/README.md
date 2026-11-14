@@ -28,7 +28,7 @@ curl.exe -s http://127.0.0.1:7000/mega/engines
 
 部署形态：
 
-- 容器名 `serp`，镜像 `openserp:local`（构建自仓库 `Dockerfile`，运行时为 `chromedp/headless-shell`）
+- 容器名 `serp`，镜像 `web2api:local`（构建自仓库 `Dockerfile`，运行时为 `chromedp/headless-shell`）
 - 端口 `127.0.0.1:7000`（仅回环；需要外部访问时改 compose 里的映射或在前面加反向代理）
 - `shm_size: 2gb`（Chrome 渲染必需）
 - `init: true`（tini 回收 Chrome 子进程）
@@ -147,4 +147,4 @@ docker compose -f deploy/docker-compose.yml down
 
 ## 9. 上游与许可
 
-基于 [OpenSERP](https://github.com/karust/openserp)（MIT）改造；上游 README 存档于 [../docs/UPSTREAM-README.md](../docs/UPSTREAM-README.md)。
+基于 [Web2API](https://github.com/xuboboo/web2api)（MIT）改造；上游 README 存档于 [../docs/UPSTREAM-README.md](../docs/UPSTREAM-README.md)。

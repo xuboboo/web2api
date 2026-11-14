@@ -1,8 +1,8 @@
-import { OpenSERP } from "@openserp/sdk";
+import { Web2API } from "@web2api/sdk";
 
-// Hosted API instead? Get a key at https://openserp.org/dashboard/keys:
-//   const client = new OpenSERP({ apiKey: "<YOUR_API_TOKEN>" });
-const client = new OpenSERP({ baseUrl: "http://localhost:7000" });
+// Hosted API instead? Get a key at https://web2api.org/dashboard/keys:
+//   const client = new Web2API({ apiKey: "<YOUR_API_TOKEN>" });
+const client = new Web2API({ baseUrl: "http://localhost:7000" });
 
 const query = "privacy focused search engine";
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // isCaptchaDoc reports whether a parsed Ecosia document is a Cloudflare

@@ -1,6 +1,6 @@
 # Basic search (Python)
 
-Runs one Google search with the `openserp` SDK and prints the titles and URLs.
+Runs one Google search with the `web2api` SDK and prints the titles and URLs.
 
 ```bash
 pip install -r requirements.txt

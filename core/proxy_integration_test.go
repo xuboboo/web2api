@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/testutil"
 	"golang.org/x/time/rate"
 )
 
-const proxyIntegrationEnabledEnv = "OPENSERP_PROXY_TESTS"
+const proxyIntegrationEnabledEnv = "WEB2API_PROXY_TESTS"
 
 type proxyIntegrationURLs struct {
 	targetURL       string
@@ -108,13 +108,13 @@ func proxyIntegrationConfig(t *testing.T) proxyIntegrationURLs {
 	}
 
 	return proxyIntegrationURLs{
-		targetURL:       envOrDefault("OPENSERP_PROXY_TEST_TARGET_URL", "http://proxy-target:8080/"),
-		socks5hAuthURL:  envOrDefault("OPENSERP_PROXY_TEST_SOCKS5H_AUTH_URL", "socks5h://test:test@127.0.0.1:19080"),
-		socks5hPlainURL: envOrDefault("OPENSERP_PROXY_TEST_SOCKS5H_PLAIN_URL", "socks5h://127.0.0.1:19082"),
-		httpAuthURL:     envOrDefault("OPENSERP_PROXY_TEST_HTTP_AUTH_URL", "http://test:test@127.0.0.1:18888"),
-		httpPlainURL:    envOrDefault("OPENSERP_PROXY_TEST_HTTP_PLAIN_URL", "http://127.0.0.1:18889"),
-		badSocks5URL:    envOrDefault("OPENSERP_PROXY_TEST_BAD_SOCKS5_URL", "socks5://127.0.0.1:19081"),
-		badHTTPURL:      envOrDefault("OPENSERP_PROXY_TEST_BAD_HTTP_URL", "http://127.0.0.1:18890"),
+		targetURL:       envOrDefault("WEB2API_PROXY_TEST_TARGET_URL", "http://proxy-target:8080/"),
+		socks5hAuthURL:  envOrDefault("WEB2API_PROXY_TEST_SOCKS5H_AUTH_URL", "socks5h://test:test@127.0.0.1:19080"),
+		socks5hPlainURL: envOrDefault("WEB2API_PROXY_TEST_SOCKS5H_PLAIN_URL", "socks5h://127.0.0.1:19082"),
+		httpAuthURL:     envOrDefault("WEB2API_PROXY_TEST_HTTP_AUTH_URL", "http://test:test@127.0.0.1:18888"),
+		httpPlainURL:    envOrDefault("WEB2API_PROXY_TEST_HTTP_PLAIN_URL", "http://127.0.0.1:18889"),
+		badSocks5URL:    envOrDefault("WEB2API_PROXY_TEST_BAD_SOCKS5_URL", "socks5://127.0.0.1:19081"),
+		badHTTPURL:      envOrDefault("WEB2API_PROXY_TEST_BAD_HTTP_URL", "http://127.0.0.1:18890"),
 	}
 }
 

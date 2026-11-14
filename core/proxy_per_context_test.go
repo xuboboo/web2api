@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 // TestPerContextProxyIsolation verifies the supported per-request proxy path:

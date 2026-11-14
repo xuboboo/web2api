@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // ecosiaPageSize is the organic-results-per-page count on Ecosia's web SERP.

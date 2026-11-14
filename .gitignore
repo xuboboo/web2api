@@ -30,7 +30,7 @@ logs.txt
 core/test/
 .aider*
 .gocache/
-openserp
+web2api
 .gomodcache/
 AGENTS.md
 .claude

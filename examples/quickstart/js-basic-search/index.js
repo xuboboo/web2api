@@ -1,6 +1,6 @@
-import { OpenSERP } from "@openserp/sdk";
+import { Web2API } from "@web2api/sdk";
 
-const client = new OpenSERP({ baseUrl: "http://localhost:7000" });
+const client = new Web2API({ baseUrl: "http://localhost:7000" });
 
 const { results } = await client.search({
   engine: "google",

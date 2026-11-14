@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestServeReturnsStartupErrors(t *testing.T) {

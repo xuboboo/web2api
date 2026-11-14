@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 	"github.com/sirupsen/logrus"
 )
 

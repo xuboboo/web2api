@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible OpenSERP bug.
+description: Report a reproducible Web2API bug.
 title: "bug: "
 labels: ["bug"]
 body:
@@ -21,7 +21,7 @@ body:
       label: How do we reproduce it?
       description: Include the exact command, request, config, and minimal input.
       placeholder: |
-        1. Run `openserp serve ...`
+        1. Run `web2api serve ...`
         2. Request `curl "..."`
         3. See ...
     validations:
@@ -55,8 +55,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: OpenSERP version
-      description: Paste `openserp --version`, the Docker tag, or the commit SHA.
+      label: Web2API version
+      description: Paste `web2api --version`, the Docker tag, or the commit SHA.
       placeholder: "0.8.0 / v0.7.15 / commit SHA"
     validations:
       required: true

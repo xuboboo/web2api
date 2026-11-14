@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      OPENSERP_INTEGRATION_TESTS: "1"
+      WEB2API_INTEGRATION_TESTS: "1"
 
     steps:
       - name: Checkout

@@ -1,4 +1,4 @@
-module github.com/karust/openserp
+module github.com/xuboboo/web2api
 
 go 1.26.0
 

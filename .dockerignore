@@ -6,8 +6,8 @@ docs/*.md
 *.md
 testdata/
 
-openserp
-openserp.exe
+web2api
+web2api.exe
 bin/
 dist/
 *.tgz

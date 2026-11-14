@@ -36,7 +36,7 @@ func TestExtractFastStaticArticle(t *testing.T) {
 </head><body>
 <article>
 <h1>Static Article</h1>
-<p>This article has enough body text to be treated as useful extracted content. It explains how OpenSERP extracts target pages into markdown for grounding workflows, with clear paragraphs and useful links for downstream automation. The text is intentionally longer than the quality threshold.</p>
+<p>This article has enough body text to be treated as useful extracted content. It explains how Web2API extracts target pages into markdown for grounding workflows, with clear paragraphs and useful links for downstream automation. The text is intentionally longer than the quality threshold.</p>
 <a href="/docs">Docs</a>
 </article>
 </body></html>`
@@ -44,7 +44,7 @@ func TestExtractFastStaticArticle(t *testing.T) {
 	if result.Title != "Static Article" {
 		t.Fatalf("title = %q", result.Title)
 	}
-	if !strings.Contains(result.Markdown, "OpenSERP extracts target pages") {
+	if !strings.Contains(result.Markdown, "Web2API extracts target pages") {
 		t.Fatalf("markdown missing article body: %q", result.Markdown)
 	}
 	if len(result.Links) != 1 || result.Links[0].URL != "https://example.com/docs" {
@@ -141,10 +141,10 @@ func TestExtractCleanFallsBackOnThinArticle(t *testing.T) {
 	// A landing page: trafilatura strips the feature/nav chrome down to almost
 	// nothing, so the thin-output guard should fall back to full-body extraction
 	// and recover the visible text.
-	landing := `<!doctype html><html lang="en"><head><title>OpenSERP</title><base href="/site/"></head><body>
+	landing := `<!doctype html><html lang="en"><head><title>Web2API</title><base href="/site/"></head><body>
 <header><nav><a href="docs">Docs</a><a href="pricing">Pricing</a></nav></header>
 <main>
-<h1>OpenSERP — Free SERP API</h1>
+<h1>Web2API — Free SERP API</h1>
 <section class="features">
 <div class="card"><h3>Google</h3><p>Scrape Google results with one call.</p></div>
 <div class="card"><h3>Bing</h3><p>Bing and Yandex supported out of the box.</p></div>
@@ -153,13 +153,13 @@ func TestExtractCleanFallsBackOnThinArticle(t *testing.T) {
 <footer><p>Free and open source SERP scraping for everyone.</p></footer>
 </main>
 </body></html>`
-	result := runExtract(t, staticRaw(landing), nil, ExtractRequest{URL: "https://openserp.org", Mode: ModeFast})
+	result := runExtract(t, staticRaw(landing), nil, ExtractRequest{URL: "https://web2api.org", Mode: ModeFast})
 	for _, want := range []string{"Google", "Bing", "Yandex", "Region targeting"} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("full-body fallback dropped %q; text = %q", want, result.Text)
 		}
 	}
-	if !strings.Contains(result.Markdown, "(https://openserp.org/site/docs)") {
+	if !strings.Contains(result.Markdown, "(https://web2api.org/site/docs)") {
 		t.Fatalf("full-body fallback lost the base URL: %s", result.Markdown)
 	}
 }

@@ -1,6 +1,6 @@
 # Basic search (JavaScript)
 
-Runs one Google search with `@openserp/sdk` and prints the titles and URLs.
+Runs one Google search with `@web2api/sdk` and prints the titles and URLs.
 
 ```bash
 npm install

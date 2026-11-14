@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // ParseHTML parses a Baidu SERP HTML document and returns search results.

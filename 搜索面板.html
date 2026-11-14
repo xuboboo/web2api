@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web2API 本地搜索面板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f4f5f7; color: #222; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: #777; font-size: 13px; margin-bottom: 18px; }
+  .bar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .bar input[type=text] { flex: 1; padding: 11px 14px; font-size: 15px; border: 1px solid #d0d3d9; border-radius: 8px; outline: none; }
+  .bar input[type=text]:focus { border-color: #4f7cff; }
+  .bar button { padding: 11px 22px; font-size: 15px; background: #4f7cff; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  .bar button:hover { background: #3d66e0; }
+  .opts { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; font-size: 14px; }
+  .opts select { padding: 6px 10px; border: 1px solid #d0d3d9; border-radius: 6px; font-size: 14px; }
+  .opts label { display: flex; align-items: center; gap: 5px; color: #555; }
+  .status { font-size: 13px; color: #888; margin-bottom: 14px; min-height: 18px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .card .t { font-size: 16px; color: #1a4fd6; text-decoration: none; line-height: 1.4; }
+  .card .t:hover { text-decoration: underline; }
+  .card .u { font-size: 12px; color: #0a7d38; margin-top: 3px; word-break: break-all; }
+  .card .s { font-size: 13.5px; color: #555; margin-top: 6px; line-height: 1.6; }
+  .tag { display: inline-block; font-size: 11px; background: #eef1ff; color: #4f5b8f; border-radius: 4px; padding: 1px 7px; margin-right: 6px; vertical-align: middle; }
+  .ad { background: #fff7f0; }
+  .err { background: #fff2f2; border-color: #f2c1c1; color: #a33; padding: 14px 16px; border-radius: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Web2API 本地搜索面板</h1>
+  <div class="sub">调用本机 127.0.0.1:7000 的 web2api 接口 · 数据来自真实搜索引擎</div>
+  <div class="bar">
+    <input type="text" id="q" placeholder="输入搜索词，回车搜索…" autofocus>
+    <button onclick="doSearch()">搜索</button>
+  </div>
+  <div class="opts">
+    <label>引擎
+      <select id="engine">
+        <option value="baidu">百度</option>
+        <option value="bing">必应</option>
+        <option value="sogou">搜狗</option>
+        <option value="so360">360</option>
+        <option value="mega">多引擎聚合</option>
+      </select>
+    </label>
+    <label>条数 <select id="limit"><option>5</option><option>10</option><option>20</option></select></label>
+    <label><input type="checkbox" id="hideAds" checked> 隐藏广告</label>
+  </div>
+  <div class="status" id="status"></div>
+  <div id="out"></div>
+</div>
+<script>
+const API = 'http://127.0.0.1:7000';
+const out = document.getElementById('out');
+const status = document.getElementById('status');
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
+async function doSearch() {
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  const engine = document.getElementById('engine').value;
+  const limit = document.getElementById('limit').value;
+  const hideAds = document.getElementById('hideAds').checked;
+  const path = engine === 'mega' ? '/mega/search' : '/' + engine + '/search';
+  const url = API + path + '?text=' + encodeURIComponent(q) + '&limit=' + limit;
+  status.textContent = '搜索中…';
+  out.innerHTML = '';
+  const t0 = Date.now();
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(120000) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.message || ('HTTP ' + r.status));
+    const ms = Date.now() - t0;
+    const failed = (j.meta?.engines_failed || []);
+    let rows = (j.results || []);
+    const adCount = rows.filter(x => x.type === 'ad').length;
+    if (hideAds) rows = rows.filter(x => x.type !== 'ad');
+    status.textContent = '耗时 ' + ms + 'ms · 结果 ' + rows.length + ' 条' + (adCount && hideAds ? '（已隐藏广告 ' + adCount + ' 条）' : '') + (failed.length ? ' · 失败引擎: ' + failed.join(', ') : '');
+    if (!rows.length) { out.innerHTML = '<div class="err">没有返回结果。搜索词太生僻或引擎被反爬拦截（如搜狗验证码），换个词或稍后重试。</div>'; return; }
+    for (const item of rows) {
+      const div = document.createElement('div');
+      div.className = 'card' + (item.type === 'ad' ? ' ad' : '');
+      div.innerHTML =
+        '<a class="t" href="' + esc(item.url) + '" target="_blank" rel="noopener">' + esc(item.title) + '</a>' +
+        '<div class="u"><span class="tag">' + esc(item.engine) + '</span><span class="tag">' + esc(item.type) + '</span>' + esc(item.display_url || item.url) + '</div>' +
+        (item.snippet ? '<div class="s">' + esc(item.snippet) + '</div>' : '');
+      out.appendChild(div);
+    }
+  } catch (e) {
+    status.textContent = '';
+    out.innerHTML = '<div class="err">请求失败：' + esc(e.message) + '<br>请确认 Docker 容器正在运行（Docker Desktop 启动后 serp 会自动恢复），或稍后重试。</div>';
+  }
+}
+document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+</script>
+</body>
+</html>

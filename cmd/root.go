@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/karust/openserp/core"
-	browserprofile "github.com/karust/openserp/core/browser"
-	extractpkg "github.com/karust/openserp/extract"
+	"github.com/xuboboo/web2api/core"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
+	extractpkg "github.com/xuboboo/web2api/extract"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -20,7 +20,7 @@ import (
 const (
 	version               = "0.8.19"
 	defaultConfigFilename = "config"
-	envPrefix             = "OPENSERP"
+	envPrefix             = "WEB2API"
 )
 
 type Config struct {
@@ -156,7 +156,7 @@ var flagToConfigKey = map[string]string{
 }
 
 var RootCmd = &cobra.Command{
-	Use:          "openserp",
+	Use:          "web2api",
 	Short:        "Open SERP",
 	Long:         `Get [Google, Yandex, Baidu] search engine results via API or CLI.`,
 	Version:      version,
@@ -499,7 +499,7 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("cors.max_age", 86400)
 	v.SetDefault("captcha.solver_enabled", false)
 	for _, s := range engineSpecs() {
-		// A default makes OPENSERP_<ENGINE>_DISABLED bindable without a config entry.
+		// A default makes WEB2API_<ENGINE>_DISABLED bindable without a config entry.
 		v.SetDefault(s.name+".disabled", false)
 	}
 	resolve := core.DefaultURLResolveConfig()

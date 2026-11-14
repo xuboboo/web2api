@@ -16,7 +16,7 @@ import (
 	fhttp "github.com/bogdanfinn/fhttp"
 	tlsclient "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
-	browserprofile "github.com/karust/openserp/core/browser"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
 )
 
 const rawHTTPTimeout = 30 * time.Second

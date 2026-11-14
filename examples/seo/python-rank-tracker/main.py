@@ -1,6 +1,6 @@
 import csv
 
-from openserp import OpenSERP
+from web2api import Web2API
 
 target_domain = "go.dev"
 keywords = ["golang tutorial", "go programming language", "golang documentation"]
@@ -14,9 +14,9 @@ def matches(domain: str | None, target: str) -> bool:
     return domain == target or domain.endswith(f".{target}")
 
 
-# Hosted API instead? Get a key at https://openserp.org/dashboard/keys:
-#   with OpenSERP(api_key="<YOUR_API_TOKEN>") as client:
-with OpenSERP(base_url="http://localhost:7000") as client:
+# Hosted API instead? Get a key at https://web2api.org/dashboard/keys:
+#   with Web2API(api_key="<YOUR_API_TOKEN>") as client:
+with Web2API(base_url="http://localhost:7000") as client:
     rows = []
     for keyword in keywords:
         response = client.search(engine="google", text=keyword, region="US", limit=20)

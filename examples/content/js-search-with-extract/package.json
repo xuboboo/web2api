@@ -1,5 +1,5 @@
 {
-  "name": "openserp-example-js-search-with-extract",
+  "name": "web2api-example-js-search-with-extract",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@openserp/sdk": "^0.2.0"
+    "@web2api/sdk": "^0.2.0"
   }
 }

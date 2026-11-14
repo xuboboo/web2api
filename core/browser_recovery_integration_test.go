@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 func TestBrowserRecoversAfterProcessDeath(t *testing.T) {

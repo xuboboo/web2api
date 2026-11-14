@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/karust/openserp/core"
-	regionpkg "github.com/karust/openserp/core/region"
+	"github.com/xuboboo/web2api/core"
+	regionpkg "github.com/xuboboo/web2api/core/region"
 	"github.com/sirupsen/logrus"
 )
 

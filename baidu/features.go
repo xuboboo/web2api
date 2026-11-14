@@ -2,7 +2,7 @@ package baidu
 
 import (
 	"github.com/PuerkitoBio/goquery"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func extractBaiduFeatures(doc *goquery.Document) []core.SerpFeature {

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/karust/openserp/core"
-	extractpkg "github.com/karust/openserp/extract"
+	"github.com/xuboboo/web2api/core"
+	extractpkg "github.com/xuboboo/web2api/extract"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )

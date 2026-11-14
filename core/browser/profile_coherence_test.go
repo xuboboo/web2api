@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
-	browserprofile "github.com/karust/openserp/core/browser"
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/core"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 //go:embed profile_surface_test.js

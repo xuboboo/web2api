@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 const baseURL = "https://www.yandex.com"

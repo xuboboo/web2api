@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * OpenSERP end-to-end test suite.
+ * Web2API end-to-end test suite.
  *
  *   node deploy/e2e.mjs [baseUrl]
- *   OPENSERP_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
+ *   WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
  *
  * Exit code 0 only when every *critical* test passes. Engine tests that depend
  * on anti-bot behaviour (Yandex, Ecosia) are marked non-critical: a captcha or
@@ -16,7 +16,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BASE = (process.env.OPENSERP_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
+const BASE = (process.env.WEB2API_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), 'e2e-results');
 const results = [];
 const t0 = Date.now();
@@ -403,7 +403,7 @@ for (const r of results) {
 }
 
 const report = {
-  service: 'openserp',
+  service: 'web2api',
   base_url: BASE,
   started_at: new Date(t0).toISOString(),
   duration_ms: Date.now() - t0,

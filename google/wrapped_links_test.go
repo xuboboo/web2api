@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // search_results_wrapped_links.html is a real Google SERP captured through a

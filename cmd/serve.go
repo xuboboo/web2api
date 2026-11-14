@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/time/rate"

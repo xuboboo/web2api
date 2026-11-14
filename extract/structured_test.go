@@ -109,10 +109,10 @@ but can be used to avoid lock contention with multiple consumers accessing a que
 <h2 id="pm">Package managers<a href="#pm" aria-label="Link for this heading" title="Link for this heading"><svg viewBox="0 0 13 13"></svg></a></h2>
 <p>Packages <span aria-hidden="true">ICON</span>are on <a href="https://github.com/x/y"><svg><title>GitHub</title></svg></a>
 the registry, <a href="https://example.com/guide.pdf" aria-label="Download PDF"><svg></svg></a>.</p>
-<div role="tabpanel"><pre>npm install openserp</pre></div>
-<div role="tabpanel" hidden><pre>pnpm add openserp</pre></div>
+<div role="tabpanel"><pre>npm install web2api</pre></div>
+<div role="tabpanel" hidden><pre>pnpm add web2api</pre></div>
 <div hidden>COOKIE DIALOG</div></main></body></html>`,
-		want: []string{"## Package managers\n", "[Download PDF](https://example.com/guide.pdf)", "npm install openserp", "pnpm add openserp"},
+		want: []string{"## Package managers\n", "[Download PDF](https://example.com/guide.pdf)", "npm install web2api", "pnpm add web2api"},
 		drop: []string{"COOKIE DIALOG", "Link for this heading", "ICON", "GitHub", "[]("},
 	}} {
 		t.Run(tc.name, func(t *testing.T) {

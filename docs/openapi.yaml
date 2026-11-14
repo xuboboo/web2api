@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: OpenSERP API
+  title: Web2API API
   version: 2.2.0
   description: >
-    OpenSERP provides dedicated and multi-engine search endpoints for Google, Yandex,
+    Web2API provides dedicated and multi-engine search endpoints for Google, Yandex,
     Baidu, Bing, and DuckDuckGo. Search responses are wrapped in a v2 envelope with
     query echo, metadata, normalized results, and pagination. Invalid client input
     returns 400 with a machine-readable `reason` code.
@@ -1044,7 +1044,7 @@ components:
       required: false
       description: >
         Sticky session identifier minted by the balancer. Reusing the same value lets
-        OpenSERP reuse cookies and browser profile for that lane. Lanes are LRU-bounded
+        Web2API reuse cookies and browser profile for that lane. Lanes are LRU-bounded
         by `proxies.lanes.max_lanes`. Rotating the session ID gives a clean lane.
       schema:
         type: string
@@ -1589,22 +1589,22 @@ components:
       properties:
         title:
           type: string
-          example: "What is OpenSERP?"
+          example: "What is Web2API?"
         text:
           type: string
-          example: "OpenSERP is an open-source SERP API."
+          example: "Web2API is an open-source SERP API."
         link:
           type: string
-          example: https://openserp.org/
+          example: https://web2api.org/
     FeatureLink:
       type: object
       properties:
         title:
           type: string
-          example: OpenSERP
+          example: Web2API
         url:
           type: string
-          example: https://openserp.org/
+          example: https://web2api.org/
     SerpFeature:
       type: object
       required: [id, engine, type, extracted_at]
@@ -1620,11 +1620,11 @@ components:
           $ref: "#/components/schemas/ResultType"
         title:
           type: string
-          example: OpenSERP
+          example: Web2API
         text:
           type: string
           description: Primary human-readable feature content.
-          example: OpenSERP is an open-source SERP API.
+          example: Web2API is an open-source SERP API.
         items:
           type: array
           items:

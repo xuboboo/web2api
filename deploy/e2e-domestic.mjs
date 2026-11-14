@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * OpenSERP 国内搜索引擎端到端 + 稳定性 + 审计测试。
+ * Web2API 国内搜索引擎端到端 + 稳定性 + 审计测试。
  *
  *   node deploy/e2e-domestic.mjs [baseUrl]
- *   OPENSERP_BASE_URL=http://127.0.0.1:7000 node deploy/e2e-domestic.mjs
+ *   WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e-domestic.mjs
  *
  * 覆盖：服务生命周期 / 参数校验 / 国产引擎(百度·搜狗·360)与 Bing 中国 / 输出格式 /
  * 多引擎聚合 / 正文提取 / 缓存 / 串行与并发稳定性 / 运行审计。
@@ -14,7 +14,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BASE = (process.env.OPENSERP_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
+const BASE = (process.env.WEB2API_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), 'e2e-results');
 const results = [];
 const t0 = Date.now();
@@ -559,7 +559,7 @@ for (const r of results) {
 }
 
 const report = {
-  service: 'openserp-domestic',
+  service: 'web2api-domestic',
   base_url: BASE,
   started_at: new Date(t0).toISOString(),
   duration_ms: Date.now() - t0,

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod/lib/proto"
-	browserprofile "github.com/karust/openserp/core/browser"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
 )
 
 func TestLaneStoreReusesCookiesBySession(t *testing.T) {

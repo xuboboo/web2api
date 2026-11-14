@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func loadFixture(t *testing.T) *os.File {

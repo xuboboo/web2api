@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // ImageEntity contains one image record from Yandex image search state JSON.

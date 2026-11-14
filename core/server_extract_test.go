@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	extractpkg "github.com/karust/openserp/extract"
+	extractpkg "github.com/xuboboo/web2api/extract"
 )
 
 func TestRawExtractFetchFinalURL(t *testing.T) {

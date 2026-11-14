@@ -14,7 +14,7 @@ body:
     id: search_url
     attributes:
       label: Public search URL
-      placeholder: "https://search.brave.com/search?q=openserp"
+      placeholder: "https://search.brave.com/search?q=web2api"
     validations:
       required: true
   - type: dropdown

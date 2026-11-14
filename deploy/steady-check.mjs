@@ -5,7 +5,7 @@
  *
  *   node deploy/steady-check.mjs [baseUrl] [rounds] [intervalMs]
  */
-const BASE = (process.env.OPENSERP_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
+const BASE = (process.env.WEB2API_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
 const ROUNDS = Number(process.argv[3] || 3);
 const INTERVAL = Number(process.argv[4] || 30000);
 const engines = (process.env.STEADY_ENGINES || 'baidu,sogou,360,bing').split(',');

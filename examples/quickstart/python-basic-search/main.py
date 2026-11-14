@@ -1,6 +1,6 @@
-from openserp import OpenSERP
+from web2api import Web2API
 
-with OpenSERP(base_url="http://localhost:7000") as client:
+with Web2API(base_url="http://localhost:7000") as client:
     response = client.search(
         engine="google",
         text="open source search api",

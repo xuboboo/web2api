@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestParseDDGHTML(t *testing.T) {

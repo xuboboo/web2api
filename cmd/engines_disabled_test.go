@@ -4,13 +4,13 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/karust/openserp/bing"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/bing"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestDisabledEnginesAreLeftOutOfServe(t *testing.T) {
 	isolateConfig(t)
-	t.Setenv("OPENSERP_BING_DISABLED", "true")
+	t.Setenv("WEB2API_BING_DISABLED", "true")
 	if err := initializeConfig(configCommand(t, "")); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestDisabledEnginesAreLeftOutOfServe(t *testing.T) {
 
 func TestBingSearchBoxConfig(t *testing.T) {
 	isolateConfig(t)
-	t.Setenv("OPENSERP_BING_SEARCH_BOX", "")
+	t.Setenv("WEB2API_BING_SEARCH_BOX", "")
 	if err := initializeConfig(configCommand(t, "")); err != nil {
 		t.Fatal(err)
 	}
@@ -41,11 +41,11 @@ func TestBingSearchBoxConfig(t *testing.T) {
 		t.Fatal("search_box should default to true")
 	}
 
-	t.Setenv("OPENSERP_BING_SEARCH_BOX", "false")
+	t.Setenv("WEB2API_BING_SEARCH_BOX", "false")
 	if err := initializeConfig(configCommand(t, "")); err != nil {
 		t.Fatal(err)
 	}
 	if engine := spec.factory(core.Browser{}, spec.opts()).(*bing.Bing); engine.SearchBox {
-		t.Fatal("OPENSERP_BING_SEARCH_BOX=false should turn the search box off")
+		t.Fatal("WEB2API_BING_SEARCH_BOX=false should turn the search box off")
 	}
 }

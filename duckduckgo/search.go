@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // DuckDuckGo implements core.SearchEngine for DuckDuckGo SERP pages.

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core/fpcheck"
+	"github.com/xuboboo/web2api/core/fpcheck"
 )
 
 const sannysoftURL = "https://bot.sannysoft.com"

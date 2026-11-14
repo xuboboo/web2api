@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // TestParseHTMLSeparatesNeuroAnswer locks in the fix where the neuro/AI answer

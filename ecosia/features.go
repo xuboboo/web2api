@@ -3,7 +3,7 @@ package ecosia
 import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func extractEcosiaFeatures(doc *goquery.Document) []core.SerpFeature {

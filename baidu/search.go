@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 type imageDataJson struct {

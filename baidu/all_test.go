@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestBuildURL(t *testing.T) {

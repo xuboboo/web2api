@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // TestParseHTMLFixtureExtractsRealFeatures guards the live AI Overview fixture.
@@ -59,9 +59,9 @@ func TestParseHTMLExtractsSerpFeatures(t *testing.T) {
   <a href="https://example.com/source">Source</a>
 </div>
 <div data-initq="dubai schokolade">
-  <div class="wQiwMc related-question-pair" data-q="What is OpenSERP?">
-    <a href="https://example.com/paa">What is OpenSERP?</a>
-    <div>OpenSERP is a search parser.</div>
+  <div class="wQiwMc related-question-pair" data-q="What is Web2API?">
+    <a href="https://example.com/paa">What is Web2API?</a>
+    <div>Web2API is a search parser.</div>
   </div>
 </div>
 <div data-hveid="1" data-ved="2">

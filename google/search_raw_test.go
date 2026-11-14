@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/karust/openserp/core"
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 func TestRawSearchDeduplicatesResolvedURLsAndPreservesRanks(t *testing.T) {

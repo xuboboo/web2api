@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // minDomWait is the floor for waiting on hydrated result cards.

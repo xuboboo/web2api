@@ -6,10 +6,10 @@ package core
 import (
 	"testing"
 
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/testutil"
 )
 
-const captchaAPIKeyEnv = "OPENSERP_2CAPTCHA_API_KEY"
+const captchaAPIKeyEnv = "WEB2API_2CAPTCHA_API_KEY"
 
 func Test2Captcha(t *testing.T) {
 	testutil.RequireIntegration(t)

@@ -60,7 +60,7 @@ func TestInitializeConfigLogLevel(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateConfig(t)
-			t.Setenv("OPENSERP_APP_LOG_LEVEL", tc.env)
+			t.Setenv("WEB2API_APP_LOG_LEVEL", tc.env)
 			if err := os.WriteFile("config.yaml", []byte("app:\n  log_level: warn\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +87,7 @@ func TestInitializeConfigSaveLog(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateConfig(t)
-			t.Setenv("OPENSERP_APP_SAVE_LOG", tc.env)
+			t.Setenv("WEB2API_APP_SAVE_LOG", tc.env)
 			if tc.file != "" {
 				if err := os.WriteFile("config.yaml", []byte(tc.file), 0600); err != nil {
 					t.Fatal(err)
@@ -146,9 +146,9 @@ func configCommand(t *testing.T, logLevel string) *cobra.Command {
 // isolateConfig runs the test in an empty dir without config env vars.
 func isolateConfig(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("OPENSERP_SERVER_CONFIG_PATH", "")
-	t.Setenv("OPENSERP_APP_LOG_LEVEL", "")
-	for _, key := range []string{"OPENSERP_GOOGLE_RESOLVE_URLS", "OPENSERP_GOOGLE_RESOLVE_CONCURRENCY", "OPENSERP_GOOGLE_RESOLVE_TIMEOUT", "OPENSERP_GOOGLE_RESOLVE_COOLDOWN"} {
+	t.Setenv("WEB2API_SERVER_CONFIG_PATH", "")
+	t.Setenv("WEB2API_APP_LOG_LEVEL", "")
+	for _, key := range []string{"WEB2API_GOOGLE_RESOLVE_URLS", "WEB2API_GOOGLE_RESOLVE_CONCURRENCY", "WEB2API_GOOGLE_RESOLVE_TIMEOUT", "WEB2API_GOOGLE_RESOLVE_COOLDOWN"} {
 		t.Setenv(key, "")
 	}
 	previous := config

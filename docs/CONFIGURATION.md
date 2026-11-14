@@ -3,18 +3,18 @@
 配置来源与优先级（Viper）：
 
 ```
-CLI 参数  >  OPENSERP_* 环境变量  >  config.yaml  >  代码内置默认值
+CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 ```
 
-环境变量命名规则：`OPENSERP_` + 配置键转大写、`.` 换成 `_`。例如：
+环境变量命名规则：`WEB2API_` + 配置键转大写、`.` 换成 `_`。例如：
 
 | 配置键 | 环境变量 |
 | --- | --- |
-| `server.port` | `OPENSERP_SERVER_PORT` |
-| `app.browser_path` | `OPENSERP_APP_BROWSER_PATH` |
-| `baidu.disabled` | `OPENSERP_BAIDU_DISABLED` |
-| `sogou.rate_requests` | `OPENSERP_SOGOU_RATE_REQUESTS` |
-| `google.resolve_urls` | `OPENSERP_GOOGLE_RESOLVE_URLS` |
+| `server.port` | `WEB2API_SERVER_PORT` |
+| `app.browser_path` | `WEB2API_APP_BROWSER_PATH` |
+| `baidu.disabled` | `WEB2API_BAIDU_DISABLED` |
+| `sogou.rate_requests` | `WEB2API_SOGOU_RATE_REQUESTS` |
+| `google.resolve_urls` | `WEB2API_GOOGLE_RESOLVE_URLS` |
 
 下文“默认值”指代码内置默认（`cmd/root.go` 的 `setConfigDefaults` 与 `core.SearchEngineOptions.Init`），“本仓库”指仓库自带 `config.yaml` 的实际取值。
 
@@ -153,5 +153,5 @@ circuit_breaker: { failures: 8, recovery_seconds: 20, successes: 1 }
 
 | 变量 | 说明 |
 | --- | --- |
-| `OPENSERP_ENRICHMENT_DOMAINS_FILE` | 覆盖域名分类数据文件（`core/enrichment_domains.yaml`） |
-| `OPENSERP_SERVER_CONFIG_PATH` | 显式指定配置文件路径（等价 `--config`） |
+| `WEB2API_ENRICHMENT_DOMAINS_FILE` | 覆盖域名分类数据文件（`core/enrichment_domains.yaml`） |
+| `WEB2API_SERVER_CONFIG_PATH` | 显式指定配置文件路径（等价 `--config`） |

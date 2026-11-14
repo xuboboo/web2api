@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 // TestParseHTMLFixtureExtractsRealFeatures guards the live SERP fixture.
@@ -59,7 +59,7 @@ func TestParseHTMLExtractsSerpFeatures(t *testing.T) {
   <li class="b_rrsr">
     <h2>People also ask</h2>
     <ul>
-      <li><a href="https://example.com/question">What is OpenSERP?</a></li>
+      <li><a href="https://example.com/question">What is Web2API?</a></li>
     </ul>
   </li>
   <li class="b_algo">

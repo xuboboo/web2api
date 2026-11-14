@@ -1,11 +1,11 @@
 ---
-name: openserp-search
-description: Live web search and page reading through a self-hosted OpenSERP server (Google, Bing, Yandex, Baidu, DuckDuckGo, Ecosia). Use when the answer depends on current information, a specific engine's ranking, or the content of web pages, and the OpenSERP MCP tools or a local OpenSERP API are available.
+name: web2api-search
+description: Live web search and page reading through a self-hosted Web2API server (Google, Bing, Yandex, Baidu, DuckDuckGo, Ecosia). Use when the answer depends on current information, a specific engine's ranking, or the content of web pages, and the Web2API MCP tools or a local Web2API API are available.
 ---
 
-# Web search with OpenSERP
+# Web search with Web2API
 
-OpenSERP returns real results pages from named engines, with original ranks, plus page content as Markdown. Use the MCP tools (`search`, `mega_search`, `any_search`, `extract`, `batch_extract`, `list_engines`). Without MCP, call the HTTP API on `http://localhost:7000` (or `$OPENSERP_BASE_URL`).
+Web2API returns real results pages from named engines, with original ranks, plus page content as Markdown. Use the MCP tools (`search`, `mega_search`, `any_search`, `extract`, `batch_extract`, `list_engines`). Without MCP, call the HTTP API on `http://localhost:7000` (or `$WEB2API_BASE_URL`).
 
 ## Workflow
 

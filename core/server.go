@@ -19,11 +19,11 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
-	browserprofile "github.com/karust/openserp/core/browser"
-	"github.com/karust/openserp/core/fpcheck"
-	"github.com/karust/openserp/core/fpcheck/detectors"
-	apidocs "github.com/karust/openserp/docs"
-	extractpkg "github.com/karust/openserp/extract"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
+	"github.com/xuboboo/web2api/core/fpcheck"
+	"github.com/xuboboo/web2api/core/fpcheck/detectors"
+	apidocs "github.com/xuboboo/web2api/docs"
+	extractpkg "github.com/xuboboo/web2api/extract"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
@@ -51,7 +51,7 @@ type SearchEngine interface {
 	GetRateLimiter() *rate.Limiter
 }
 
-// Server exposes OpenSERP HTTP endpoints backed by one or more search engines.
+// Server exposes Web2API HTTP endpoints backed by one or more search engines.
 type Server struct {
 	app           *fiber.App
 	addr          string
@@ -1593,7 +1593,7 @@ func (s *Server) handleSwaggerUI(c *fiber.Ctx) error {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenSERP API Docs</title>
+  <title>Web2API API Docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   <style>
     body { margin: 0; background: #f6f8fb; }

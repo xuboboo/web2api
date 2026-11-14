@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/karust/openserp/core"
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 // TestBaiduParseHTMLFixtures covers the no-results and captcha fixtures.

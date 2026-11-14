@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/karust/openserp/core"
-	"github.com/karust/openserp/testutil"
-	"github.com/karust/openserp/testutil/ithelper"
+	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/testutil"
+	"github.com/xuboboo/web2api/testutil/ithelper"
 )
 
 func TestBuildURL(t *testing.T) {

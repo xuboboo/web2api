@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/karust/openserp/core/fpcheck"
+	"github.com/xuboboo/web2api/core/fpcheck"
 )
 
 var standardDetectorFactories = []struct {

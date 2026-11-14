@@ -3,7 +3,7 @@
 //
 // It is deliberately dependency-free (standard library only) so lightweight
 // consumers that only need geotargeting can import it without pulling in the
-// headless-browser/scraping stack the rest of github.com/karust/openserp/core
+// headless-browser/scraping stack the rest of github.com/xuboboo/web2api/core
 // depends on. The parent core package re-exports these symbols for backward
 // compatibility.
 package region

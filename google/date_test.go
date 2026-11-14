@@ -3,7 +3,7 @@ package google
 import (
 	"testing"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func TestDateWindowValidation(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/karust/openserp/core"
-	extractpkg "github.com/karust/openserp/extract"
+	"github.com/xuboboo/web2api/core"
+	extractpkg "github.com/xuboboo/web2api/extract"
 )
 
 func TestNormalizeCLIExtractTop(t *testing.T) {

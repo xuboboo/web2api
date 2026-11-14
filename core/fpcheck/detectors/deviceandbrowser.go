@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core/fpcheck"
+	"github.com/xuboboo/web2api/core/fpcheck"
 )
 
 const deviceAndBrowserURL = "https://deviceandbrowserinfo.com/are_you_a_bot"

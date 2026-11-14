@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karust/openserp/core"
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 // flakyLiveErrors are failure modes expected when hitting live engines from
 // arbitrary IPs (captcha walls, IP blocks, rate limits, slow pages). They do
 // not indicate broken code, so tests skip instead of failing unless
-// OPENSERP_INTEGRATION_STRICT is set.
+// WEB2API_INTEGRATION_STRICT is set.
 var flakyLiveErrors = []error{
 	core.ErrCaptcha,
 	core.ErrBlocked,
@@ -55,7 +55,7 @@ func EngineOptions() core.SearchEngineOptions {
 }
 
 // CreateBrowser creates a browser configured for integration tests and closes
-// it when the test finishes. Respects OPENSERP_INTEGRATION_HEADFUL for
+// it when the test finishes. Respects WEB2API_INTEGRATION_HEADFUL for
 // debugging (browser and page are left open for inspection).
 func CreateBrowser(t *testing.T) *core.Browser {
 	t.Helper()

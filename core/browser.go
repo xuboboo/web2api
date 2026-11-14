@@ -17,7 +17,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	browserprofile "github.com/karust/openserp/core/browser"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
 	"github.com/sirupsen/logrus"
 	"github.com/ysmood/gson"
 )

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	browserprofile "github.com/karust/openserp/core/browser"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
 )
 
 func TestResolveBrowserBinaryPathPrefersExplicit(t *testing.T) {

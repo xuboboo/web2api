@@ -56,15 +56,15 @@ jobs:
               if [ "$GOOS" = "darwin" ] && [ "$GOARCH" = "386" ]; then
                 continue
               fi
-              BIN="openserp"
+              BIN="web2api"
               if [ "$GOOS" = "windows" ]; then
-                BIN="openserp.exe"
+                BIN="web2api.exe"
               fi
               rm -f "$BIN"
               echo "Building ${GOOS}/${GOARCH}..."
               CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
                 go build -trimpath -ldflags="-s -w" -o "$BIN" .
-              tar --create --gzip --file="dist/openserp-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN"
+              tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN"
               rm -f "$BIN"
             done
           done

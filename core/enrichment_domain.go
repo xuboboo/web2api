@@ -178,7 +178,7 @@ func classifySourceHint(domain string) string {
 func loadEnrichmentDomains() enrichmentDomainsConfig {
 	enrichmentDomainsOnce.Do(func() {
 		enrichmentDomains = parseEnrichmentDomains(defaultEnrichmentDomainsYAML)
-		if path := strings.TrimSpace(os.Getenv("OPENSERP_ENRICHMENT_DOMAINS_FILE")); path != "" {
+		if path := strings.TrimSpace(os.Getenv("WEB2API_ENRICHMENT_DOMAINS_FILE")); path != "" {
 			if data, err := os.ReadFile(path); err == nil {
 				enrichmentDomains = parseEnrichmentDomains(data)
 			}

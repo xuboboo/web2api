@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-const IntegrationEnv = "OPENSERP_INTEGRATION_TESTS"
-const IntegrationHeadfulEnv = "OPENSERP_INTEGRATION_HEADFUL"
-const IntegrationStrictEnv = "OPENSERP_INTEGRATION_STRICT"
+const IntegrationEnv = "WEB2API_INTEGRATION_TESTS"
+const IntegrationHeadfulEnv = "WEB2API_INTEGRATION_HEADFUL"
+const IntegrationStrictEnv = "WEB2API_INTEGRATION_STRICT"
 
 func RequireIntegration(t *testing.T) {
 	t.Helper()

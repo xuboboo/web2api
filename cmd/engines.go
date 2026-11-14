@@ -4,15 +4,15 @@ import (
 	"context"
 	"io"
 
-	"github.com/karust/openserp/baidu"
-	"github.com/karust/openserp/bing"
-	"github.com/karust/openserp/core"
-	"github.com/karust/openserp/duckduckgo"
-	"github.com/karust/openserp/ecosia"
-	"github.com/karust/openserp/google"
-	"github.com/karust/openserp/so360"
-	"github.com/karust/openserp/sogou"
-	"github.com/karust/openserp/yandex"
+	"github.com/xuboboo/web2api/baidu"
+	"github.com/xuboboo/web2api/bing"
+	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/duckduckgo"
+	"github.com/xuboboo/web2api/ecosia"
+	"github.com/xuboboo/web2api/google"
+	"github.com/xuboboo/web2api/so360"
+	"github.com/xuboboo/web2api/sogou"
+	"github.com/xuboboo/web2api/yandex"
 )
 
 // engineSpec is the single registry row for a search engine, driving CLI search,

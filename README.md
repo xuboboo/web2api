@@ -2,7 +2,7 @@
 
 面向**国内搜索引擎**的 Web → API 服务：把百度、搜狗、360 搜索的结果页转换成结构化 JSON，并提供多引擎聚合、网页正文提取、缓存、限流与反爬兜底。一个 `docker compose up` 即可运行。
 
-> 基于开源项目 [OpenSERP](https://github.com/karust/openserp)（MIT）改造：保留其 API 契约、响应模型与引擎框架，重点完成了**国内引擎适配**（新增搜狗、360）、百度 `limit` 修复，以及反爬场景下的稳定性机制（桌面指纹、HTTP 兜底、CAPTCHA 门控）。
+> 基于开源项目 [Web2API](https://github.com/xuboboo/web2api)（MIT）改造：保留其 API 契约、响应模型与引擎框架，重点完成了**国内引擎适配**（新增搜狗、360）、百度 `limit` 修复，以及反爬场景下的稳定性机制（桌面指纹、HTTP 兜底、CAPTCHA 门控）。
 
 ## 引擎与端点
 
@@ -104,7 +104,7 @@ go build -o web2api . && ./web2api search baidu "golang" --format markdown
 
 ## 配置
 
-配置优先级：**CLI 参数 > `OPENSERP_*` 环境变量 > `config.yaml` > 内置默认值**（Viper）。
+配置优先级：**CLI 参数 > `WEB2API_*` 环境变量 > `config.yaml` > 内置默认值**（Viper）。
 
 仓库自带的 `config.yaml` 已按国内部署调好：四个国内可用引擎启用、境外引擎 `disabled`、限速与熔断按反爬强度设置、三个国产引擎固定桌面 Windows 指纹。完整字段说明见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
 
@@ -164,4 +164,4 @@ docs/         架构、配置、测试文档、OpenAPI、上游 README 存档
 
 ## 许可证
 
-MIT，见 [LICENSE](LICENSE)。上游项目：[karust/openserp](https://github.com/karust/openserp)。
+MIT，见 [LICENSE](LICENSE)。上游项目：[karust/web2api](https://github.com/xuboboo/web2api)。

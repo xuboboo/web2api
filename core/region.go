@@ -1,8 +1,8 @@
 package core
 
-import "github.com/karust/openserp/core/region"
+import "github.com/xuboboo/web2api/core/region"
 
-// Region resolution lives in the dependency-free github.com/karust/openserp/core/region
+// Region resolution lives in the dependency-free github.com/xuboboo/web2api/core/region
 // subpackage so lightweight consumers that only need geotargeting can import it
 // without pulling in core's browser/scraping dependencies. The aliases and
 // wrappers below preserve the historical core.* API for existing callers.

@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/karust/openserp/core/fpcheck"
-	"github.com/karust/openserp/core/fpcheck/detectors"
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/core/fpcheck"
+	"github.com/xuboboo/web2api/core/fpcheck/detectors"
+	"github.com/xuboboo/web2api/testutil"
 )
 
-const botFingerprintTestsEnv = "OPENSERP_BOT_TESTS"
+const botFingerprintTestsEnv = "WEB2API_BOT_TESTS"
 const botFingerprintArtifactDir = "testdata"
 
 func TestCreateBrowser(t *testing.T) {
@@ -52,7 +52,7 @@ func TestNavigateUsesIsolatedBrowserContext(t *testing.T) {
 		switch r.URL.Path {
 		case "/cookies/set":
 			http.SetCookie(w, &http.Cookie{
-				Name:  "openserp_session",
+				Name:  "web2api_session",
 				Value: "request-a",
 				Path:  "/",
 			})
@@ -99,7 +99,7 @@ func TestNavigateUsesIsolatedBrowserContext(t *testing.T) {
 		t.Fatalf("extract response text: %v", err)
 	}
 
-	if strings.Contains(cookieHeader, "openserp_session=request-a") {
+	if strings.Contains(cookieHeader, "web2api_session=request-a") {
 		t.Fatalf("cookie leaked between requests; got header %q", cookieHeader)
 	}
 }
@@ -110,7 +110,7 @@ func TestNavigateReusesCookiesForSameProxyLane(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cookies/set":
-			http.SetCookie(w, &http.Cookie{Name: "openserp_lane", Value: "same-lane", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "web2api_lane", Value: "same-lane", Path: "/"})
 			_, _ = w.Write([]byte("cookie-set"))
 		case "/cookies":
 			_, _ = w.Write([]byte(r.Header.Get("Cookie")))
@@ -158,7 +158,7 @@ func TestNavigateReusesCookiesForSameProxyLane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract response text: %v", err)
 	}
-	if !strings.Contains(cookieHeader, "openserp_lane=same-lane") {
+	if !strings.Contains(cookieHeader, "web2api_lane=same-lane") {
 		t.Fatalf("expected same proxy lane to restore cookie, got %q", cookieHeader)
 	}
 }
@@ -169,7 +169,7 @@ func TestNavigateDoesNotShareCookiesAcrossProxyLanes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cookies/set":
-			http.SetCookie(w, &http.Cookie{Name: "openserp_lane", Value: "lane-a", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "web2api_lane", Value: "lane-a", Path: "/"})
 			_, _ = w.Write([]byte("cookie-set"))
 		case "/cookies":
 			_, _ = w.Write([]byte(r.Header.Get("Cookie")))
@@ -218,7 +218,7 @@ func TestNavigateDoesNotShareCookiesAcrossProxyLanes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract response text: %v", err)
 	}
-	if strings.Contains(cookieHeader, "openserp_lane=lane-a") {
+	if strings.Contains(cookieHeader, "web2api_lane=lane-a") {
 		t.Fatalf("cookie leaked across proxy lanes; got header %q", cookieHeader)
 	}
 }

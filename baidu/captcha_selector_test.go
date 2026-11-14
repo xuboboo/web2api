@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/karust/openserp/testutil"
+	"github.com/xuboboo/web2api/testutil"
 )
 
 // TestBaiduPageTypeSelectors verifies that the selectors defined in selectors.go

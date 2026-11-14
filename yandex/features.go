@@ -3,7 +3,7 @@ package yandex
 import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-rod/rod"
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func extractYandexFeatures(doc *goquery.Document) []core.SerpFeature {

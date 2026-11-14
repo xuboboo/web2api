@@ -182,7 +182,7 @@ func TestEnrichSerpFeatureNormalizesRelativeLinks(t *testing.T) {
 }
 
 func TestRenderersIncludeSerpFeatures(t *testing.T) {
-	env := NewEnvelope(Query{Text: "openserp"}, "req-1", time.Unix(0, 0), []string{"google"})
+	env := NewEnvelope(Query{Text: "web2api"}, "req-1", time.Unix(0, 0), []string{"google"})
 	AppendEnrichedSearchResult(env, SearchResult{
 		Rank:        1,
 		URL:         "https://example.com/result",
@@ -191,7 +191,7 @@ func TestRenderersIncludeSerpFeatures(t *testing.T) {
 		Features: []SerpFeature{
 			{
 				Type: ResultTypeAISummary,
-				Text: "OpenSERP is a search API.",
+				Text: "Web2API is a search API.",
 				Links: []FeatureLink{{
 					Title: "Example",
 					URL:   "https://example.com/source",
@@ -202,13 +202,13 @@ func TestRenderersIncludeSerpFeatures(t *testing.T) {
 			{
 				Type: ResultTypeRelatedSearches,
 				Items: []FeatureItem{
-					{Text: "openserp cloud"},
+					{Text: "web2api cloud"},
 					{Text: "serp api"},
 				},
 			},
 		},
 	}, EnrichContext{Engine: "google", Query: Query{}}, time.Unix(0, 0))
-	env.Finalize(time.Unix(0, 0), Query{Text: "openserp", Limit: 10})
+	env.Finalize(time.Unix(0, 0), Query{Text: "web2api", Limit: 10})
 
 	markdown := string(RenderMarkdown(env))
 	if !strings.Contains(markdown, "## AI summary") || !strings.Contains(markdown, "Sources:") {
@@ -247,7 +247,7 @@ func TestRenderersIncludeSerpFeatures(t *testing.T) {
 // enum value not yet placed). It must still appear in text and markdown output.
 func TestRenderFeaturesUnorderedTypeStillRenders(t *testing.T) {
 	const unplaced ResultType = "experimental_module"
-	env := NewEnvelope(Query{Text: "openserp"}, "req-1", time.Unix(0, 0), []string{"google"})
+	env := NewEnvelope(Query{Text: "web2api"}, "req-1", time.Unix(0, 0), []string{"google"})
 	env.SerpFeatures = append(env.SerpFeatures, SerpFeature{
 		Type: unplaced,
 		Text: "experimental feature body",

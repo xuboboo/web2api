@@ -23,7 +23,7 @@ go test ./...
 ```bash
 node deploy/e2e-domestic.mjs http://127.0.0.1:7000
 # 或
-OPENSERP_BASE_URL=http://127.0.0.1:7000 node deploy/e2e-domestic.mjs
+WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e-domestic.mjs
 ```
 
 | 分组 | 数量 | 覆盖内容 |
@@ -43,7 +43,7 @@ OPENSERP_BASE_URL=http://127.0.0.1:7000 node deploy/e2e-domestic.mjs
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `OPENSERP_BASE_URL` / 第 1 个参数 | `http://127.0.0.1:7000` | 目标地址 |
+| `WEB2API_BASE_URL` / 第 1 个参数 | `http://127.0.0.1:7000` | 目标地址 |
 | `E2E_PACE_MS` | `0` | 组间与探针间隔（毫秒） |
 | `E2E_SOAK_PACE_MS` | `12000` | 串行压测每次请求间隔 |
 | `E2E_SOAK_RUNS` | `9` | 串行压测次数 |

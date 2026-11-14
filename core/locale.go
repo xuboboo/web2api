@@ -1,6 +1,6 @@
 package core
 
-import "github.com/karust/openserp/core/region"
+import "github.com/xuboboo/web2api/core/region"
 
 // Locale is a parsed language/region pair derived from a BCP47-style code.
 // The canonical definition lives in the dependency-free core/region subpackage;

@@ -3,7 +3,7 @@ package cmd
 import (
 	"strings"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 func buildEngineProxyPolicyMap() map[string]string {

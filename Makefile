@@ -1,5 +1,5 @@
 GO ?= go
-BINARY ?= openserp
+BINARY ?= web2api
 PKGS ?= ./...
 GOFILES := $(shell git ls-files '*.go')
 
@@ -12,7 +12,7 @@ test:
 	$(GO) test -race -count=1 $(PKGS)
 
 test-integration:
-	OPENSERP_INTEGRATION_TESTS=1 $(GO) test -race -count=1 -timeout=120s -tags=integration $(PKGS)
+	WEB2API_INTEGRATION_TESTS=1 $(GO) test -race -count=1 -timeout=120s -tags=integration $(PKGS)
 
 lint:
 	$(GO) vet $(PKGS)

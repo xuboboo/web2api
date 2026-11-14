@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/karust/openserp/core"
+	"github.com/xuboboo/web2api/core"
 )
 
 const baseURL = "https://duckduckgo.com"

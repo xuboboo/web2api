@@ -1,6 +1,6 @@
 # Architecture
 
-web2api 是 Go 实现的搜索 API 服务，基于 [OpenSERP](https://github.com/karust/openserp) 的框架改造，重心在国内搜索引擎。
+web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/xuboboo/web2api) 的框架改造，重心在国内搜索引擎。
 
 ## 执行模式
 
@@ -129,7 +129,7 @@ HTTP
 
 ## 配置
 
-优先级：CLI > `OPENSERP_*` 环境变量 > `config.yaml` > 默认值。逐项说明见 [CONFIGURATION.md](CONFIGURATION.md)。
+优先级：CLI > `WEB2API_*` 环境变量 > `config.yaml` > 默认值。逐项说明见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ## 测试
 
