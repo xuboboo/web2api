@@ -24,7 +24,7 @@
   <g transform="translate(640, 150)" text-anchor="middle">
     <g transform="translate(-206, -44)" filter="url(#tileShadow)">
       <rect width="88" height="88" rx="20" fill="url(#tile)"/>
-      <text x="44" y="64" text-anchor="middle" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif" font-weight="900" font-size="58" fill="#FFFFFF">收</text>
+      <svg x="0" y="0" width="88" height="88" viewBox="0 0 64 64"><circle cx="32" cy="29" r="16" fill="#F5F8F5"/><path d="M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z" fill="#E05A5A"/><path d="M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z" fill="#E05A5A" opacity=".85"/><circle cx="26" cy="26" r="5" fill="#0B1210"/><circle cx="27.5" cy="24.5" r="1.6" fill="#FFFFFF"/><circle cx="38" cy="26" r="5" fill="#0B1210"/><circle cx="36.5" cy="24.5" r="1.6" fill="#FFFFFF"/><path d="M28 36 L32 58 L36 36 Z" fill="#F0B429"/><circle cx="18" cy="34" r="2.4" fill="#177E5B" opacity=".3"/><circle cx="46" cy="34" r="2.4" fill="#177E5B" opacity=".3"/></svg>
     </g>
     <text x="60" y="0" text-anchor="start" font-family="Georgia, 'Times New Roman', serif" font-size="64" font-weight="700" letter-spacing="1" fill="#1A2B24">Web2API</text>
     <text x="62" y="34" text-anchor="start" font-family="'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="19" fill="#5E7265">网站收录查询开放平台</text>
