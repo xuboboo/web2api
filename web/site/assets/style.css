@@ -264,17 +264,6 @@ h2 {
   flex-shrink: 0;
 }
 .brand-name { font: 600 16px/1 var(--font-sans); letter-spacing: -0.01em; }
-.brand-sub {
-  font: 500 12px/1 var(--font-sans);
-  color: rgba(255, 255, 255, .6);
-  border-left: 1px solid rgba(255, 255, 255, .25);
-  padding-left: 10px;
-  margin-left: 2px;
-}
-.site-nav.scrolled .brand-sub {
-  color: var(--muted-foreground);
-  border-left-color: var(--border);
-}
 
 .nav-links {
   display: flex;
@@ -1238,7 +1227,6 @@ html:not(.no-js) .reveal-hero.is-visible {
 }
 
 @media (max-width: 920px) {
-  .brand-sub { display: none; }
   .menu-btn { display: block; }
   .nav-links {
     position: absolute;

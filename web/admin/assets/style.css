@@ -832,14 +832,6 @@ html.dark .brand-logo { background: #f3f1eb; color: #177e5b; }
   line-height: 1.2;
   color: var(--fg);
 }
-.brand-sub {
-  font-style: normal;
-  font-weight: 400;
-  font-family: var(--sans);
-  font-size: 10.5px;
-  letter-spacing: .02em;
-  color: var(--muted-fg);
-}
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 .topbar-user {
   display: inline-flex;
@@ -935,11 +927,6 @@ html.dark .brand-logo { background: #f3f1eb; color: #177e5b; }
   letter-spacing: -0.03em;
   line-height: 1.1;
   color: #f3f1eb;
-}
-.login-brand-sub {
-  margin: 12px 0 0;
-  font-size: 15px;
-  color: rgba(243, 241, 235, .62);
 }
 .login-brand-rule {
   width: 56px;

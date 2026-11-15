@@ -142,12 +142,12 @@
     var heroEls = Array.prototype.slice.call(document.querySelectorAll('.reveal-hero'));
     var countEls = Array.prototype.slice.call(document.querySelectorAll('[data-count]'));
 
-    /* 首屏内容不交给 IO(避免白屏闪烁):load 后下一帧直接入场,CSS --reveal-delay 递增 stagger */
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        heroEls.forEach(function (el) { el.classList.add('is-visible'); });
-      });
-    });
+    /* 首屏内容不交给 IO(避免白屏闪烁),也不用 rAF 双帧——
+     * 后台标签页 rAF 被节流会永不执行导致内容永久不可见(实测踩坑);
+     * setTimeout 在后台也会执行,最坏情况激活标签页时立即到终态 */
+    setTimeout(function () {
+      heroEls.forEach(function (el) { el.classList.add('is-visible'); });
+    }, 50);
 
     if (reduceMotion || typeof IntersectionObserver === 'undefined') {
       /* 降级:全部直接可见 + 计数置终值(HTML 初始文本即终值) */
@@ -172,6 +172,21 @@
     countEls.forEach(function (el) {
       if (revealEls.indexOf(el) < 0) io.observe(el);
     });
+
+    /* 兜底:1.2s 后仍在视口内却未被 IO 触发的元素强制可见
+     * (IO 在部分环境会静默失效,内容可见性永远优先于入场动画) */
+    setTimeout(function () {
+      var vh = window.innerHeight || doc.documentElement.clientHeight;
+      revealEls.forEach(function (el) {
+        if (el.classList.contains('is-visible')) return;
+        var r = el.getBoundingClientRect();
+        if (r.top < vh && r.bottom > 0) {
+          el.classList.add('is-visible');
+          if (el.hasAttribute('data-count')) runCount(el);
+          io.unobserve(el);
+        }
+      });
+    }, 1200);
   }
 
   /* ---------- 5) 代码窗 tab(cURL / Python / Node / MCP) ---------- */
