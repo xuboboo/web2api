@@ -88,7 +88,6 @@ body {
     radial-gradient(1100px 540px at 50% -160px, rgba(77, 107, 254, 0.12), transparent 64%),
     radial-gradient(900px 460px at 88% 6%, rgba(110, 143, 255, 0.09), transparent 60%),
     radial-gradient(760px 420px at 4% 30%, rgba(77, 107, 254, 0.06), transparent 62%);
-  background-attachment: fixed;
   color: var(--foreground);
   font: 400 16px/26px var(--font-sans);
   overflow-x: clip; /* 兜底:水印等出血元素不产生横向滚动 */
@@ -195,7 +194,7 @@ code, pre { font-family: var(--font-mono); }
 .pill-dark:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.24); }
 
 /* ---------- 4. 区块节奏 / 标题 ---------- */
-.section { padding: 96px 0; }
+.section { padding: 88px 0; }
 .section-tight { padding: 72px 0; }
 
 .sec-head { margin-bottom: 40px; max-width: 640px; }
@@ -644,7 +643,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 @keyframes marquee-x { to { transform: translateX(-50%); } }
 
 /* ---------- 8. 统计条(hairline 容器 4 格) ---------- */
-.stats-band { padding: 72px 0 40px; }
+.stats-band { padding: 36px 0 64px; }
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -655,6 +654,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 .stat { padding: 30px 28px; min-width: 0; }
 .stat-line { display: flex; align-items: baseline; gap: 7px; }
+.stat-label { text-wrap: balance; }
 .stat-num {
   font: 600 36px/1.1 var(--font-mono);
   letter-spacing: -0.02em;
@@ -917,14 +917,17 @@ html.dark .icon-btn .icon-moon { display: block; }
   min-width: 0;
   font: 500 12px/20px var(--font-mono);
   color: var(--ink-dim);
-  overflow-x: auto;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-all;
   scrollbar-width: none;
 }
 .mini-term code::-webkit-scrollbar { display: none; }
 .mini-term .copy-btn { margin-left: 0; flex-shrink: 0; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.dk-links { margin-top: 20px; }
+.dk-links a { color: rgba(255, 255, 255, .62); font-size: 12.5px; text-decoration: none; border-bottom: 1px solid rgba(255, 255, 255, .28); padding-bottom: 2px; transition: color .15s ease, border-color .15s ease; }
+.dk-links a:hover { color: #fff; border-color: #fff; }
 .chip {
   height: 26px;
   padding: 0 12px;
@@ -1073,8 +1076,10 @@ html.dark .icon-btn .icon-moon { display: block; }
 
 /* ---------- 14. 生态 CTA(暗色带) ---------- */
 .eco {
-  background: var(--ink-bg);
-  padding: 112px 0;
+  background:
+    radial-gradient(900px 380px at 50% 0%, rgba(77, 107, 254, .18), transparent 66%),
+    linear-gradient(180deg, rgba(11, 16, 27, 0) 0%, #0B101B 16%, #0B101B 100%);
+  padding: 120px 0 104px;
   text-align: center;
 }
 .eco h2 { color: var(--ink-title); }
@@ -1199,6 +1204,8 @@ html:not(.no-js) .reveal-hero.is-visible {
   .eco { padding: 88px 0; }
   .footer { padding-top: 56px; }
   .dark-card { padding: 26px; }
+  /* 窄屏放宽字距,避免「收录」等词被拆行 */
+  .hero-title { letter-spacing: 0.06em; }
 }
 
 @media (max-width: 560px) {
