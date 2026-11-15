@@ -724,23 +724,29 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 .f-card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
 
-.f-icon {
-  height: 96px;
+.f-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.f-badge {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
-  background-color: var(--accent);
+  background: var(--accent);
   background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
-  background-size: 12px 12px;
+  background-size: 10px 10px;
+  color: var(--brand);
 }
-.f-icon svg { width: 30px; height: 30px; }
+.f-badge svg { width: 20px; height: 20px; }
 
-.f-body { padding: 24px; }
+.f-body { padding: 22px 22px 26px; }
 .f-body h3 {
   font-family: var(--font-serif);
-  font-size: 19px;
-  line-height: 27px;
+  font-size: 17px;
+  line-height: 25px;
   font-weight: 600;
   color: var(--foreground);
+  text-wrap: balance;
 }
 .f-body p { margin-top: 10px; font-size: 14px; line-height: 24px; color: var(--muted-foreground); }
 
