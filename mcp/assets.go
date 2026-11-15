@@ -34,8 +34,9 @@ func wantsHTML(c *fiber.Ctx) bool {
 // assetView wraps the embedded file in a zero-dependency dark-window page
 // (site 暗窗语言) so a browser click opens a readable web page instead of
 // triggering a download (三期用户反馈:文档要网页浏览,不要下载)。
-func assetView(title, subtitle, path string, body []byte) string {
-	raw := html.EscapeString(path) + "?raw=1"
+// 不提供任何前端可见的「下载」入口(用户要求:防止被刷);程序化导入
+// 直接 GET 本路径即可拿到原始字节(内容协商按 Accept 区分)。
+func assetView(title, subtitle string, body []byte) string {
 	var b strings.Builder
 	b.WriteString(`<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
@@ -51,14 +52,14 @@ h1{margin:0;font-size:22px;color:#fff;font-weight:600;letter-spacing:.2px}
 .sub{margin:0 0 20px;color:rgba(255,255,255,.5)}
 .bar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
 .btn{display:inline-block;padding:8px 16px;border-radius:8px;border:.8px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:rgba(255,255,255,.72);font:500 13px/1.4 inherit;cursor:pointer;text-decoration:none;transition:background .15s ease,color .15s ease,border-color .15s ease}
-.btn:hover{background:#5B8DEF;border-color:#5B8DEF;color:#0A0A0A}
+.btn:hover{background:#3ECF8E;border-color:#3ECF8E;color:#0A0A0A}
 pre{margin:0;background:#161615;border:.8px solid rgba(255,255,255,.06);border-radius:16px;padding:28px 24px;color:rgba(255,255,255,.72);font-size:13px;line-height:1.7;overflow:auto;max-height:72vh;white-space:pre;tab-size:2}
 .foot{margin-top:16px;color:rgba(255,255,255,.35);font-size:12px}
-.foot a{color:#5B8DEF;text-decoration:none}
+.foot a{color:#3ECF8E;text-decoration:none}
 @media(max-width:640px){.wrap{padding:24px 14px 40px}pre{padding:16px 12px}}
 </style></head><body><div class="wrap">
-<div class="head"><h1>` + html.EscapeString(title) + `</h1><div class="bar"><button class="btn" id="copyBtn" type="button">复制全文</button><a class="btn" href="` + raw + `">下载原始文件</a></div></div>
-<p class="sub">` + html.EscapeString(subtitle) + ` · 程序化导入(Dify/Coze/curl)请用「下载原始文件」,或直接 GET 本地址且不带浏览器 Accept。</p>
+<div class="head"><h1>` + html.EscapeString(title) + `</h1><div class="bar"><button class="btn" id="copyBtn" type="button">复制全文</button></div></div>
+<p class="sub">` + html.EscapeString(subtitle) + ` · 程序化导入(Dify/Coze/curl)请直接 GET 本地址,自动返回原始内容。</p>
 <pre id="content">` + html.EscapeString(string(body)) + `</pre>
 <p class="foot">Web2API 网站收录查询开放平台 · <a href="./">返回官网</a> · <a href="./console/">进入控制台</a></p>
 </div>
@@ -86,7 +87,7 @@ func serveAsset(body []byte, contentType string, title, subtitle string) fiber.H
 		c.Set(fiber.HeaderCacheControl, "public, max-age=300")
 		if wantsHTML(c) {
 			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
-			return c.SendString(assetView(title, subtitle, c.Path(), body))
+			return c.SendString(assetView(title, subtitle, body))
 		}
 		c.Set(fiber.HeaderContentType, contentType)
 		return c.Send(body)
