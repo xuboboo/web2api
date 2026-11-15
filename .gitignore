@@ -53,3 +53,8 @@ data-qa*
 config-qa*
 deploy/e2e-results/
 server-*.log
+
+# QA 运行日志(上轮验收遗留)
+logs-qa*.txt
+qa/serve-*.log
+qa/*.log
