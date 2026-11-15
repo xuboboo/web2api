@@ -733,11 +733,40 @@ func TestStaticAssets(t *testing.T) {
 	if resp.StatusCode != fiber.StatusOK {
 		t.Fatalf("llms.txt status = %d", resp.StatusCode)
 	}
-	if ct := resp.Header.Get(fiber.HeaderContentType); !strings.HasPrefix(ct, "text/markdown") {
+	if ct := resp.Header.Get(fiber.HeaderContentType); !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("llms.txt content-type = %q", ct)
 	}
 	if !strings.Contains(string(raw), "/web-tool/mcp") || !strings.Contains(string(raw), "web_search") {
 		t.Fatalf("llms.txt must reference the MCP endpoint and tools")
+	}
+
+	// 浏览器(Accept 含 text/html)拿到暗窗网页视图;?raw=1 强制回原始字节。
+	req = httptest.NewRequest(fiber.MethodGet, "/web-tool/openapi.yaml", nil)
+	req.Header.Set(fiber.HeaderAccept, "text/html,application/xhtml+xml")
+	resp, err = app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("openapi.yaml (browser): %v", err)
+	}
+	raw, _ = io.ReadAll(resp.Body)
+	if ct := resp.Header.Get(fiber.HeaderContentType); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("openapi.yaml (browser) content-type = %q, want the HTML viewer", ct)
+	}
+	if !strings.Contains(string(raw), `id="content"`) || !strings.Contains(string(raw), "openapi: 3.1.0") {
+		t.Fatalf("browser view must embed the escaped spec body")
+	}
+
+	req = httptest.NewRequest(fiber.MethodGet, "/web-tool/openapi.yaml?raw=1", nil)
+	req.Header.Set(fiber.HeaderAccept, "text/html")
+	resp, err = app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("openapi.yaml (?raw=1): %v", err)
+	}
+	raw, _ = io.ReadAll(resp.Body)
+	if ct := resp.Header.Get(fiber.HeaderContentType); !strings.HasPrefix(ct, "application/yaml") {
+		t.Fatalf("?raw=1 must force raw yaml, got %q", ct)
+	}
+	if !strings.Contains(string(raw), "openapi: 3.1.0") {
+		t.Fatalf("?raw=1 must return the raw spec")
 	}
 }
 

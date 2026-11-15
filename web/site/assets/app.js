@@ -284,6 +284,22 @@
     initTabs();
     initCopy();
     initDemo();
+    initOrigin();
+
+    function initOrigin() {
+      /* 自适应部署地址:示例代码里的 127.0.0.1:7000 重写为当前访问源,
+       * 上线后所有示例随部署域名/协议自动变化,无需改静态文案。 */
+      var origin = location.origin;
+      if (origin.indexOf('http') !== 0) return;
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var hits = [];
+      while (walker.nextNode()) {
+        if (walker.currentNode.nodeValue.indexOf('127.0.0.1:7000') !== -1) hits.push(walker.currentNode);
+      }
+      for (var i = 0; i < hits.length; i++) {
+        hits[i].nodeValue = hits[i].nodeValue.split('http://127.0.0.1:7000').join(origin);
+      }
+    }
   } catch (err) {
     /* 兜底:动效初始化失败时内容必须可见 */
     try {

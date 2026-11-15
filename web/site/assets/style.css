@@ -850,6 +850,9 @@ html.dark .icon-btn .icon-moon { display: block; }
   color: var(--ink-faint);
 }
 .dk-auth code { color: var(--ink-dim); }
+.dk-auth a { color: var(--ink-accent); text-decoration: none; }
+.dk-auth a:hover { text-decoration: underline; }
+.dk-auth a code { color: var(--ink-accent); }
 
 /* ---------- 12. 引擎冷却区 ---------- */
 .cooldown-grid {
