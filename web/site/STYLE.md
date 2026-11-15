@@ -17,7 +17,7 @@
 | 区块留白 | 上下各 **160px**(实测 `pt-ds-11`) | 约 96–120px(视觉读数) |
 | 动效 | 入场 opacity+translateY 渐显(JS 驱动),`prefers-reduced-motion` 降级 | `landing-fade-up` 关键帧 + **logo 无缝跑马灯 40s** |
 
-**Web2API 官网采用:deepseek.com 主站设计语言(2026-11-15 领导拍板,由暖纸衬线体系整体切换)——冰蓝雾面渐变底、居中构图、无衬线宽字距大标题、白色半透明卡片 + 柔影、品牌蓝 `#4D6BFE` 点缀;保留 DeepSeek Harness 的「暗色产品窗口」语言展示 API/终端/代码。
+**Web2API 官网采用:deepseek.com 主站设计语言(2026-11-15 领导拍板,由暖纸衬线体系整体切换)——冰蓝雾面渐变底、居中构图、无衬线宽字距大标题、白色半透明卡片 + 柔影、品牌蓝 `#177E5B` 点缀;保留 DeepSeek Harness 的「暗色产品窗口」语言展示 API/终端/代码。
 两套主题各自完整(见 §2);导航顶部透明融入雾面,滚动后转白色玻璃条。**
 
 ---
@@ -42,19 +42,19 @@
 
 页面背景叠加三层冰蓝 radial 光晕(`background-attachment: fixed`),实现「雾面」质感 —— 见 body 规则。
 
-品牌蓝(DeepSeek 蓝 `#4D6BFE`;2026-11-15 二次改色:由 `#2E55A5`/`#5B8DEF` 蓝黑白组合整体升级为 deepseek 风格,领导拍板):
+品牌蓝(DeepSeek 蓝 `#177E5B`;2026-11-15 二次改色:由 `#177E5B`/`#3ECF8E` 蓝黑白组合整体升级为 deepseek 风格,领导拍板):
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--brand` | 亮色态 `#4D6BFE`;暗色态 `#6E8FFF` | 主 CTA、链接 hover、数据包/脉冲动画、状态点 |
+| `--brand` | 亮色态 `#177E5B`;暗色态 `#6E8FFF` | 主 CTA、链接 hover、数据包/脉冲动画、状态点 |
 | `--brand-foreground` | `#FFFFFF`(两主题一致) | 蓝底白字 |
-| `--ink-accent` | `#4D6BFE` | 暗色产品窗内强调色 |
+| `--ink-accent` | `#177E5B` | 暗色产品窗内强调色 |
 | `--ink-green` | `#9ECE6A` | 暗窗代码字符串高亮 |
 
 暗色主题(`html.dark`,deepseek 深蓝黑体系):
 `--background:#0B101B` / `--foreground:#E9EFFA` / `--card:#121A2A` / `--muted:#16203A` /
 `--accent:#18233C` / `--muted-foreground:#8B9BC0` / `--brand:#6E8FFF` / `--border:rgba(122,150,210,.16)`。
-图表序列色:`#5B8DEF #8089FF #00C386 #00B1FB #D66BB8`。
+图表序列色:`#3ECF8E #8089FF #00C386 #00B1FB #D66BB8`。
 
 DeepSeek 暗色组件语言(实测,用于「产品窗口」):
 - 页面底 `#0A0A0A`;标题 `#FFFFFF`;正文 `rgba(255,255,255,.5)`(50% 白,16px/25.6px);

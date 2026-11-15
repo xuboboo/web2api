@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.svg" alt="Web2API — 网站收录查询开放平台" width="640"></p>
+
 # Web2API —— 自托管的网站收录查询开放平台
 
 **提交一批 URL，判定它们是否被百度 / 搜狗 / 360 / 必应收录**；附带四引擎原始搜索、AI Agent 一等公民接入（MCP + OpenAPI）与一个管理控制台（API 密钥、配额、用量、引擎风控看板），并自带产品官网。官网、管理控制台与全部 API 固定部署在 **`/web-tool`** 子路径下：官网即 `/web-tool/` 根，控制台在 `/web-tool/console/`。

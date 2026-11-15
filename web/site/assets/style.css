@@ -7,26 +7,26 @@
 /* ---------- 1. Token ---------- */
 :root {
   /* 亮色主题:zero.cat 实测值(STYLE.md §1.1) */
-  --background: #F7FAFD;
-  --foreground: #16223B;
-  --muted-foreground: #5E6B85;
-  --muted: #EDF2FA;
-  --accent: #E3EDFB;
-  --border: rgba(109, 134, 180, .24);
+  --background: #F5F8F5;
+  --foreground: #1A2B24;
+  --muted-foreground: #5E7265;
+  --muted: #EBF1EC;
+  --accent: #E2EFE7;
+  --border: rgba(96, 128, 106, .26);
   --card: #FFFFFF;
-  --primary: #16223B;
-  --brand: #4D6BFE;
+  --primary: #1A2B24;
+  --brand: #177E5B;
   --brand-foreground: #FFFFFF;
   --radius: 10px;
   --radius-lg: 16px;
 
-  /* 派生 token(2026-11-15 全新配色:deepseek.com 实测体系,领导拍板)
-     冰蓝雾面渐变底 + 白色半透明卡片 + #4D6BFE 点缀;暖纸/衬线体系退役 */
-  --border-strong: #B9C8E4;
+  /* 派生 token(2026-11-15 品牌升级:峰标 Summit Mark + 松柏绿系)
+     告别 AI 蓝;山 = 官网 Hero 暗窗与登录页既有主题,品牌自洽 */
+  --border-strong: #B4C9BB;
   --ok: #00C386;
   --warn: #FFA824;
   --destructive: #E05A5A;
-  --canvas-dot: rgba(77, 107, 254, .10);
+  --canvas-dot: rgba(23, 126, 91, .10);
 
   /* DeepSeek 暗色产品窗语言(两主题下恒定):#0A0A0A 窗底 / rgba 白层叠 */
   --ink-bg: #0A0A0A;
@@ -37,7 +37,7 @@
   --ink-text: rgba(255, 255, 255, 0.5);
   --ink-dim: rgba(255, 255, 255, 0.72);
   --ink-faint: rgba(255, 255, 255, 0.35);
-  --ink-accent: #4D6BFE;
+  --ink-accent: #3ECF8E;
   --ink-green: #9ECE6A;
   --ink-num: #8089FF;
 
@@ -56,18 +56,18 @@
 
 /* 暗色主题:zero.cat .dark 实测值(STYLE.md §1.1) */
 html.dark {
-  --background: #0B101B;
-  --foreground: #E9EFFA;
-  --card: #121A2A;
-  --muted: #16203A;
-  --accent: #18233C;
-  --muted-foreground: #8B9BC0;
-  --border: rgba(122, 150, 210, .16);
-  --primary: #E9EFFA;
-  --brand: #6E8FFF;
-  --border-strong: #2A3A5E;
-  --canvas-dot: rgba(110, 143, 255, .10);
-  --nav-glass: rgba(11, 16, 27, .82);
+  --background: #0B1210;
+  --foreground: #E9F2EC;
+  --card: #111C16;
+  --muted: #15211A;
+  --accent: #1A2A20;
+  --muted-foreground: #8BA294;
+  --border: rgba(120, 160, 132, .16);
+  --primary: #E9F2EC;
+  --brand: #3ECF8E;
+  --border-strong: #24402F;
+  --canvas-dot: rgba(62, 207, 142, .10);
+  --nav-glass: rgba(11, 18, 16, .82);
 }
 
 html { color-scheme: light; }
@@ -86,9 +86,9 @@ html {
 body {
   background-color: var(--background);
   background-image:
-    radial-gradient(1100px 540px at 50% -160px, rgba(77, 107, 254, 0.12), transparent 64%),
-    radial-gradient(900px 460px at 88% 6%, rgba(110, 143, 255, 0.09), transparent 60%),
-    radial-gradient(760px 420px at 4% 30%, rgba(77, 107, 254, 0.06), transparent 62%);
+    radial-gradient(1100px 540px at 50% -160px, rgba(23, 126, 91, 0.12), transparent 64%),
+    radial-gradient(900px 460px at 88% 6%, rgba(62, 207, 142, 0.09), transparent 60%),
+    radial-gradient(760px 420px at 4% 30%, rgba(23, 126, 91, 0.06), transparent 62%);
   color: var(--foreground);
   font: 400 16px/26px var(--font-sans);
   overflow-x: clip; /* 兜底:水印等出血元素不产生横向滚动 */
@@ -371,8 +371,8 @@ html.dark .icon-btn .icon-moon { display: block; }
 /* --- Hero 右侧:暗窗示意图(Harness 语言:山 + 分发) --- */
 .hero-dark {
   background:
-    radial-gradient(1000px 480px at 76% 34%, rgba(77, 107, 254, .16), transparent 62%),
-    linear-gradient(180deg, #0B101B 0%, #0B101B 86%, rgba(11, 16, 27, 0) 100%);
+    radial-gradient(1000px 480px at 76% 34%, rgba(62, 207, 142, .14), transparent 62%),
+    linear-gradient(180deg, #0B1210 0%, #0B1210 86%, rgba(11, 18, 16, 0) 100%);
   color: #fff;
   padding: 56px 0 96px;
 }
@@ -389,12 +389,12 @@ html.dark .icon-btn .icon-moon { display: block; }
 .diagram { min-width: 0; width: 100%; }
 .dark-window {
   position: relative;
-  background: linear-gradient(180deg, #10141F 0%, #0B0F18 100%);
+  background: linear-gradient(180deg, #0F1A14 0%, #0A130E 100%);
   border: .8px solid rgba(255, 255, 255, .08);
   border-radius: var(--radius-lg);
   padding: 26px 26px 18px;
   overflow: hidden;
-  box-shadow: 0 24px 64px rgba(11, 16, 27, .45);
+  box-shadow: 0 24px 64px rgba(11, 18, 16, .45);
 }
 .dark-window .mtn {
   position: absolute;
@@ -409,16 +409,16 @@ html.dark .icon-btn .icon-moon { display: block; }
 .dark-window .diag-req code .muted { color: rgba(255, 255, 255, .4); }
 .dark-window .diag-tag { color: rgba(255, 255, 255, .5); }
 .dark-window .diag-stem, .dark-window .diag-stem2 { background: rgba(255, 255, 255, .16); }
-.dark-window .diag-stem::after, .dark-window .diag-stem2::after { background: #5B8DEF; }
+.dark-window .diag-stem::after, .dark-window .diag-stem2::after { background: #3ECF8E; }
 .dark-window .fan-wires .rail { border-top-color: rgba(255, 255, 255, .16); }
 .dark-window .fan-wires .stub { border-left-color: rgba(255, 255, 255, .16); }
-.dark-window .fan-wires .rail::after, .dark-window .fan-wires .stub::after { background: #5B8DEF; }
+.dark-window .fan-wires .rail::after, .dark-window .fan-wires .stub::after { background: #3ECF8E; }
 .dark-window .exit-card { background: rgba(255, 255, 255, .03); border-color: rgba(255, 255, 255, .1); }
 .dark-window .exit-card:hover { border-color: rgba(255, 255, 255, .24); }
 .dark-window .exit-card h3 { color: #fff; display: flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
 .dark-window .exit-card code { color: rgba(255, 255, 255, .4); }
-.dark-window .exit-card::after { border-color: #5B8DEF; box-shadow: 0 8px 20px rgba(91, 141, 239, .28); }
-.dark-window .diag-hub { background: #4D6BFE; box-shadow: 0 0 24px rgba(77, 107, 254, .5); }
+.dark-window .exit-card::after { border-color: #3ECF8E; box-shadow: 0 8px 20px rgba(62, 207, 142, .28); }
+.dark-window .diag-hub { background: #3ECF8E; box-shadow: 0 0 24px rgba(23, 126, 91, .5); }
 .dark-window .demo-toggle { color: rgba(255, 255, 255, .5); border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .03); }
 .dark-window .demo-toggle:hover { color: #fff; border-color: rgba(255, 255, 255, .3); }
 .eng-en { font: 500 9.5px/1 var(--font-mono); letter-spacing: .14em; color: rgba(255, 255, 255, .35); font-style: normal; }
@@ -426,7 +426,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 .dot-dim { background: rgba(255, 255, 255, .25); box-shadow: none; }
 
 /* 白色卡片柔影仅用于亮色区段内的卡片 */
-.section .diag-req, .section .exit-card { box-shadow: 0 1px 2px rgba(22, 34, 59, .05), 0 12px 32px rgba(77, 107, 254, .08); }
+.section .diag-req, .section .exit-card { box-shadow: 0 1px 2px rgba(22, 34, 59, .05), 0 12px 32px rgba(23, 126, 91, .08); }
 
 .diag-req {
   border: 1px solid var(--border);
@@ -470,7 +470,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   margin-left: -3.5px;
   border-radius: 50%;
   background: var(--brand);
-  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, .18);
   animation: packet-y 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
 }
 
@@ -543,7 +543,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   margin-left: -3.5px;
   border-radius: 50%;
   background: var(--brand);
-  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, .18);
   animation: packet-y 1.6s cubic-bezier(.45, 0, .55, 1) .5s infinite;
 }
 
@@ -565,7 +565,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   height: 7px;
   border-radius: 50%;
   background: var(--brand);
-  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, .18);
   opacity: 0;
   animation: rail-packet 6.4s linear infinite;
 }
@@ -585,7 +585,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   margin-left: -3.5px;
   border-radius: 50%;
   background: var(--brand);
-  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  box-shadow: 0 0 0 3px rgba(62, 207, 142, .18);
   opacity: 0;
   animation: stub-drop 6.4s linear infinite;
 }
@@ -1130,7 +1130,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 /* ---------- 14. 生态 CTA(暗色带) ---------- */
 .eco {
   background:
-    radial-gradient(900px 380px at 50% 0%, rgba(77, 107, 254, .18), transparent 66%),
+    radial-gradient(900px 380px at 50% 0%, rgba(62, 207, 142, .16), transparent 66%),
     linear-gradient(180deg, rgba(11, 16, 27, 0) 0%, #0B101B 16%, #0B101B 100%);
   padding: 120px 0 104px;
   text-align: center;
