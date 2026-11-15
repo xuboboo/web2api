@@ -57,7 +57,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
 | 定位 | **收录判定** + 国内搜索 | 全球搜索结果 API | Google 搜索结果 API | AI 原生搜索 | SEO 大数据 | 站点级 SEO 数据 | 收录查询 |
 | 国内四引擎（baidu/sogou/so360/bing）搜索结果 | ✓ | 部分（含 Baidu/Yandex 等 100+ 引擎） | ✗（仅 Google 系） | 部分（Web Search 覆盖中文 web，非引擎对等） | ✗ | ✗ | ✗ |
 | **URL 收录判定 API（本文核心语义）** | **✓** | ✗ | ✗ | ✗ | ✗（仅网页工具，一次 200 条，无 API） | ✗ | ✓ |
-| 自托管（数据不出内网） | **✓**（单二进制） | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 自托管（密钥/日志本地存储） | **✓**（单二进制） | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | MCP server（Claude 系客户端直连） | ✓（本仓库内置） | ✓（官方） | ✗ | ✓ | ✗ | ✗ | ✗ |
 | 公开 OpenAPI spec（Dify/Coze/n8n/LangChain 导入） | ✓（`/web-tool/openapi.yaml` + `llms.txt`） | ✗ | ✗ | ✗（文档在需登录的飞书 wiki） | ✗ | ✗ | ✗ |
 | 异步批量 / 归档 / 回调 | ✗（同步，20 URL/请求） | ✓（async + Searches Archive） | ✗ | ✗ | ✓（taskid 轮询） | ✗ | ✓（Webhook 回调） |
