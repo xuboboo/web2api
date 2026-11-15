@@ -1,6 +1,6 @@
 # AGENT-README —— 给 AI Agent 开发者的 5 分钟接入指南
 
-本平台（Web2API）是**自托管的收录情报 & 国内搜索 Agent 数据平台**：你的 Agent 可以用它做两件事——
+本平台（Web2API）是**自托管的网站收录查询开放平台**：你的 Agent 可以用它做两件事——
 
 1. **收录判定**（`check_indexed`）：一批 URL 是否被百度 / 搜狗 / 360 / 必应收录，每 URL×引擎一个结论；
 2. **国内搜索**（`web_search`）：四引擎 organic 结果（rank/title/url/snippet）。

@@ -1,4 +1,4 @@
-# Web2API 收录情报 & 国内搜索 Agent 数据平台 —— 主配置
+# Web2API 网站收录查询开放平台 —— 主配置
 # 优先级:CLI 参数 > WEB2API_* 环境变量 > 本文件 > 代码内置默认值(Viper)。
 # 环境变量命名:WEB2API_ + 键名大写、. 换 _(例:platform.admin_password → WEB2API_PLATFORM_ADMIN_PASSWORD)。
 # serve 可用 --config/-c 指定任意配置文件路径(或 WEB2API_SERVER_CONFIG_PATH)。

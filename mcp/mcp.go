@@ -341,7 +341,7 @@ func (s *server) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 		},
 		"serverInfo": map[string]any{
 			"name":    ServerName,
-			"title":   "Web2API 收录情报 & 国内搜索 Agent 数据平台",
+			"title":   "Web2API 网站收录查询开放平台",
 			"version": Version,
 		},
 		"instructions": "国内四引擎(百度/搜狗/360/必应)搜索与收录判定。鉴权:请求头 X-API-Key(计费)或 Authorization: Bearer <JWT>(管理员,不计费)。完整端点见 /openapi.yaml 与 /llms.txt。",

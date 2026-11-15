@@ -1,5 +1,5 @@
 /* ============================================================
-   Web2API 收录情报平台 · 管理控制台
+   Web2API 网站收录查询开放平台 · 管理控制台
    纯静态样式:零依赖、无外部字体/图片,原生 CSS。
    视觉基因:web/admin/STYLE.md(源自幻方官网 high-flyer.cn 实测)——
    纯黑/纯白双底 + 高对比排版;主色 #2e55a5;激活蓝 #2997ff;
@@ -202,7 +202,7 @@ textarea.input {
 }
 .login-title {
   margin: 0 0 8px;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
   color: #fff;
   text-align: center;

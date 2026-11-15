@@ -1,13 +1,13 @@
 openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
-  title: Web2API — 收录情报 & 国内搜索 Agent 数据平台
+  title: Web2API — 网站收录查询开放平台
   version: "0.8.19"
   license:
     name: MIT
     url: https://github.com/xuboboo/web2api/blob/main/LICENSE
   description: |
-    单二进制自托管的「收录情报 & 国内搜索 Agent 数据平台」。
+    单二进制自托管的「Web2API 网站收录查询开放平台」。
 
     三个平面:
     * **数据平面** `/v1/*` — 国内四引擎(百度/搜狗/360/必应)收录判定与搜索,鉴权/配额/限流/冷却内建。
