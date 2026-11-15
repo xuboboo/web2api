@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>服务器状态 · Web2API 网站收录查询开放平台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='32' cy='29' r='16' fill='%23F5F8F5'/%3E%3Cpath d='M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z' fill='%23E05A5A'/%3E%3Cpath d='M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z' fill='%23E05A5A' opacity='.85'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='27.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Ccircle cx='38' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='36.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Cpath d='M28 36 L32 58 L36 36 Z' fill='%23F0B429'/%3E%3Ccircle cx='18' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3Ccircle cx='46' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/style.css?v=20261116e">
+<script>
+/* 主题预置:与官网一致,默认暗夜;显式选择过浅色才用浅色 */
+(function () {
+  try {
+    if (localStorage.getItem('w2a_site_theme') !== 'light') {
+      document.documentElement.classList.add('dark');
+    }
+  } catch (e) {}
+})();
+</script>
+<style>
+.status-page { min-height: 100vh; }
+.status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1056px;
+  margin: 0 auto;
+  padding: 26px 24px;
+}
+.status-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--foreground); }
+.status-brand svg { width: 30px; height: 30px; }
+.status-brand b { font: 600 15px/1 var(--font-sans); }
+.status-links { display: flex; gap: 6px; align-items: center; }
+.status-links a {
+  padding: 7px 12px;
+  border-radius: 8px;
+  font: 500 13.5px/1 var(--font-sans);
+  color: var(--muted-foreground);
+  text-decoration: none;
+  transition: color .15s ease, background-color .15s ease;
+}
+.status-links a:hover { color: var(--foreground); background: var(--accent); }
+.status-main { max-width: 1056px; margin: 0 auto; padding: 12px 24px 64px; }
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  padding: 20px 24px;
+  margin-bottom: 28px;
+}
+.banner .b-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.banner.b-ok .b-dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(0, 195, 134, .18); }
+.banner.b-ok .b-title { color: var(--foreground); }
+.banner.b-degraded { border-color: rgba(240, 180, 65, .4); }
+.banner.b-degraded .b-dot { background: #F0B429; box-shadow: 0 0 0 4px rgba(240, 180, 65, .18); }
+.banner.b-degraded .b-title { color: #F0B429; }
+.b-title { font: 600 17px/1.4 var(--font-sans); }
+.b-meta { margin-left: auto; font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); }
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  padding: 6px 22px;
+  margin-bottom: 24px;
+}
+.eng-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 2px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.eng-row:last-child { border-bottom: 0; }
+.eng-name { font: 600 13.5px/1 var(--font-mono); color: var(--foreground); }
+.eng-cn { font: 400 12.5px/1 var(--font-sans); color: var(--muted-foreground); }
+.st-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 11px;
+  border-radius: 100px;
+  font: 600 11.5px/1 var(--font-sans);
+}
+.st-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.st-ok { background: rgba(0, 195, 134, .12); color: #00C386; }
+.st-cool { background: rgba(240, 180, 65, .12); color: #F0B429; }
+.st-cb { background: rgba(224, 90, 90, .12); color: #E05A5A; }
+.st-count { font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.st-reason { font: 400 12px/1 var(--font-sans); color: var(--muted-foreground); }
+.seg-bar { display: flex; gap: 6px; flex-basis: 100%; margin-top: 12px; }
+.seg { flex: 1; height: 6px; border-radius: 3px; background: var(--muted); }
+.seg.on-ok { background: #00C386; }
+.seg.on-warn { background: #F0B429; }
+.seg.on-err { background: transparent; border: 1px solid rgba(224, 90, 90, .5); }
+.apis-note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  padding: 18px 22px;
+  font-size: 13.5px;
+  line-height: 24px;
+  color: var(--muted-foreground);
+}
+.apis-note b { color: var(--foreground); font-weight: 600; }
+.apis-note code { font: 500 12px/1 var(--font-mono); background: var(--muted); border-radius: 5px; padding: 2px 6px; }
+.status-foot {
+  max-width: 1056px;
+  margin: 0 auto;
+  padding: 0 24px 48px;
+  font: 400 12px/20px var(--font-sans);
+  color: var(--muted-foreground);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+}
+.status-foot a { color: var(--brand); text-decoration: none; }
+.status-foot a:hover { text-decoration: underline; }
+</style>
+</head>
+<body class="status-page">
+<header class="status-head">
+  <a class="status-brand" href="../">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#177E5B"/><circle cx="32" cy="29" r="16" fill="#F5F8F5"/><path d="M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z" fill="#E05A5A"/><path d="M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z" fill="#E05A5A" opacity=".85"/><circle cx="26" cy="26" r="5" fill="#0B1210"/><circle cx="27.5" cy="24.5" r="1.6" fill="#FFFFFF"/><circle cx="38" cy="26" r="5" fill="#0B1210"/><circle cx="36.5" cy="24.5" r="1.6" fill="#FFFFFF"/><path d="M28 36 L32 58 L36 36 Z" fill="#F0B429"/><circle cx="18" cy="34" r="2.4" fill="#177E5B" opacity=".3"/><circle cx="46" cy="34" r="2.4" fill="#177E5B" opacity=".3"/></svg>
+    <b>Web2API · 服务器状态</b>
+  </a>
+  <nav class="status-links">
+    <a href="../">官网</a>
+    <a href="../console/">控制台</a>
+    <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>
+  </nav>
+</header>
+
+<main class="status-main">
+  <div class="banner" id="overallBanner">
+    <span class="b-dot"></span>
+    <span class="b-title" id="overallTitle">正在获取服务器状态…</span>
+    <span class="b-meta" id="generatedAt"></span>
+  </div>
+
+  <div class="panel" id="enginePanel">
+    <div class="eng-row"><span class="eng-name">…</span><span class="st-pill st-ok">加载中</span></div>
+  </div>
+
+  <div class="apis-note">
+    <b>API 平面</b> —— 收录判定 <code>POST /web-tool/v1/index/check</code> 与四引擎搜索 <code>GET /web-tool/{engine}/search</code> 正常对外服务;引擎冷却期间对应请求快速失败(HTTP 503 <code>engine_cooldown</code> + <code>Retry-After</code>),不消耗配额,客户端据 <code>meta.engines_cooldown</code> 跳过并在 <code>Retry-After</code> 后重试。鉴权与配额说明见 <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>。
+  </div>
+</main>
+
+<footer class="status-foot">
+  <span>数据每 10 秒自动刷新 · 生成时间 <span id="genAt2">—</span></span>
+  <a href="../">返回官网</a>
+  <a href="../console/">进入控制台</a>
+</footer>
+
+<script>
+(function () {
+  var CN = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
+  var SEGS = 12;
+
+  function pill(state) {
+    if (state === 'cooldown') return '<span class="st-pill st-cool">冷却</span>';
+    if (state === 'circuit_open') return '<span class="st-pill st-cb">熔断</span>';
+    return '<span class="st-pill st-ok">正常</span>';
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+    });
+  }
+  function remainingText(untilStr) {
+    if (!untilStr) return '';
+    var ms = new Date(untilStr).getTime() - Date.now();
+    if (ms <= 0) return '等待恢复探测';
+    var m = Math.floor(ms / 60000);
+    var s = Math.floor((ms % 60000) / 1000);
+    return '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  var lastData = null;
+  function render(data) {
+    lastData = data;
+    var engines = (data && data.engines) || [];
+    var panel = document.getElementById('enginePanel');
+    var banner = document.getElementById('overallBanner');
+    var title = document.getElementById('overallTitle');
+    var gen = document.getElementById('generatedAt');
+    var gen2 = document.getElementById('genAt2');
+
+    var degraded = engines.some(function (eng) {
+      return eng.state === 'cooldown' || eng.state === 'circuit_open';
+    });
+    banner.className = degraded ? 'banner b-degraded' : 'banner b-ok';
+    title.textContent = degraded ? '部分引擎降级 —— 冷却 / 熔断自愈中' : '全部系统正常运行';
+
+    var stamp = data && data.generated_at ? data.generated_at.replace('T', ' ').replace('Z', ' UTC') : '';
+    if (gen) gen.textContent = stamp ? '生成于 ' + stamp : '';
+    if (gen2) gen2.textContent = stamp || '—';
+
+    if (!engines.length) {
+      panel.innerHTML = '<div class="eng-row"><span class="eng-name">—</span><span class="st-pill st-ok">暂无引擎数据</span></div>';
+      return;
+    }
+    var html = '';
+    engines.forEach(function (eng) {
+      var state = eng.state || 'ok';
+      var now = Date.now();
+      var remMin = Infinity;
+      if (state === 'cooldown' && eng.until) {
+        remMin = Math.max(0, (new Date(eng.until).getTime() - now) / 60000);
+      }
+      var filled = 0;
+      if (state === 'ok') filled = SEGS;
+      else if (state === 'cooldown' && isFinite(remMin)) filled = Math.max(1, Math.round(SEGS * Math.min(1, remMin / 120)));
+      var segs = '';
+      for (var i = 0; i < SEGS; i++) {
+        var cls = 'seg';
+        if (state === 'circuit_open') cls += ' on-err';
+        else if (i < filled) cls += state === 'cooldown' ? ' on-warn' : ' on-ok';
+        segs += '<span class="' + cls + '"></span>';
+      }
+      var extra = state === 'cooldown' && eng.until
+        ? '<span class="st-count cd-remaining" data-until="' + esc(eng.until) + '">' + esc(remainingText(eng.until)) + '</span>'
+        : '';
+      var reason = state === 'cooldown' && eng.reason ? '<span class="st-reason">' + esc(eng.reason) + '</span>' : '';
+      html += '<div class="eng-row">'
+        + '<span class="eng-name">' + esc(eng.engine) + '</span>'
+        + '<span class="eng-cn">' + esc(CN[eng.engine] || eng.engine) + '</span>'
+        + pill(state) + extra + reason
+        + '<div class="seg-bar" aria-hidden="true">' + segs + '</div>'
+        + '</div>';
+    });
+    panel.innerHTML = html;
+  }
+  function tick() {
+    Array.prototype.forEach.call(document.querySelectorAll('.cd-remaining[data-until]'), function (el) {
+      var u = el.getAttribute('data-until');
+      if (!u) return;
+      var ms = new Date(u).getTime() - Date.now();
+      if (ms <= 0) { el.textContent = '等待恢复探测'; return; }
+      var m = Math.floor(ms / 60000);
+      var s = Math.floor((ms % 60000) / 1000);
+      el.textContent = '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+    });
+  }
+  function load() {
+    fetch('../engines/status')
+      .then(function (r) { return r.json(); })
+      .then(function (data) { render(data); tick(); })
+      .catch(function () {
+        var banner = document.getElementById('overallBanner');
+        banner.className = 'banner b-degraded';
+        document.getElementById('overallTitle').textContent = '状态获取失败 —— 请确认服务运行中';
+      });
+  }
+  load();
+  setInterval(load, 10000);
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
