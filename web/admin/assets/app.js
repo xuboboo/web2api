@@ -1059,7 +1059,7 @@
   function pageEngines(root, actions) {
     var viewState = { view: 'cards' };
     /* 引擎分组筛选(STYLE-v2 §5:工具栏含引擎分组 toggle-group):
-     * 平台引擎均为搜索类,按引擎粒度分组——全部 / 各引擎;选中组跨刷新保留。 */
+     * 平台引擎均为搜索类,按引擎粒度分组——全部 / 各引擎;切换页面后重置为「全部」。 */
     var groupState = 'all';
 
     var groupDefs = [['all', '全部']].concat(Object.keys(ENGINE_LABEL).map(function (name) {
