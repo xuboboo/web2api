@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xuboboo/web2api/core"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 )
 
 var bingDateOperatorRE = regexp.MustCompile(`(?i)\b(after|before):(\d{4}-\d{2}-\d{2})\b`)
@@ -187,38 +187,4 @@ func buildBingDateFilter(dateInterval string) (string, error) {
 	endDay := endDate.Unix() / secondsPerDay
 
 	return fmt.Sprintf(`ex1:"ez5_%d_%d"`, startDay, endDay), nil
-}
-
-// BuildImageURL builds a Bing image search URL from Query fields.
-// It returns an error when the resulting query text is empty.
-func BuildImageURL(q core.Query) (string, error) {
-	base, err := url.Parse("https://www.bing.com")
-	if err != nil {
-		return "", err
-	}
-
-	base.Path += "images/search"
-	params := url.Values{}
-
-	if q.Text != "" || q.Site != "" {
-		text := q.Text
-		if q.Site != "" {
-			text += " site:" + q.Site
-		}
-		params.Add("q", text)
-	}
-
-	if len(params.Get("q")) == 0 {
-		return "", errors.New("empty query built")
-	}
-
-	addBingLocale(params, q.LangCode, q.Region)
-
-	// Image-specific parameters
-	params.Add("form", "HDRSC2")
-	params.Add("first", "1")
-	params.Add("scenario", "ImageBasicHover")
-
-	base.RawQuery = params.Encode()
-	return base.String(), nil
 }

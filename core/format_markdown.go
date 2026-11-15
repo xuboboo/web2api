@@ -32,57 +32,9 @@ func RenderMarkdown(env *Envelope) []byte {
 			fmt.Fprintf(&b, "%s\n\n", r.Snippet)
 		}
 		fmt.Fprintf(&b, "-> %s\n\n", r.URL)
-		if r.Extracted != nil && r.Extracted.Content != "" {
-			b.WriteString("#### Extracted content\n\n")
-			b.WriteString(shiftMarkdownHeadings(r.Extracted.Content, 4))
-			b.WriteString("\n\n")
-		}
 	}
 
 	renderMarkdownFeatures(&b, env.SerpFeatures, featureRenderOrderAfterResults(env.SerpFeatures))
-
-	return []byte(b.String())
-}
-
-func shiftMarkdownHeadings(markdown string, minLevel int) string {
-	lines := strings.Split(markdown, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimLeft(line, " ")
-		indent := line[:len(line)-len(trimmed)]
-		if !strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		count := 0
-		for count < len(trimmed) && trimmed[count] == '#' {
-			count++
-		}
-		if count == 0 || count >= len(trimmed) || trimmed[count] != ' ' {
-			continue
-		}
-		target := count + minLevel
-		if target > 6 {
-			target = 6
-		}
-		lines[i] = indent + strings.Repeat("#", target) + trimmed[count:]
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
-}
-
-// RenderMarkdownImage formats an ImageEnvelope as Markdown.
-func RenderMarkdownImage(env *ImageEnvelope) []byte {
-	var b strings.Builder
-
-	enginesStr := strings.Join(env.Query.EnginesRequested, ", ")
-	fmt.Fprintf(&b, "# Image results for %q\n\n", env.Query.Text)
-	fmt.Fprintf(&b, "**Query:** %s - **Engines:** %s - **Took:** %dms\n\n",
-		env.Query.Text, enginesStr, env.Meta.TookMs)
-
-	for i, r := range env.Results {
-		fmt.Fprintf(&b, "## %d. %s\n\n", i+1, escapeMarkdown(r.Title))
-		fmt.Fprintf(&b, "**Source:** %s\n\n", r.Source.Domain)
-		fmt.Fprintf(&b, "-> Image: %s\n", r.Image.URL)
-		fmt.Fprintf(&b, "-> Page: %s\n\n", r.Source.PageURL)
-	}
 
 	return []byte(b.String())
 }

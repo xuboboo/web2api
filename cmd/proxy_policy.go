@@ -8,14 +8,10 @@ import (
 
 func buildEngineProxyPolicyMap() map[string]string {
 	return map[string]string{
-		"google":     config.GoogleConfig.Proxy,
-		"yandex":     config.YandexConfig.Proxy,
-		"baidu":      config.BaiduConfig.Proxy,
-		"bing":       config.BingConfig.Proxy,
-		"duckduckgo": config.DuckDuckGoConfig.Proxy,
-		"ecosia":     config.EcosiaConfig.Proxy,
-		"sogou":      config.SogouConfig.Proxy,
-		"so360":      config.So360Config.Proxy,
+		"baidu": config.BaiduConfig.Proxy,
+		"bing":  config.BingConfig.Proxy,
+		"sogou": config.SogouConfig.Proxy,
+		"so360": config.So360Config.Proxy,
 	}
 }
 

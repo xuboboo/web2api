@@ -6,41 +6,72 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/xuboboo/web2api/core"
+	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/platform"
 	"golang.org/x/time/rate"
 )
 
 // rawEngine implements SearchEngine interface for raw HTTP requests
 type rawEngine struct {
-	name      string
+	name string
+	// searchFn overrides the registry lookup; nil in production. Test-only
+	// injection point so raw-mode behavior is exercised without network.
+	searchFn  func(ctx context.Context, q core.Query) ([]core.SearchResult, error)
 	limiterMu sync.Mutex
 	limiter   *rate.Limiter
+}
+
+func (r *rawEngine) rawSearch() (func(ctx context.Context, q core.Query) ([]core.SearchResult, error), bool) {
+	if r.searchFn != nil {
+		return r.searchFn, true
+	}
+	spec, ok := resolveEngineSpec(r.name)
+	if !ok || spec.rawSearchFn == nil {
+		return nil, false
+	}
+	return spec.rawSearchFn, true
 }
 
 func (r *rawEngine) Search(ctx context.Context, q core.Query) ([]core.SearchResult, error) {
 	q.Insecure = config.Server.Insecure
 
-	spec, ok := resolveEngineSpec(r.name)
-	if !ok || spec.rawSearchFn == nil {
+	rawSearch, ok := r.rawSearch()
+	if !ok {
 		return nil, fmt.Errorf("unsupported engine: %s", r.name)
 	}
-	return spec.rawSearchFn(ctx, q)
+	return rawSearch(ctx, q)
 }
 
-func (r *rawEngine) SearchImage(_ context.Context, _ core.Query) ([]core.SearchResult, error) {
-	return nil, fmt.Errorf("image search is not supported in raw mode for %s", r.name)
+// CheckIndexed implements core.IndexChecker for raw mode: it pulls the raw
+// SERP with the target URL itself as the query phrase through the engine's
+// rawSearchFn. Candidate matching (core.EvaluateIndexSERP) and opaque
+// wrapped-link resolution run afterwards in core's RunIndexCheckUnits
+// orchestration, unchanged. Raw mode registers baidu/sogou/so360 only (bing
+// has no raw channel), so a raw check_indexed request for bing is answered by
+// SelectIndexCheckEngines with 400 INVALID_PARAM — this method never sees it.
+// Parts that cannot be verified honestly surface as engine-level errors, never
+// as a fake verdict.
+func (r *rawEngine) CheckIndexed(ctx context.Context, targetURL string, q core.Query) ([]core.SearchResult, error) {
+	rawSearch, ok := r.rawSearch()
+	if !ok {
+		return nil, fmt.Errorf("%w: %s has no raw search channel for index checks", core.ErrNotImplemented, r.name)
+	}
+	q.Insecure = config.Server.Insecure
+	return rawSearch(ctx, core.IndexCheckQuery(targetURL, q))
 }
 
 func (r *rawEngine) Name() string {
@@ -77,6 +108,11 @@ func serve(cmd *cobra.Command, args []string) error {
 	corsCfg.MaxAge = config.CORS.MaxAge
 
 	warnIfExposedWithoutAuth(config.Server.Host, corsCfg.AllowOrigins)
+	// 契约 B: shout about the shipped default password on any non-loopback
+	// bind — it is the only thing standing between the panel and the internet.
+	if config.Platform.Enabled && config.Platform.AdminPassword == "admin123" && !isLoopbackHost(config.Server.Host) {
+		logrus.Warn("SECURITY: 平台管理员密码仍为默认 admin123 且服务绑定在非 loopback 地址,请立即通过 config.platform.admin_password 或面板「系统设置」修改")
+	}
 
 	captchaSolverEnabled, captchaSolverAPIKey, err := resolveCaptchaSolverConfig()
 	if err != nil {
@@ -99,14 +135,14 @@ func serve(cmd *cobra.Command, args []string) error {
 		logrus.Warn("Browserless results are very inconsistent or may not even work!")
 		serverOpts := buildServerOptions(corsCfg, proxyCfg, fingerprintBrowserOpts)
 		var rawEngines []core.SearchEngine
-		for _, name := range enabledEngineNames("google", "yandex", "baidu", "ecosia") {
+		for _, name := range enabledEngineNames("baidu", "sogou", "so360") {
 			rawEngines = append(rawEngines, &rawEngine{name: name})
 		}
 		if len(rawEngines) == 0 {
 			return fmt.Errorf("all search engines are disabled")
 		}
 		serv := core.NewServerWithOptions(config.Server.Host, config.Server.Port, serverOpts, rawEngines...)
-		return listenWithGracefulShutdown(serv, nil)
+		return startServerWithPlatform(serv, nil)
 	}
 
 	baseOpts := fingerprintBrowserOpts
@@ -114,15 +150,165 @@ func serve(cmd *cobra.Command, args []string) error {
 	baseOpts.CaptchaSolverEnabled = captchaSolverEnabled
 	baseOpts.CaptchaSolverApiKey = captchaSolverAPIKey
 
-	engines, closeBrowsers, browserResolver, err := buildBrowserEngines(baseOpts, proxyCfg)
+	engines, closeBrowsers, err := buildBrowserEngines(baseOpts, proxyCfg)
 	if err != nil {
 		return err
 	}
 
 	serverOpts := buildServerOptions(corsCfg, proxyCfg, fingerprintBrowserOpts)
-	serverOpts.BrowserResolver = browserResolver
 	serv := core.NewServerWithOptions(config.Server.Host, config.Server.Port, serverOpts, engines...)
-	return listenWithGracefulShutdown(serv, closeBrowsers)
+	return startServerWithPlatform(serv, closeBrowsers)
+}
+
+// startServerWithPlatform mounts the platform API groups and the admin panel
+// under the fixed core.BasePath, logs the panel address and runs the graceful
+// shutdown loop. closeResources (browser pool etc.) and the platform store are
+// released together when the server drains.
+func startServerWithPlatform(serv *core.Server, closeResources func() error) error {
+	closePlat, err := mountPlatformAndPanel(serv)
+	if err != nil {
+		return err
+	}
+	onClose := func() error {
+		var errs []error
+		if closeResources != nil {
+			errs = append(errs, closeResources())
+		}
+		if closePlat != nil {
+			errs = append(errs, closePlat())
+		}
+		return errors.Join(errs...)
+	}
+	return listenWithGracefulShutdown(serv, onClose)
+}
+
+// mountPlatformAndPanel wires the running assembly onto the server's fiber app:
+//
+//  1. platform.enabled=true → platform.New(config.Platform, serv.EngineStatusSnapshot)
+//     and the /api/* (admin) + /v1/* (public, index/check handler) groups rooted
+//     at core.BasePath. The cooldown management endpoints (契约 A) ride
+//     RegisterAdmin with the *core.Server injected as platform.EngineControl,
+//     POST /api/playground/check is mounted behind the JWT guard, and the
+//     security node (契约 B) is installed via SetSecurity;
+//  2. the admin panel static files at core.BasePath (always mounted, even with
+//     the platform disabled — only /api/* and /v1/* are gated by the switch).
+//
+// The platform closer is returned (nil when the platform is disabled).
+func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
+	app := serv.FiberApp()
+
+	var plat *platform.Platform
+	if config.Platform.Enabled {
+		var err error
+		plat, err = platform.New(config.Platform, serv.EngineStatusSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("platform init: %w", err)
+		}
+		plat.SetSecurity(config.Security)
+		dataPlaneAuth.Store(plat)
+		// RegisterAdmin/RegisterPublic mount literal /api/* and /v1/* paths on
+		// the given router, so the router must be rooted at BasePath (passing
+		// a Group(BasePath+"/api") would double the /api segment).
+		root := app.Group(core.BasePath)
+		// serv (*core.Server) satisfies platform.EngineControl structurally:
+		// EnginesStatusWithCooldown / ResetCooldown / ForceCooldown (契约 A).
+		plat.RegisterAdmin(root, serv.IndexCheckHandler, serv)
+		plat.RegisterPublic(root, serv.IndexCheckHandler)
+		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
+		// 根植于 BasePath。必须在 mountAdminPanel 之前注册,静态通配不覆盖这些路由。
+		mountMCP(app, serv, plat)
+		logrus.WithFields(logrus.Fields{
+			"base_path":  core.BasePath,
+			"storage":    plat.StoreKind(),
+			"data_dir":   config.Platform.DataDir,
+			"admin_user": config.Platform.AdminUsername,
+			"public_api": panelURL() + "v1",
+			"admin_api":  panelURL() + "api",
+		}).Info("收录查询平台已挂载: 面板与 API 统一部署在 " + core.BasePath + " 前缀之下, 面板地址: " + panelURL())
+	}
+
+	mountAdminPanel(app)
+
+	if plat == nil {
+		return nil, nil
+	}
+	return plat.Close, nil
+}
+
+// dataPlaneAuth holds the platform for the optional data-plane auth switch
+// (security.data_plane_auth). It is populated by mountPlatformAndPanel once
+// the platform is up; requests arriving before that (or with the platform
+// disabled) answer 503 auth_unavailable.
+var dataPlaneAuth atomic.Pointer[platform.Platform]
+
+// dataPlaneAuthGuard is the RequestAuth validator core applies to the
+// dedicated /{engine}/search and /stats/* routes when the switch is on.
+// Validator contract: return nil to allow, an error to reject (no c.Next()).
+func dataPlaneAuthGuard() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		plat := dataPlaneAuth.Load()
+		if plat == nil {
+			return &core.APIError{
+				HTTPStatus: fiber.StatusServiceUnavailable,
+				ErrorCode:  "auth_unavailable",
+				Message:    "security.data_plane_auth is enabled but the platform auth backend is unavailable",
+			}
+		}
+		if !plat.ValidateDataPlaneKey(c) {
+			return &core.APIError{
+				HTTPStatus: fiber.StatusUnauthorized,
+				ErrorCode:  "unauthorized",
+				Message:    "a valid X-API-Key is required (security.data_plane_auth is enabled)",
+			}
+		}
+		return nil
+	}
+}
+
+// panelURL renders the externally reachable panel root, e.g.
+// http://127.0.0.1:7000/web-tool/. Wildcard bind hosts are shown as 127.0.0.1.
+func panelURL() string {
+	host := strings.TrimSpace(config.Server.Host)
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("http://%s:%d%s/", host, config.Server.Port, core.BasePath)
+}
+
+// adminPanelDirCandidates lists where the bundled admin panel may live,
+// relative to the working directory first, then to the executable. "../web/admin"
+// covers `go test ./cmd` which runs with the package dir as cwd.
+var adminPanelDirCandidates = []string{
+	filepath.Join("web", "admin"),
+	filepath.Join("..", "web", "admin"),
+	filepath.Join(filepath.Dir(os.Args[0]), "web", "admin"),
+}
+
+// mountAdminPanel serves the static admin panel (web/admin) under BasePath.
+// It is registered AFTER all API routes so API paths win over the static
+// wildcard; GET <BasePath>/ returns index.html and <BasePath>/assets/* serves
+// the bundled resources. The panel is mounted even when platform.enabled=false.
+func mountAdminPanel(app *fiber.App) {
+	dir := ""
+	for _, candidate := range adminPanelDirCandidates {
+		if candidate == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && !info.IsDir() {
+			dir = candidate
+			break
+		}
+	}
+	if dir == "" {
+		logrus.Warn("管理面板静态资源缺失(web/admin/index.html 未找到),面板将返回 404;API 不受影响")
+		return
+	}
+	app.Static(core.BasePath, dir)
+	logrus.WithFields(logrus.Fields{
+		"url": panelURL(),
+		"dir": dir,
+	}).Info("管理面板已挂载: " + panelURL())
 }
 
 func buildFingerprintBrowserOptions() core.BrowserOpts {
@@ -152,7 +338,7 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 	}
 	engineTimeout := time.Duration(config.App.Timeout) * time.Second
 
-	return core.ServerOptions{
+	opts := core.ServerOptions{
 		CacheTTL:               time.Duration(config.Cache.TTLSeconds) * time.Second,
 		CacheMaxSize:           config.Cache.MaxSize,
 		EnableCORS:             config.CORS.Enabled,
@@ -161,10 +347,8 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		EnableDebugEndpoints:   config.App.DebugEndpoints,
 		FingerprintArtifactDir: core.DefaultFingerprintArtifactDir,
 		FingerprintBrowserOpts: fingerprintBrowserOpts,
-		MegaTimeout:            config.App.MegaTimeout,
 		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
-		Extract:                config.Extract,
-		GoogleResolve:          config.GoogleConfig.URLResolveConfig,
+		ResolveConfig:          core.DefaultURLResolveConfig(),
 		Resilience: core.ResilientConfig{
 			Retry: retryCfg,
 			CircuitBreaker: core.CircuitBreakerConfig{
@@ -173,8 +357,16 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 				SuccessThreshold: config.CircuitBreaker.Successes,
 			},
 			Proxy: proxyCfg,
+			// 契约 A: per-engine IP cooldown state machine knobs.
+			Cooldown: config.Stability.EngineCooldown,
 		},
 	}
+	// 数据面可选鉴权(契约): security.data_plane_auth=true 时 dedicated
+	// /{engine}/search 与 /stats/* 需要 X-API-Key。默认关闭,行为与现状一致。
+	if config.Security.DataPlaneAuth {
+		opts.RequestAuth = dataPlaneAuthGuard()
+	}
+	return opts
 }
 
 const gracefulShutdownTimeout = 30 * time.Second
@@ -564,17 +756,6 @@ type pooledBrowserEngine struct {
 	reportLaneStats bool
 }
 
-// parsableEngine wraps pooledBrowserEngine and additionally satisfies
-// core.HTMLParser for engines that have a stateless HTML parse function.
-type parsableEngine struct {
-	*pooledBrowserEngine
-	parseHTMLFn func(io.Reader) ([]core.SearchResult, error)
-}
-
-func (e *parsableEngine) ParseHTML(r io.Reader) ([]core.SearchResult, error) {
-	return e.parseHTMLFn(r)
-}
-
 func (e *pooledBrowserEngine) Search(ctx context.Context, q core.Query) ([]core.SearchResult, error) {
 	engine, err := e.resolveEngine(q)
 	if err != nil {
@@ -583,12 +764,20 @@ func (e *pooledBrowserEngine) Search(ctx context.Context, q core.Query) ([]core.
 	return engine.Search(ctx, q)
 }
 
-func (e *pooledBrowserEngine) SearchImage(ctx context.Context, q core.Query) ([]core.SearchResult, error) {
+// CheckIndexed forwards core.IndexChecker to the engine resolved from the pool
+// (the wrapper itself is replaced per browser, so the capability check must
+// happen on the inner engine). Without this forwarding, /v1/index/check would
+// answer not_implemented for every browser-mode engine.
+func (e *pooledBrowserEngine) CheckIndexed(ctx context.Context, targetURL string, q core.Query) ([]core.SearchResult, error) {
 	engine, err := e.resolveEngine(q)
 	if err != nil {
 		return nil, err
 	}
-	return engine.SearchImage(ctx, q)
+	checker, ok := engine.(core.IndexChecker)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s does not support index checks", core.ErrNotImplemented, engine.Name())
+	}
+	return checker.CheckIndexed(ctx, targetURL, q)
 }
 
 func (e *pooledBrowserEngine) IsInitialized() bool {
@@ -631,10 +820,9 @@ func (e *pooledBrowserEngine) resolveEngine(q core.Query) (core.SearchEngine, er
 }
 
 type browserEngineSpec struct {
-	name        string
-	opts        core.SearchEngineOptions
-	factory     func(core.Browser, core.SearchEngineOptions) core.SearchEngine
-	parseHTMLFn func(io.Reader) ([]core.SearchResult, error)
+	name    string
+	opts    core.SearchEngineOptions
+	factory func(core.Browser, core.SearchEngineOptions) core.SearchEngine
 }
 
 func browserEngineSpecs() []browserEngineSpec {
@@ -646,25 +834,24 @@ func browserEngineSpecs() []browserEngineSpec {
 			continue
 		}
 		out = append(out, browserEngineSpec{
-			name:        s.name,
-			opts:        s.opts(),
-			factory:     s.factory,
-			parseHTMLFn: s.parseHTMLFn,
+			name:    s.name,
+			opts:    s.opts(),
+			factory: s.factory,
 		})
 	}
 	return out
 }
 
-func buildBrowserEngines(baseOpts core.BrowserOpts, proxyCfg core.ProxyConfig) ([]core.SearchEngine, func() error, core.BrowserResolver, error) {
+func buildBrowserEngines(baseOpts core.BrowserOpts, proxyCfg core.ProxyConfig) ([]core.SearchEngine, func() error, error) {
 	specs := browserEngineSpecs()
 	if len(specs) == 0 {
-		return nil, nil, nil, fmt.Errorf("all search engines are disabled")
+		return nil, nil, fmt.Errorf("all search engines are disabled")
 	}
 	// Validate before the pool starts its sweeper, so failed startup leaks nothing.
 	for _, spec := range specs {
 		policy := resolveEngineProxyPolicy(proxyCfg, spec.name)
 		if err := validateBrowserProxyPolicy(proxyCfg, policy); err != nil {
-			return nil, nil, nil, fmt.Errorf("browser proxy validation failed for engine %s: %w", spec.name, err)
+			return nil, nil, fmt.Errorf("browser proxy validation failed for engine %s: %w", spec.name, err)
 		}
 	}
 	launchProxyURL := ""
@@ -688,14 +875,10 @@ func buildBrowserEngines(baseOpts core.BrowserOpts, proxyCfg core.ProxyConfig) (
 			pool:            pool,
 			reportLaneStats: idx == 0,
 		}
-		if spec.parseHTMLFn != nil {
-			engines = append(engines, &parsableEngine{pooledBrowserEngine: base, parseHTMLFn: spec.parseHTMLFn})
-		} else {
-			engines = append(engines, base)
-		}
+		engines = append(engines, base)
 	}
 
-	return engines, pool.close, pool.get, nil
+	return engines, pool.close, nil
 }
 
 func validateBrowserProxyPolicy(proxyCfg core.ProxyConfig, policy core.ProxyPolicy) error {

@@ -15,14 +15,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Extraction depth bounds for the unified extract=N query param. The default
-// is 1 (extract=true == extract=1 == "extract one result"); callers raise it up
-// to maxExtractTop. These mirror the CLI's --extract flag limits.
-const (
-	defaultExtractTop = 1
-	maxExtractTop     = 5
-)
-
 // ErrCaptcha is returned when the engine detects a captcha challenge page.
 // This error is treated as non-retryable by resilient search policies.
 var ErrCaptcha = errors.New("captcha detected")
@@ -297,14 +289,6 @@ type Query struct {
 	// supported by the engine. Such entries may be returned with non-positive
 	// internal rank values.
 	Features bool
-	// Extract fetches and embeds cleaned target-page content for top results.
-	Extract bool
-	// ExtractTop limits how many top results are enriched when Extract is true.
-	ExtractTop int
-	// ExtractMode selects auto, fast, or rendered extraction.
-	ExtractMode string
-	// ExtractMinRunes overrides the auto-mode escalation floor (0 = default).
-	ExtractMinRunes int
 	// ResolveURLs swaps opaque engine redirect links (Google /goto tokens) for
 	// their destination URLs. Ads are never resolved.
 	ResolveURLs bool
@@ -341,9 +325,9 @@ func (q Query) String() string {
 		maskedProxyURL = MaskProxyURL(q.ProxyURL)
 	}
 	return fmt.Sprintf(
-		"{Text:%s LangCode:%s Region:%s DateInterval:%s Filetype:%s Site:%s Limit:%d Start:%d Filter:%t Features:%t Extract:%t ExtractTop:%d ExtractMode:%s ResolveURLs:%t ResolveTop:%d ProxyURL:%s ProxyCountry:%s ProxyClass:%s ProxyProvider:%s ProxySessionID:%s ProxyOverride:%s Insecure:%t}",
+		"{Text:%s LangCode:%s Region:%s DateInterval:%s Filetype:%s Site:%s Limit:%d Start:%d Filter:%t Features:%t ResolveURLs:%t ResolveTop:%d ProxyURL:%s ProxyCountry:%s ProxyClass:%s ProxyProvider:%s ProxySessionID:%s ProxyOverride:%s Insecure:%t}",
 		q.Text, q.LangCode, q.Region, q.DateInterval, q.Filetype, q.Site,
-		q.Limit, q.Start, q.Filter, q.Features, q.Extract, q.ExtractTop, q.ExtractMode,
+		q.Limit, q.Start, q.Filter, q.Features,
 		q.ResolveURLs, q.ResolveTop,
 		maskedProxyURL, q.ProxyCountry, q.ProxyClass, q.ProxyProvider,
 		q.ProxySessionID, q.ProxyOverride, q.Insecure,
@@ -418,13 +402,6 @@ func (searchQuery *Query) InitFromContext(reqCtx *fiber.Ctx) error {
 	if err != nil {
 		return errInvalidParam(fmt.Sprintf("features: %v", err))
 	}
-	// extract is a unified bool-or-int knob: extract=0/false disables, extract=N
-	// (or true/1) extracts the top N results. The tuning params extract_mode and
-	// min_runes also imply extraction (extract=0 still overrides them). The
-	// default depth is 1 — true == 1 == "extract one result".
-	if err := parseExtractParams(reqCtx, searchQuery); err != nil {
-		return err
-	}
 	resolveDefault := ""
 	if searchQuery.ResolveConfig != nil {
 		resolveDefault = searchQuery.ResolveConfig.URLs
@@ -457,61 +434,6 @@ func (searchQuery *Query) InitFromContext(reqCtx *fiber.Ctx) error {
 	return nil
 }
 
-// parseExtractParams reads the unified extract knob plus its tuning params onto
-// q. The extract param is bool-or-int:
-//
-//	extract=0 / extract=false  → extraction off
-//	extract=true / extract=1   → on, top 1
-//	extract=N (1..5)           → on, top N (clamped to maxExtractTop)
-//
-// extract_mode and min_runes tune how extraction runs and imply extraction when
-// present, unless extract is explicitly set (extract=0 wins over them). When
-// extraction is on but no depth is given, ExtractTop defaults to 1.
-func parseExtractParams(reqCtx *fiber.Ctx, q *Query) error {
-	q.ExtractTop = defaultExtractTop
-
-	// extract accepts both bool spellings (true/false/1/0) and an integer depth.
-	// Try bool first so legacy true/false keep working, then fall back to int.
-	extractExplicit := false
-	if raw := strings.TrimSpace(reqCtx.Query("extract")); raw != "" {
-		extractExplicit = true
-		if b, err := strconv.ParseBool(raw); err == nil {
-			q.Extract = b
-			if b {
-				q.ExtractTop = 1
-			}
-		} else if n, err := strconv.Atoi(raw); err == nil {
-			q.Extract = n > 0
-			if n > 0 {
-				q.ExtractTop = clampExtractTop(n)
-			}
-		} else {
-			return errInvalidParam("extract must be a boolean or an integer (0 disables, N extracts top N)")
-		}
-	}
-
-	q.ExtractMode = strings.ToLower(strings.TrimSpace(reqCtx.Query("extract_mode", "auto")))
-	switch q.ExtractMode {
-	case "auto", "fast", "rendered":
-	default:
-		return errInvalidParam("extract_mode must be one of auto, fast, rendered")
-	}
-	if !extractExplicit && strings.TrimSpace(reqCtx.Query("extract_mode")) != "" {
-		q.Extract = true
-	}
-
-	minRunes, err := parseNonNegativeIntQuery(reqCtx.Query("min_runes"), 0)
-	if err != nil {
-		return errInvalidParam("min_runes must be a non-negative integer")
-	}
-	q.ExtractMinRunes = minRunes
-	if !extractExplicit && strings.TrimSpace(reqCtx.Query("min_runes")) != "" {
-		q.Extract = true
-	}
-
-	return nil
-}
-
 // ParseResolveURLs reads the bool-or-int resolve_urls knob. Integers are
 // checked first so "1" means top 1, not "all": empty/true resolves every
 // wrapped link, N the first N organic results, 0/false nothing.
@@ -527,17 +449,6 @@ func ParseResolveURLs(raw string) (enabled bool, top int, err error) {
 		return enabled, 0, nil
 	}
 	return false, 0, errors.New("must be a boolean or a non-negative integer")
-}
-
-// clampExtractTop bounds a requested extraction depth to [1, maxExtractTop].
-func clampExtractTop(n int) int {
-	if n < 1 {
-		return 1
-	}
-	if n > maxExtractTop {
-		return maxExtractTop
-	}
-	return n
 }
 
 // SearchEngineOptions controls engine pacing, selector waits, and captcha

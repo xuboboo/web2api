@@ -16,77 +16,48 @@ go test ./...
 
 搜狗、360 的解析器断言包括：`/link` 相对地址绝对化、`data-mdurl` 直达链接优先、captcha / no-result 分类。
 
-## 2. 端到端套件：`deploy/e2e-domestic.mjs`
+## 2. 平台契约冒烟：`deploy/e2e.mjs`
 
-35 个检查项，9 个分组，零依赖（Node 18+ 内置 fetch）。默认目标 `http://127.0.0.1:7000`。
+针对固定 `/web-tool` 前缀下整个平台的契约面，零依赖（Node 18+ 内置 fetch）。默认目标 `http://127.0.0.1:7000`（自动追加 `/web-tool`）。需要服务已在运行。
 
 ```bash
-node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs http://127.0.0.1:7000
 # 或
-WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e-domestic.mjs
+WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
+# 追加一次真实引擎收录判定（依赖引擎可用性,默认跳过）
+E2E_LIVE_INDEX_CHECK=1 node deploy/e2e.mjs
+# 人工环境跳过登录锁定测试(避免套件结束后 admin@本机IP 被锁 15 分钟)
+E2E_SKIP_LOCKOUT=1 node deploy/e2e.mjs
 ```
 
-| 分组 | 数量 | 覆盖内容 |
-| --- | --- | --- |
-| 引擎可用性探针（起跑前） | — | 逐个探测 baidu/sogou/360/bing，形成可用性矩阵 |
-| `infra` | 5 | `/health` 引擎清单、`/ready`、境外引擎 404、`/openapi.yaml`+`/docs`、CORS 与 `X-Request-ID` |
-| `errors` | 4 | 缺 `text`→400、`limit` 越界→400、未知引擎→400、未实现能力→501 |
-| `engines` | 10 | 至少 1 个引擎可用（硬性）、≥2 可用且≥1 国产（信息项）、三个国产引擎中文搜索、360 双端点、Bing 中国、翻页绝对排名、`site:` 过滤、反爬语义（429 而非 504） |
-| `formats` | 3 | `format=markdown/text/ndjson` 的 Content-Type 与结构 |
-| `mega` | 2 | `balanced`（clusters + 引擎归属）、`any` 顺序回退 |
-| `extract` | 4 | 单页 markdown、POST JSON、批量死链容错、搜索内联 `extract=N` |
-| `cache` | 1 | 相同请求第二次命中 `X-Cache: HIT` |
-| `stability` | 3 | 串行压测、并发压测、压测后内存与熔断状态 |
-| `audit` | 3 | 响应结构一致性、`/stats*` 可用、压测后 404/400 契约仍成立 |
+| 分组 | 覆盖内容 |
+| --- | --- |
+| `infra` | 根路径无路由（404，含 `/mcp` 只在 `/web-tool` 下）、`/web-tool/health` 引擎清单、`/web-tool/ready` `/stats`、管理面板 `/web-tool/` 与静态资源 |
+| `admin` | 登录成功/失败（401）、`/web-tool/api/me`、统计端点与 `/web-tool/api/engines` |
+| `keys` | 创建（`sk-w2a-` 格式、完整 key 仅一次）、列表字段、停用→401、重启用、删除→401 |
+| `public` | 401 信封、429 配额（`daily_quota=1` 第二次超额，含 `Retry-After` 头）、400 `EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM`、`/web-tool/v1/engines`、别名 `360`、（可选）真实收录判定 |
+| `agent` | MCP 握手链：未鉴权 401 → `initialize`（protocolVersion `2025-06-18`、serverInfo、`Mcp-Session-Id` 头）→ `notifications/initialized`（204）→ `tools/list`（4 工具 + inputSchema）→ `tools/call get_quota`；`/web-tool/openapi.yaml`（3.1 声明）与 `/web-tool/llms.txt` |
+| `stability` | 冷却状态机：`cooldown/force` → `/web-tool/api/engines` 显示 `cooldown/until/reason/consecutive_blocks` → 冷却引擎 search 与 `/web-tool/v1/index/check` 快速失败 503 `engine_cooldown` + `Retry-After` → `cooldown/reset` 恢复；`/web-tool/api/playground/check` 与 `/web-tool/v1/index/check` 同构 |
+| `security` | 登录连续失败锁定：失败达阈值（默认 5 次）后 429 `too_many_attempts` + `Retry-After`，锁定期内正确凭据同样 429。⚠ 该分组**最后执行**且会锁定 admin@<本机IP> 一个锁定窗口（默认 15 分钟）；`E2E_SKIP_LOCKOUT=1` 可跳过 |
 
-### 可调参数（环境变量）
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `WEB2API_BASE_URL` / 第 1 个参数 | `http://127.0.0.1:7000` | 目标地址 |
-| `E2E_PACE_MS` | `0` | 组间与探针间隔（毫秒） |
-| `E2E_SOAK_PACE_MS` | `12000` | 串行压测每次请求间隔 |
-| `E2E_SOAK_RUNS` | `9` | 串行压测次数 |
-| `E2E_CONCURRENCY` | `6` | 并发压测并发数 |
-
-单出口 IP 建议：`E2E_PACE_MS=8000~15000`、`E2E_SOAK_PACE_MS=20000~30000`、`E2E_SOAK_RUNS=3`、`E2E_CONCURRENCY=2`。
-
-### 判定语义（重要）
-
-- **环境事件**：429 `captcha_detected`、403 `blocked`、503 `circuit_open` 等上游反爬/熔断，不计入关键失败；报告里标记 `classification: "environment"`。
-- **产品缺陷**：500/502（`parser_failure`/`engine_internal`）、契约错误（状态码或字段不符合预期）、稳定性压测中出现产品级 5xx。
-- **硬性 vs 信息项**：至少 1 个引擎可用 + 全部契约/能力检查是硬性；“≥2 个引擎可用且≥1 个国产”是信息项，上游整窗封禁时只记录不失败。
-- **能力用例回退**：格式、缓存、聚合、内联提取等与具体引擎无关的用例，会在可用引擎间轮换，最后回退到 Bing。
-- **退出码**：仅当存在关键失败时返回 1，可直接接入 CI。
-
-报告写入 `deploy/e2e-results/domestic-<时间戳>.json`，包含每个用例的分组、耗时、错误、分类，以及引擎可用性矩阵。
+退出码：存在契约失败时为 1，可直接接入 CI。报告写入 `deploy/e2e-results/platform-<时间戳>.json`。管理员凭据可用 `WEB2API_ADMIN_USER` / `WEB2API_ADMIN_PASSWORD` 覆盖（须与 config.yaml 一致）。
 
 ## 3. 低节流稳态观测：`deploy/steady-check.mjs`
 
-用于观察“单 IP + 合理节流”下的持续可用性，不建议作为 CI 门禁。
+用于观察“单 IP + 合理节流”下搜索引擎的持续可用性，不建议作为 CI 门禁。
 
 ```bash
 node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 每个引擎 3 次，间隔 20s
 STEADY_ENGINES=baidu,sogou node deploy/steady-check.mjs ...   # 自定义引擎集合
 ```
 
-输出逐次请求的状态与耗时，最后给出每引擎成功率；失败率 > 20% 时退出码为 1。
+目标地址自动追加 `/web-tool` 前缀。输出逐次请求的状态与耗时，最后给出每引擎成功率；失败率 > 20% 时退出码为 1。
 
-## 4. 旧版全引擎套件：`deploy/e2e.mjs`
-
-这是改造前的“六引擎国际版”套件（Google/Yandex/Baidu/Bing/DuckDuckGo/Ecosia），保留用于启用境外引擎（配置代理）后的回归。当前 `config.yaml` 默认关闭境外引擎，直接运行会大量失败，属预期。
-
-```bash
-node deploy/e2e.mjs http://127.0.0.1:7000
-```
-
-## 5. 运行建议
+## 4. 运行建议
 
 ```powershell
-# 常规验收（单机、单出口 IP）
-$env:E2E_PACE_MS='8000'; $env:E2E_SOAK_PACE_MS='20000'
-$env:E2E_SOAK_RUNS='3'; $env:E2E_CONCURRENCY='2'
-node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+# 平台契约验收
+node deploy/e2e.mjs http://127.0.0.1:7000
 
 # 观察引擎冷却是否恢复
 node deploy/steady-check.mjs http://127.0.0.1:7000 3 30000
@@ -96,7 +67,10 @@ node deploy/steady-check.mjs http://127.0.0.1:7000 3 30000
 
 | 现象 | 含义 | 处理 |
 | --- | --- | --- |
-| `429 captcha_detected` | 该引擎出口被判为机器人 | 等冷却（实测 20–40 分钟量级）或换代理 |
+| `429 captcha_detected` | 该引擎出口被判为机器人 | 触发引擎冷却（`stability.engine_cooldown`，第 1 档 10 分钟起）；等冷却解除或换代理 |
+| `503 engine_cooldown` | 引擎处于冷却期（快速失败，未发真实请求） | 读 `retry_after_seconds`/`Retry-After`；运维可 `POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复 |
 | `503 circuit_open` | 熔断保护中 | 等待 `circuit_breaker.recovery_seconds` 后自动半开 |
-| `501 not_implemented` | 能力未实现（图片搜索） | 改用 baidu/bing 的图片端点 |
+| `401 unauthorized` | API key 无效/禁用/删除 | 面板检查密钥状态 |
+| `429 too_many_attempts` | 登录连续失败被锁定（默认 5 次锁 15 分钟） | 等 `Retry-After`；锁定期内正确凭据同样被拒 |
+| `429 quota_exceeded` | key 当日配额用尽 | 调高日配额或等次日清零 |
 | 全部引擎 `429` | 出口 IP 被多引擎同时封禁 | 配代理或长时间静默 |

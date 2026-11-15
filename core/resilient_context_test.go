@@ -32,12 +32,6 @@ func (e *blockingContextEngine) Search(ctx context.Context, q Query) ([]SearchRe
 	return nil, ctx.Err()
 }
 
-func (e *blockingContextEngine) SearchImage(ctx context.Context, q Query) ([]SearchResult, error) {
-	_ = q
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
 func TestResilientSearchPrimary_CancelledContextStopsWithin100ms(t *testing.T) {
 	engine := &blockingContextEngine{started: make(chan struct{})}
 	cfg := DefaultResilientConfig()
@@ -86,10 +80,6 @@ func (e *staticErrorEngine) IsInitialized() bool { return true }
 func (e *staticErrorEngine) GetRateLimiter() *rate.Limiter { return nil }
 
 func (e *staticErrorEngine) Search(context.Context, Query) ([]SearchResult, error) {
-	return nil, e.err
-}
-
-func (e *staticErrorEngine) SearchImage(context.Context, Query) ([]SearchResult, error) {
 	return nil, e.err
 }
 

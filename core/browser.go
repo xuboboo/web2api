@@ -17,8 +17,8 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	browserprofile "github.com/xuboboo/web2api/core/browser"
 	"github.com/sirupsen/logrus"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
 	"github.com/ysmood/gson"
 )
 
@@ -202,7 +202,7 @@ func (b *Browser) configureRequestBlocking(ctx context.Context, page *rod.Page) 
 	// HijackRequests calls Fetch.enable on the page, which collides with the
 	// browser-level Fetch.enable installed by the proxy-auth listener. Two
 	// consumers competing for the same RequestID produce "Invalid
-	// InterceptionId" errors and stall parallel navigations (e.g. mega search
+	// InterceptionId" errors and stall parallel navigations (e.g. parallel engine
 	// behind an authenticated proxy). Resource-type blocking is dropped on the
 	// auth-proxy path; tracker URL blocking via NetworkSetBlockedURLs above
 	// still works because it is not Fetch-based.
@@ -520,7 +520,7 @@ func (b *Browser) startProxyAuthListener(browser *rod.Browser) error {
 		//
 		// Each ack runs in its own goroutine. EachEvent invokes our callbacks
 		// sequentially on a single dispatch goroutine, and each ack performs a
-		// synchronous CDP roundtrip. Under concurrent load (e.g. mega search
+		// synchronous CDP roundtrip. Under concurrent load (e.g. parallel engine
 		// fanning out 5 engines through one Chrome) sequential dispatch
 		// becomes the bottleneck — Chrome times out paused requests faster
 		// than we can ack them, producing "Invalid InterceptionId" errors and

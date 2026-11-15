@@ -59,7 +59,6 @@ go test ./...
 - 根 `README.md`（对外说明）
 - `docs/CONFIGURATION.md`（新增配置项）
 - `docs/TESTING.md`（新增/调整用例）
-- `docs/openapi.yaml`（端点或参数变化）
 
 ## 项目约定
 

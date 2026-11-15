@@ -19,11 +19,11 @@ services:
     # proxies:
     #   entries:
     #     - url: http://user:pass@res-proxy-1.example:8080
-    #       tags: [google]
+    #       tags: [baidu]
     #     - url: http://user:pass@res-proxy-2.example:8080
-    #       tags: [google]
-    # google:
-    #   proxy: google
+    #       tags: [baidu]
+    # baidu:
+    #   proxy: baidu
 
     # Rate limits and every other engine knob live in config.yaml (bind-mounted
     # above) so there is a single source of truth; do not override them here.

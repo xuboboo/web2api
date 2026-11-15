@@ -3,14 +3,13 @@
 // Sogou is one of the major mainland-China search engines. The SERP is a
 // server-rendered page with JS hydration for some card types, so the engine
 // drives a real browser and parses the resulting DOM with the shared goquery
-// parser (also exposed as POST /sogou/parse).
+// parser.
 package sogou
 
 import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -196,12 +195,6 @@ func (sog *Sogou) searchBrowser(ctx context.Context, query core.Query) (results 
 	parsed = core.StripResultFeatures(parsed, query.Features)
 	parsed = core.LimitOrganicResults(parsed, query.Limit)
 	return parsed, nil
-}
-
-// SearchImage reports that Sogou image search is not implemented yet; callers
-// get a typed engine error instead of an empty (and misleading) result set.
-func (sog *Sogou) SearchImage(_ context.Context, _ core.Query) ([]core.SearchResult, error) {
-	return nil, fmt.Errorf("%w: sogou image search is not supported", core.ErrNotImplemented)
 }
 
 // classifyBlockPage returns ErrCaptcha for Sogou's anti-spider challenge pages.
@@ -400,6 +393,7 @@ func resolveSogouRedirects(ctx context.Context, logger *core.EngineLogger, resul
 	wg.Wait()
 	return results
 }
+
 // sogouRedirectTarget returns the destination carried by a Sogou /link
 // response: the Location header when present, otherwise the URL embedded in the
 // interstitial page's JS/meta redirect.
@@ -448,6 +442,7 @@ func absoluteExternalURL(raw string) string {
 	}
 	return u.String()
 }
+
 // logSogouRedirect logs through the engine logger when one is attached (the
 // plain-HTTP path has none) and stays silent otherwise.
 func logSogouRedirect(logger *core.EngineLogger, format string, args ...interface{}) {

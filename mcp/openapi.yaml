@@ -1,0 +1,1292 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Web2API — 收录情报 & 国内搜索 Agent 数据平台
+  version: "0.8.19"
+  license:
+    name: MIT
+    url: https://github.com/xuboboo/web2api/blob/main/LICENSE
+  description: |
+    单二进制自托管的「收录情报 & 国内搜索 Agent 数据平台」。
+
+    三个平面:
+    * **数据平面** `/v1/*` — 国内四引擎(百度/搜狗/360/必应)收录判定与搜索,鉴权/配额/限流/冷却内建。
+    * **Agent 平面** `/mcp` + 本 spec + `llms.txt` — AI Agent 一等公民(MCP streamable HTTP,JSON-RPC 2.0)。
+    * **控制平面** `/api/*` — 管理面板后台(风控与用量治理台)。
+
+    ## 三套错误信封
+    1. **平台信封**(`/v1/*`、`/mcp` 鉴权与配额):`{"error":"unauthorized|quota_exceeded|..."}`,429/503 带 `Retry-After` 响应头。
+    2. **数据面信封**(`/{engine}/search` 等核心端点):`{"error":"<code>","code":<http状态>,"request_id":"...","message":"...","reason":"...","meta":{}}`。
+    3. **JSON-RPC 信封**(`/mcp`):`{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"..."}}`。
+
+    ## 引擎冷却(风控)
+    引擎返回 blocked(403)/429/captcha 会进入冷却状态机:第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;
+    连续无拦截达 `stability.engine_cooldown.reset_after_minutes`(默认 240)后连续计数归零。冷却期内该引擎所有
+    search/check 快速失败:`503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}` + `Retry-After`。
+    `/v1` 与 `/{engine}/search` 响应 `meta.engines_cooldown:[{engine,until,reason}]` 携带冷却中的引擎。
+
+    ## 限流
+    所有 429/503 响应携带 `Retry-After` 头(秒)。管理 API 默认全局限速 60 req/min(`security.admin_rate_per_minute`),
+    超限返回 `429 {"error":"too_many_requests"}` + `Retry-After`。
+servers:
+  - url: https://your-host/web-tool
+    description: 自托管部署根(替换为你的域名;Dify/Coze 导入要求域名格式,禁用 IP)
+tags:
+  - name: data-plane
+    description: 数据平面 — 收录判定与搜索(/v1/*,/{engine}/search)
+  - name: agent-plane
+    description: Agent 平面 — MCP 与静态资源(/mcp、openapi.yaml、llms.txt)
+  - name: admin
+    description: 控制平面 — 管理面板后台(/api/*)
+  - name: ops
+    description: 运维 — 健康/就绪/运行统计
+
+paths:
+  /health:
+    get:
+      tags: [ops]
+      operationId: healthCheck
+      summary: 健康检查
+      description: 各引擎初始化与熔断状态汇总。200 表示进程存活。
+      responses:
+        "200":
+          description: 引擎健康快照
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  engines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        engine:
+                          type: string
+                          example: baidu
+                        status:
+                          type: string
+                          example: ready
+                        available:
+                          type: boolean
+        "500":
+          description: 服务端错误(数据面信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataPlaneError" }
+
+  /ready:
+    get:
+      tags: [ops]
+      operationId: readyCheck
+      summary: 就绪检查
+      description: 排水中返回 503,可挂负载均衡探针。
+      responses:
+        "200":
+          description: 就绪
+        "503":
+          description: 排水中,暂不接流量
+
+  /stats:
+    get:
+      tags: [ops]
+      operationId: getStats
+      summary: 运行统计
+      description: 缓存、代理、熔断器与验证码求解器的运行时统计。
+      responses:
+        "200":
+          description: 统计快照
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cache:
+                    type: object
+                  proxy:
+                    type: object
+                  circuit_breakers:
+                    type: array
+                    items:
+                      type: object
+                  captcha:
+                    type: object
+
+  /{engine}/search:
+    get:
+      tags: [data-plane]
+      operationId: searchEngine
+      summary: 单引擎 SERP 搜索(免鉴权,公网部署请加网关鉴权)
+      description: |
+        走浏览器渲染或 raw HTTP 管道的单引擎搜索。`engine` 取值:`baidu`、`sogou`、`so360`(亦可用 `360`)、`bing`。
+
+        响应 `meta.engines_cooldown` 携带冷却中的引擎;该引擎请求快速失败:
+        `503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}` + `Retry-After`。
+      parameters:
+        - name: engine
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [baidu, sogou, so360, "360", bing]
+          example: baidu
+        - name: text
+          in: query
+          required: true
+          description: 搜索关键词
+          schema:
+            type: string
+            minLength: 1
+          example: golang fiber 教程
+        - name: limit
+          in: query
+          description: 返回条数(1..100,默认 10)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: start
+          in: query
+          description: 翻页偏移
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: lang
+          in: query
+          description: 语言提示(如 EN/DE/中文引擎忽略)
+          schema:
+            type: string
+        - name: region
+          in: query
+          description: 市场地区提示
+          schema:
+            type: string
+        - name: file
+          in: query
+          description: 文件类型过滤(pdf/docx/…)
+          schema:
+            type: string
+        - name: site
+          in: query
+          description: 站内限定(domain)
+          schema:
+            type: string
+        - name: features
+          in: query
+          description: 是否解析 SERP 特性模块(默认 1)
+          schema:
+            type: string
+            enum: ["0", "1"]
+            default: "1"
+        - name: resolve_urls
+          in: query
+          description: 是否解析引擎跳转链接为直链(默认按服务端配置)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 搜索结果信封
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchEnvelope" }
+        "400":
+          description: 参数错误(数据面信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataPlaneError" }
+              example:
+                error: invalid_param
+                code: 400
+                reason: INVALID_PARAM
+                message: limit must be between 1 and 100
+                request_id: req_9f2c
+                meta: {}
+        "429":
+          description: 引擎侧拦截/验证码(数据面信封)+ Retry-After
+          headers:
+            Retry-After:
+              description: 建议重试等待秒数
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataPlaneError" }
+              examples:
+                captcha:
+                  value:
+                    error: captcha_detected
+                    code: 429
+                    reason: CAPTCHA
+                    message: captcha detected
+                    request_id: req_9f2c
+                    meta: { engine: baidu }
+        "503":
+          description: 引擎冷却中(契约 A)或代理不可用
+          headers:
+            Retry-After:
+              description: 冷却剩余秒数
+              schema: { type: integer }
+          content:
+            application/json:
+              examples:
+                engine_cooldown:
+                  value:
+                    error: engine_cooldown
+                    reason: COOLDOWN
+                    retry_after_seconds: 600
+                proxy_unavailable:
+                  value:
+                    error: proxy_unavailable
+                    code: 503
+                    reason: PROXY_UNAVAILABLE
+                    message: proxy unavailable
+                    request_id: req_9f2c
+                    meta: {}
+
+  /v1/index/check:
+    get:
+      tags: [data-plane]
+      operationId: checkIndexSingle
+      summary: 单 URL 收录判定(X-API-Key)
+      description: |
+        查询单个 URL 是否被收录。计费:`1 URL × engines 数` units。
+        引擎级失败(403/429/captcha/冷却/熔断)记入该单元的 `error` 字段,HTTP 状态保持 200。
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema: { type: string, format: uri }
+          example: https://example.com/post/123
+        - name: engines
+          in: query
+          description: 逗号分隔引擎列表,缺省=全部四引擎
+          schema: { type: string }
+          example: baidu,bing
+      responses:
+        "200":
+          description: 收录判定结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexCheckResponse" }
+        "401":
+          description: 缺失/无效/禁用的 key(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "429":
+          description: 配额超限(平台信封)+ Retry-After
+          headers:
+            Retry-After: { description: 重试等待秒数, schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: quota_exceeded }
+        "503":
+          description: 目标引擎全部处于冷却期(契约 A)+ Retry-After
+          headers:
+            Retry-After: { description: 冷却剩余秒数, schema: { type: integer } }
+          content:
+            application/json:
+              example:
+                error: engine_cooldown
+                reason: COOLDOWN
+                retry_after_seconds: 600
+    post:
+      tags: [data-plane]
+      operationId: checkIndexBatch
+      summary: 批量收录判定(X-API-Key)
+      description: |
+        批量检测 1..20 个 URL。计费:`len(urls) × len(engines)` units(缺省引擎=全部四引擎)。
+        响应 `meta.engines_cooldown` 携带冷却中的引擎;冷却引擎的单元结果带 `error:{code:"engine_cooldown",...}`。
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [urls]
+              properties:
+                urls:
+                  type: array
+                  items: { type: string, format: uri }
+                  minItems: 1
+                  maxItems: 20
+                  example: ["https://example.com/a", "https://example.com/b"]
+                engines:
+                  type: array
+                  items: { type: string, enum: [baidu, sogou, so360, bing] }
+                  example: [baidu, bing]
+      responses:
+        "200":
+          description: 批量收录判定结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexCheckResponse" }
+        "400":
+          description: 参数错误(平台信封,reason ∈ EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+              example:
+                error: bad_request
+                code: TOO_MANY_URLS
+                reason: TOO_MANY_URLS
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "429":
+          description: 配额超限 + Retry-After
+          headers:
+            Retry-After: { description: 重试等待秒数, schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: quota_exceeded }
+
+  /v1/quota:
+    get:
+      tags: [data-plane]
+      operationId: getQuota
+      summary: 查询当前 key 的配额与用量(X-API-Key)
+      description: 返回调用密钥的当日用量、配额上限(daily_quota=0 表示不限量)与累计用量。
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 配额对象(daily_quota=0 表示不限量)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key_id: { type: string, example: key_01H... }
+                  name: { type: string, example: seo-bot }
+                  daily_quota: { type: integer, example: 1000 }
+                  used_today: { type: integer, example: 37 }
+                  unlimited: { type: boolean, example: false }
+                  used_total: { type: integer, example: 1521 }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+
+  /v1/engines:
+    get:
+      tags: [data-plane]
+      operationId: listPublicEngines
+      summary: 引擎列表与熔断状态(X-API-Key)
+      description: 返回四个引擎的启用状态、端点地址与熔断器快照,供调用方预判可用性。
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 引擎快照
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  engines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        engine: { type: string, example: baidu }
+                        endpoint: { type: string, example: /web-tool/baidu/search }
+                        enabled: { type: boolean, example: true }
+                        breaker:
+                          type: object
+                          properties:
+                            engine: { type: string }
+                            state: { type: string, example: closed }
+                            failure_count: { type: integer }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+
+  /api/auth/login:
+    post:
+      tags: [admin]
+      operationId: adminLogin
+      summary: 管理员登录(获取 JWT)
+      description: |
+        凭证错误返回 401。防爆破(契约 B):同一 用户名+IP 连续 5 次失败锁定 15 分钟
+        (`security.login_lockout.fails/minutes`),锁定期间一律
+        `429 {"error":"too_many_attempts"}` + `Retry-After`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, example: admin }
+                password: { type: string, example: "******" }
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: 管理员 JWT }
+                  expires_in: { type: integer, example: 86400 }
+                  user:
+                    type: object
+                    properties:
+                      username: { type: string, example: admin }
+        "401":
+          description: 凭证错误(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "429":
+          description: 触发登录锁定 + Retry-After
+          headers:
+            Retry-After: { description: 锁定剩余秒数, schema: { type: integer } }
+          content:
+            application/json:
+              example: { error: too_many_attempts }
+
+  /api/auth/password:
+    post:
+      tags: [admin]
+      operationId: changePassword
+      summary: 修改管理员密码(JWT)
+      description: |
+        契约 B:新密码 ≥ 8 位;bcrypt 哈希存 settings 桶并覆盖 config 默认值;
+        成功后 token_version+1,全部旧 token 立即失效(需重新登录)。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password: { type: string }
+                new_password: { type: string, minLength: 8 }
+      responses:
+        "200":
+          description: 修改成功;旧 token 全部失效
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "400":
+          description: 参数错误(新密码过短等)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: 旧密码错误或未登录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "429":
+          description: 管理 API 限速(默认 60 req/min)+ Retry-After
+          headers:
+            Retry-After: { description: 重试等待秒数, schema: { type: integer } }
+          content:
+            application/json:
+              example: { error: too_many_requests }
+
+  /api/me:
+    get:
+      tags: [admin]
+      operationId: adminMe
+      summary: 当前管理员概览(JWT)
+      description: 返回管理员用户名、密钥数量与今日/累计调用次数,面板总览页首屏数据。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 管理员概览
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username: { type: string, example: admin }
+                  keys_count: { type: integer, example: 3 }
+                  today_calls: { type: integer, example: 128 }
+                  total_calls: { type: integer, example: 4271 }
+        "401":
+          description: JWT 缺失/过期/已失效(改密后)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+
+  /api/keys:
+    get:
+      tags: [admin]
+      operationId: listApiKeys
+      summary: 列出 API 密钥(JWT,新→旧)
+      description: 返回全部密钥的视图(前缀、状态、配额、用量),不包含完整密钥本身。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 密钥视图数组(不含完整 key)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiKeyView" }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+    post:
+      tags: [admin]
+      operationId: createApiKey
+      summary: 创建 API 密钥(JWT)
+      description: 完整 key(`sk-w2a-<32hex>`)仅在创建响应中出现一次,存储只留哈希。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: seo-bot }
+                daily_quota: { type: integer, minimum: 0, description: 0 = 不限量 }
+      responses:
+        "200":
+          description: 创建成功(含一次性完整 key)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiKeyView"
+                  - type: object
+                    properties:
+                      key: { type: string, example: sk-w2a-3f9c… }
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/keys/{id}:
+    patch:
+      tags: [admin]
+      operationId: updateApiKey
+      summary: 更新密钥名称/状态/配额(JWT)
+      description: 局部更新:仅传入的字段会被修改;status=disabled 可临时停用密钥(停用后一律 401)。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                status: { type: string, enum: [active, disabled] }
+                daily_quota: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: 更新后的密钥视图
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyView" }
+        "404":
+          description: 密钥不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: not_found }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+    delete:
+      tags: [admin]
+      operationId: deleteApiKey
+      summary: 删除密钥(JWT)
+      description: 立即吊销该密钥;使用它的调用方全部转为 401 unauthorized。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              example: { ok: true }
+        "404":
+          description: 密钥不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/stats/overview:
+    get:
+      tags: [admin]
+      operationId: statsOverview
+      summary: 用量总览(JWT)
+      description: 今日/累计调用与 units、24h 成功率、活跃密钥数与分引擎调用统计,风控与用量治理台首屏。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 总览统计
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  today_calls: { type: integer }
+                  today_units: { type: integer }
+                  total_calls: { type: integer }
+                  total_units: { type: integer }
+                  active_keys: { type: integer }
+                  success_rate_24h: { type: number, example: 97.5 }
+                  by_engine:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        calls: { type: integer }
+                        ok: { type: integer }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/stats/timeseries:
+    get:
+      tags: [admin]
+      operationId: statsTimeseries
+      summary: 按日用量时间序列(JWT)
+      description: 最近 N 天(days 参数,1..90,默认 14)的按日调用数、units 与成功数,日期升序零填充。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 90, default: 14 }
+      responses:
+        "200":
+          description: 日期升序、零填充
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    date: { type: string, example: "2026-11-15" }
+                    calls: { type: integer }
+                    units: { type: integer }
+                    ok: { type: integer }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/usage:
+    get:
+      tags: [admin]
+      operationId: listUsage
+      summary: 使用日志(JWT,新→旧)
+      description: 分页返回每次调用的端点、引擎、URL 数、units、HTTP 状态与耗时;支持 key_id 过滤。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: key_id
+          in: query
+          description: 按密钥过滤
+          schema: { type: string }
+      responses:
+        "200":
+          description: 分页使用日志
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time: { type: string, format: date-time }
+                        key_id: { type: string }
+                        key_name: { type: string }
+                        endpoint: { type: string }
+                        engines: { type: array, items: { type: string } }
+                        urls: { type: integer }
+                        units: { type: integer }
+                        status: { type: integer }
+                        took_ms: { type: integer }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/engines:
+    get:
+      tags: [admin]
+      operationId: adminEngines
+      summary: 引擎运行状态看板(JWT)
+      description: |
+        契约 A:每引擎增加冷却状态机字段
+        `{state:"ok|cooldown|circuit_open", until, reason, consecutive_blocks, last_error_at}`。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 引擎状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  engines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        engine: { type: string, example: baidu }
+                        endpoint: { type: string }
+                        enabled: { type: boolean }
+                        state:
+                          type: string
+                          enum: [ok, cooldown, circuit_open]
+                          example: ok
+                        until:
+                          type: string
+                          format: date-time
+                          description: 冷却/熔断到期时间(正常时为空)
+                        reason:
+                          type: string
+                          description: 进入当前状态的原因(COOLDOWN/BLOCKED/CAPTCHA/…)
+                        consecutive_blocks: { type: integer, example: 0 }
+                        last_error_at:
+                          type: string
+                          format: date-time
+                        breaker:
+                          type: object
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/engines/{name}/cooldown/reset:
+    post:
+      tags: [admin]
+      operationId: resetEngineCooldown
+      summary: 强制恢复引擎(JWT)
+      description: 立即清除该引擎的冷却/熔断状态,连续计数归零。用于维护窗口后的手动恢复。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, enum: [baidu, sogou, so360, bing] }
+      responses:
+        "200":
+          description: 已恢复
+          content:
+            application/json:
+              example: { ok: true, engine: baidu }
+        "404":
+          description: 未知引擎
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/engines/{name}/cooldown/force:
+    post:
+      tags: [admin]
+      operationId: forceEngineCooldown
+      summary: 强制冷却引擎(JWT)
+      description: 手动将引擎置入冷却 N 分钟,用于维护窗口;冷却期内该引擎 search/check 快速失败(503 engine_cooldown)。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, enum: [baidu, sogou, so360, bing] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [minutes]
+              properties:
+                minutes:
+                  type: integer
+                  minimum: 1
+                  maximum: 1440
+                  example: 30
+      responses:
+        "200":
+          description: 已进入冷却
+          content:
+            application/json:
+              example:
+                ok: true
+                engine: baidu
+                until: "2026-11-15T12:30:00Z"
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "404":
+          description: 未知引擎
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /api/playground/check:
+    post:
+      tags: [admin]
+      operationId: playgroundCheck
+      summary: 面板在线调试收录检测(JWT,不计费)
+      description: 复用 /v1/index/check 同一编排(CheckIndexBatch),响应结构与 /v1/index/check 完全一致;面板调试不计费。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [urls]
+              properties:
+                urls:
+                  type: array
+                  items: { type: string, format: uri }
+                  minItems: 1
+                  maxItems: 20
+                engines:
+                  type: array
+                  items: { type: string, enum: [baidu, sogou, so360, bing] }
+      responses:
+        "200":
+          description: 与 /v1/index/check 完全一致的结果结构
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexCheckResponse" }
+        "400":
+          description: 参数错误
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+
+  /mcp:
+    post:
+      tags: [agent-plane]
+      operationId: mcpRpc
+      summary: MCP streamable HTTP(JSON-RPC 2.0)
+      description: |
+        Model Context Protocol 入口(响应式 JSON:每条消息单独 POST,服务端回单个 JSON 对象)。
+
+        **方法**:
+        * `initialize` — 握手;服务端以支持的 legacy 版本应答(默认 `2025-06-18`),`serverInfo.name="web2api"`;
+          响应头返回 `Mcp-Session-Id`(内存会话,空闲 30 分钟过期)。
+        * `notifications/initialized` — 通知,回 HTTP 204(无 id)。
+        * `tools/list` — 4 个工具:`web_search`、`check_indexed`、`get_quota`、`list_engines`。
+        * `tools/call` — 结果统一 `{content:[{type:"text",text:"<JSON字符串>"}], isError}`;入参校验失败回 JSON-RPC `-32602`(HTTP 200)。
+        * `ping` — 回 `{}`。
+
+        **鉴权**:`X-API-Key`(计费)或 `Authorization: Bearer <JWT>`(管理员,不计费);未授权 401 平台信封。
+
+        **计费**:`web_search`=1 unit;`check_indexed`=urls×engines units;`get_quota`/`list_engines` 不计费。
+
+        **JSON-RPC 错误码**:`-32700` 解析错误(HTTP 400)、`-32600` 请求无效(不支持批量)、`-32601` 方法不存在、
+        `-32602` 入参校验失败、`-32001` 会话不存在(HTTP 404)。
+
+        **Origin 校验**:无效 Origin(非绝对 http/https URL)回 403(MCP 规范)。
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc:
+                  type: string
+                  example: "2.0"
+                id:
+                  oneOf:
+                    - type: integer
+                    - type: string
+                  description: 通知(无 id)不回响应体
+                method:
+                  type: string
+                  enum: [initialize, notifications/initialized, tools/list, tools/call, ping]
+                params:
+                  type: object
+            examples:
+              initialize:
+                value:
+                  jsonrpc: "2.0"
+                  id: 1
+                  method: initialize
+                  params:
+                    protocolVersion: "2025-06-18"
+                    capabilities: {}
+                    clientInfo: { name: my-agent, version: "1.0" }
+              toolsCall:
+                value:
+                  jsonrpc: "2.0"
+                  id: 2
+                  method: tools/call
+                  params:
+                    name: check_indexed
+                    arguments:
+                      urls: ["https://example.com/a", "https://example.com/b"]
+      responses:
+        "200":
+          description: JSON-RPC 2.0 响应(成功或 error 对象)
+          headers:
+            Mcp-Session-Id:
+              description: initialize 时下发;后续请求原样携带
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JsonRpcResponse" }
+              examples:
+                initialized:
+                  value:
+                    jsonrpc: "2.0"
+                    id: 1
+                    result:
+                      protocolVersion: "2025-06-18"
+                      capabilities: { tools: { listChanged: false } }
+                      serverInfo: { name: web2api, version: "0.8.19" }
+                invalidParams:
+                  value:
+                    jsonrpc: "2.0"
+                    id: 2
+                    error: { code: -32602, message: "invalid params: urls accepts at most 20 entries, got 21" }
+        "204":
+          description: 通知(notifications/initialized)已受理,无响应体
+        "400":
+          description: JSON 解析失败或请求无效(JSON-RPC 信封)
+          content:
+            application/json:
+              example:
+                jsonrpc: "2.0"
+                id: null
+                error: { code: -32700, message: "parse error: body is not valid JSON" }
+        "401":
+          description: 未授权(平台信封;X-API-Key 校验与配额预检由 AuthAny 负责)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: Origin 校验失败(MCP 规范)
+          content:
+            application/json:
+              example: { error: invalid_origin }
+        "404":
+          description: Mcp-Session-Id 未知或已过期(HTTP 404 + JSON-RPC -32001)
+          content:
+            application/json:
+              example:
+                jsonrpc: "2.0"
+                id: null
+                error: { code: -32001, message: "session not found; send initialize again" }
+        "429":
+          description: 配额超限或限流(平台信封)+ Retry-After
+          headers:
+            Retry-After: { description: 重试等待秒数, schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: quota_exceeded }
+
+  /openapi.yaml:
+    get:
+      tags: [agent-plane]
+      operationId: getOpenApiSpec
+      summary: 本 OpenAPI 3.1 规范(go:embed 静态资源,公开)
+      description: 供 Dify/Coze/n8n/LangChain OpenAPI toolkit 导入(Content-Type 为 application/yaml)。
+      responses:
+        "200":
+          description: YAML 规范文件
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /llms.txt:
+    get:
+      tags: [agent-plane]
+      operationId: getLlmsTxt
+      summary: 平台简介与端点清单(llms.txt,公开)
+      description: agent 友好的平台说明(Content-Type 为 text/markdown)。
+      responses:
+        "200":
+          description: llms.txt 内容
+          content:
+            text/markdown:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: 平台签发的 API 密钥(sk-w2a-…),在管理面板「API密钥」页创建;计费按 units。
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 管理员 JWT(POST /api/auth/login 获得),管理员调用不计费。
+
+  schemas:
+    PlatformError:
+      type: object
+      description: 平台信封错误(/v1/*、/mcp、/api/*)。
+      properties:
+        error:
+          type: string
+          enum: [unauthorized, quota_exceeded, not_found, too_many_attempts, too_many_requests, server_error]
+      required: [error]
+
+    PlatformBadRequest:
+      type: object
+      description: 平台 400 信封,reason ∈ EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM。
+      properties:
+        error: { type: string, example: bad_request }
+        code: { type: string, example: INVALID_PARAM }
+        reason: { type: string, example: INVALID_PARAM }
+      required: [error]
+
+    DataPlaneError:
+      type: object
+      description: 数据面信封错误(核心端点)。
+      properties:
+        error: { type: string, example: invalid_param }
+        code: { type: integer, example: 400 }
+        request_id: { type: string, example: req_9f2c }
+        message: { type: string }
+        reason: { type: string, example: INVALID_PARAM }
+        meta:
+          type: object
+          additionalProperties: true
+      required: [error, code, message]
+
+    JsonRpcResponse:
+      type: object
+      description: JSON-RPC 2.0 响应(result 与 error 二选一)。
+      properties:
+        jsonrpc: { type: string, example: "2.0" }
+        id:
+          oneOf: [{ type: integer }, { type: string }, { type: "null" }]
+        result:
+          description: |
+            tools/call 的 result 统一为
+            `{content:[{type:"text",text:"<JSON字符串>"}], isError:false}`;
+            工具执行失败时 isError:true 且 text 为 {"error":{...}}。
+        error:
+          type: object
+          properties:
+            code: { type: integer, example: -32602 }
+            message: { type: string }
+            data: {}
+      required: [jsonrpc, id]
+
+    ApiKeyView:
+      type: object
+      properties:
+        id: { type: string, example: key_01H... }
+        name: { type: string, example: seo-bot }
+        prefix: { type: string, example: sk-w2a-3f9c }
+        status: { type: string, enum: [active, disabled] }
+        daily_quota: { type: integer }
+        used_today: { type: integer }
+        used_total: { type: integer }
+        created_at: { type: string, format: date-time }
+        last_used_at:
+          oneOf: [{ type: string, format: date-time }, { type: "null" }]
+
+    SearchResult:
+      type: object
+      properties:
+        id: { type: string }
+        rank: { type: integer, example: 1 }
+        type: { type: string, example: organic }
+        title: { type: string, example: Fiber 框架教程 }
+        url: { type: string, example: https://example.com/post }
+        display_url: { type: string }
+        snippet: { type: string }
+        domain: { type: string, example: example.com }
+        engine: { type: string, example: baidu }
+
+    SearchEnvelope:
+      type: object
+      properties:
+        query:
+          type: object
+          properties:
+            text: { type: string }
+            engines_requested: { type: array, items: { type: string } }
+        meta:
+          type: object
+          properties:
+            request_id: { type: string }
+            requested_at: { type: string, format: date-time }
+            took_ms: { type: integer }
+            engines: { type: array, items: { type: string } }
+            engines_failed: { type: array, items: { type: string } }
+            engines_cooldown:
+              type: array
+              description: 契约 A — 冷却中的引擎(meta 增强)
+              items:
+                type: object
+                properties:
+                  engine: { type: string }
+                  until: { type: string, format: date-time }
+                  reason: { type: string, example: COOLDOWN }
+            version: { type: string, example: "2.1" }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/SearchResult" }
+        serp_features:
+          type: array
+          items: { type: object }
+        pagination:
+          type: object
+          properties:
+            page: { type: integer }
+            has_more: { type: boolean }
+            next_start: { type: integer }
+
+    IndexCheckResponse:
+      type: object
+      description: /v1/index/check 与 /api/playground/check 的统一响应结构。
+      properties:
+        id: { type: string, example: req_9f2c }
+        created_at: { type: string, format: date-time }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              url: { type: string, example: https://example.com/a }
+              engines:
+                type: object
+                description: 每引擎判定结果:成功 {indexed,match?,matched_result_url?,…};失败 {error:{code,message}}
+                additionalProperties:
+                  oneOf:
+                    - type: object
+                      properties:
+                        indexed: { type: boolean, example: true }
+                        match: { type: string }
+                        matched_result_url: { type: string }
+                    - type: object
+                      properties:
+                        error:
+                          type: object
+                          properties:
+                            code: { type: string, example: engine_cooldown }
+                            message: { type: string }
+        meta:
+          type: object
+          properties:
+            request_id: { type: string }
+            took_ms: { type: integer }
+            units: { type: integer, example: 8 }
+            engines_cooldown:
+              type: array
+              description: 契约 A — 冷却中的引擎
+              items:
+                type: object
+                properties:
+                  engine: { type: string }
+                  until: { type: string, format: date-time }
+                  reason: { type: string }
+
+security: []

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xuboboo/web2api/core"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 )
 
 func dateToTimestamp(date string) (int64, error) {
@@ -85,39 +85,6 @@ func BuildURL(q core.Query) (string, error) {
 
 	params.Add("f", "8")
 	params.Add("ie", "utf-8")
-	base.RawQuery = params.Encode()
-	return base.String(), nil
-}
-
-// BuildImageURL builds a Baidu image search URL from Query fields and page
-// index. It returns an error when the query text is empty.
-func BuildImageURL(q core.Query, pageNum int) (string, error) {
-	base, _ := url.Parse("https://image.baidu.com/")
-	base.Path += "search/acjson"
-
-	params := url.Values{}
-	params.Add("tn", "resultjson_com")
-	params.Add("cl", "2") // Cl = 2 indicates image search
-
-	if q.Text != "" {
-		params.Add("word", q.Text)
-	}
-
-	if len(params.Get("word")) == 0 {
-		return "", errors.New("Empty query built")
-	}
-
-	if q.Limit > 10 {
-		params.Add("rn", "30") // Results per page
-	}
-	if pageNum > 0 {
-		params.Add("pn", strconv.Itoa(pageNum*30)) // Offset
-	}
-
-	params.Add("fp", "result")
-	params.Add("ipn", "rj")
-	params.Add("ie", "utf-8")
-	params.Add("oe", "utf-8")
 	base.RawQuery = params.Encode()
 	return base.String(), nil
 }

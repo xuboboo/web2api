@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,11 +22,9 @@ type engineMock struct {
 	initialized bool
 	limiter     *rate.Limiter
 	searchFn    func(context.Context, Query) ([]SearchResult, error)
-	imageFn     func(context.Context, Query) ([]SearchResult, error)
 
 	mu                 sync.Mutex
 	searchCalls        int
-	imageCalls         int
 	droppedLaneQueries []Query
 }
 
@@ -47,16 +44,6 @@ func (e *engineMock) Search(ctx context.Context, q Query) ([]SearchResult, error
 	return []SearchResult{{Rank: 1, URL: "https://example.com/" + e.name, Title: e.name}}, nil
 }
 
-func (e *engineMock) SearchImage(ctx context.Context, q Query) ([]SearchResult, error) {
-	e.mu.Lock()
-	e.imageCalls++
-	e.mu.Unlock()
-	if e.imageFn != nil {
-		return e.imageFn(ctx, q)
-	}
-	return []SearchResult{{Rank: 1, URL: "https://img.example.com/" + e.name, Title: e.name}}, nil
-}
-
 func (e *engineMock) DropProxyLaneCookies(_ context.Context, q Query) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -65,7 +52,7 @@ func (e *engineMock) DropProxyLaneCookies(_ context.Context, q Query) {
 
 func request(t *testing.T, s *Server, path string) *http.Response {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+path, nil)
 	resp, err := s.app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed for %s: %v", path, err)
@@ -75,7 +62,7 @@ func request(t *testing.T, s *Server, path string) *http.Response {
 
 func requestWithHeader(t *testing.T, s *Server, path string, header string, value string) *http.Response {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+path, nil)
 	req.Header.Set(header, value)
 	resp, err := s.app.Test(req, -1)
 	if err != nil {
@@ -94,18 +81,6 @@ func TestRequestIDHeaderIsEchoedWhenProvided(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Request-ID"); got != "foo" {
 		t.Fatalf("expected X-Request-ID=foo, got %q", got)
-	}
-}
-
-func TestDuckDuckGoDedicatedAliasRoutes(t *testing.T) {
-	engine := &engineMock{name: "duckduckgo", initialized: true}
-	srv := NewServerWithOptions("127.0.0.1", 7119, DefaultServerOptions(), engine)
-
-	for _, path := range []string{"/duck/search?text=golang", "/duckduckgo/search?text=golang", "/duck/image?text=golang", "/duckduckgo/image?text=golang"} {
-		resp := request(t, srv, path)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("expected %s to return 200, got %d", path, resp.StatusCode)
-		}
 	}
 }
 
@@ -141,52 +116,6 @@ func TestErrorResponseIncludesRequestID(t *testing.T) {
 	}
 	if payload.RequestID != "req-error" {
 		t.Fatalf("expected request_id=req-error, got %q", payload.RequestID)
-	}
-}
-
-func TestOpenAPISpecEndpoint(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	srv := NewServerWithOptions("127.0.0.1", 7107, DefaultServerOptions(), engine)
-
-	resp := request(t, srv, "/openapi.yaml")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected /openapi.yaml to return 200, got %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "application/yaml") {
-		t.Fatalf("expected YAML content-type, got %q", got)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read /openapi.yaml body: %v", err)
-	}
-	if !strings.Contains(string(body), "openapi: 3.0.3") {
-		t.Fatalf("expected OpenAPI version marker in body")
-	}
-}
-
-func TestDocsEndpointServesSwaggerUI(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	srv := NewServerWithOptions("127.0.0.1", 7108, DefaultServerOptions(), engine)
-
-	resp := request(t, srv, "/docs")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected /docs to return 200, got %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/html") {
-		t.Fatalf("expected HTML content-type, got %q", got)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read /docs body: %v", err)
-	}
-	content := string(body)
-	if !strings.Contains(content, "SwaggerUIBundle") {
-		t.Fatalf("expected SwaggerUI bundle script on docs page")
-	}
-	if !strings.Contains(content, "/openapi.yaml") {
-		t.Fatalf("expected docs page to reference /openapi.yaml")
 	}
 }
 
@@ -292,12 +221,6 @@ func TestInvalidQueryParametersReturnJSONError(t *testing.T) {
 			reason:  ReasonInvalidParam,
 		},
 		{
-			name:    "invalid features flag on mega endpoint",
-			path:    "/mega/search?text=golang&features=notabool",
-			message: "invalid syntax",
-			reason:  ReasonInvalidParam,
-		},
-		{
 			name:    "empty text query",
 			path:    "/google/search?text=",
 			message: "query cannot be empty",
@@ -384,69 +307,6 @@ func TestFeaturesDefaultEnabledAndCanBeDisabled(t *testing.T) {
 	}
 	if got[1] {
 		t.Fatal("expected features=false to disable feature extraction")
-	}
-}
-
-func TestMegaEnginesEndpointResponseFormat(t *testing.T) {
-	google := &engineMock{name: "google", initialized: true}
-	yandex := &engineMock{name: "yandex", initialized: false}
-	srv := NewServerWithOptions("127.0.0.1", 7105, DefaultServerOptions(), google, yandex)
-
-	// Prime circuit breaker stats so circuit_state is populated for both engines.
-	_ = request(t, srv, "/google/search?text=golang")
-	_ = request(t, srv, "/yandex/search?text=golang")
-
-	resp := request(t, srv, "/mega/engines")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected /mega/engines to return 200, got %d", resp.StatusCode)
-	}
-
-	var payload map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode /mega/engines response: %v", err)
-	}
-
-	total, ok := payload["total"].(float64)
-	if !ok {
-		t.Fatalf("expected numeric total field, got %T", payload["total"])
-	}
-	if total != 2 {
-		t.Fatalf("expected total=2, got %v", total)
-	}
-
-	engines, ok := payload["engines"].([]interface{})
-	if !ok {
-		t.Fatalf("expected engines array, got %T", payload["engines"])
-	}
-	if len(engines) != 2 {
-		t.Fatalf("expected 2 engines in payload, got %d", len(engines))
-	}
-
-	byName := map[string]map[string]interface{}{}
-	for _, entry := range engines {
-		engineData, ok := entry.(map[string]interface{})
-		if !ok {
-			t.Fatalf("expected engine object, got %T", entry)
-		}
-		name, _ := engineData["name"].(string)
-		if name == "" {
-			t.Fatalf("expected non-empty engine name, got %#v", engineData["name"])
-		}
-		if _, ok := engineData["initialized"].(bool); !ok {
-			t.Fatalf("expected initialized bool for engine %s, got %T", name, engineData["initialized"])
-		}
-		state, ok := engineData["circuit_state"].(string)
-		if !ok || state == "" {
-			t.Fatalf("expected non-empty circuit_state for engine %s, got %#v", name, engineData["circuit_state"])
-		}
-		byName[name] = engineData
-	}
-
-	if _, ok := byName["google"]; !ok {
-		t.Fatal("expected google engine in response")
-	}
-	if _, ok := byName["yandex"]; !ok {
-		t.Fatal("expected yandex engine in response")
 	}
 }
 
@@ -685,38 +545,6 @@ func TestDedicatedEndpointReturnsBrowserProfileHeader(t *testing.T) {
 	}
 }
 
-func TestMegaEndpointReturnsBrowserProfileHeader(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(ctx context.Context, q Query) ([]SearchResult, error) {
-			SetBrowserProfileID(ctx, "chrome-win-us")
-			return []SearchResult{{Rank: 1, URL: "https://example.com/google", Title: "google"}}, nil
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(ctx context.Context, q Query) ([]SearchResult, error) {
-			SetBrowserProfileID(ctx, "chrome-linux-us")
-			return []SearchResult{{Rank: 1, URL: "https://example.com/bing", Title: "bing"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7213, opts, google, bing)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google,bing")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-	got := strings.Split(resp.Header.Get(browserProfileIDHeader), ",")
-	if len(got) != 2 || !slices.Contains(got, "chrome-win-us") || !slices.Contains(got, "chrome-linux-us") {
-		t.Fatalf("expected both profile IDs, got %q", got)
-	}
-}
-
 func TestDedicatedEndpointCachesSearchResults(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 
@@ -747,36 +575,6 @@ func TestDedicatedEndpointCachesSearchResults(t *testing.T) {
 	}
 }
 
-func TestDedicatedEndpointCachesImageResults(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-
-	opts := DefaultServerOptions()
-	opts.AllowEndpointFallback = false
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.CacheTTL = time.Minute
-	opts.CacheMaxSize = 10
-	srv := NewServerWithOptions("127.0.0.1", 7074, opts, engine)
-
-	first := request(t, srv, "/google/image?text=golang")
-	if first.StatusCode != http.StatusOK {
-		t.Fatalf("expected first image request to succeed, got %d", first.StatusCode)
-	}
-	if got := first.Header.Get("X-Cache"); got != "MISS" {
-		t.Fatalf("expected cache MISS on first image request, got %q", got)
-	}
-
-	second := request(t, srv, "/google/image?text=golang")
-	if second.StatusCode != http.StatusOK {
-		t.Fatalf("expected second image request to succeed, got %d", second.StatusCode)
-	}
-	if got := second.Header.Get("X-Cache"); got != "HIT" {
-		t.Fatalf("expected cache HIT on second image request, got %q", got)
-	}
-	if engine.imageCalls != 1 {
-		t.Fatalf("expected image engine to be called once, got %d", engine.imageCalls)
-	}
-}
-
 func TestProxiedRequestWithoutMarketMetadataBypassesCache(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 	opts := DefaultServerOptions()
@@ -792,7 +590,7 @@ func TestProxiedRequestWithoutMarketMetadataBypassesCache(t *testing.T) {
 	srv := NewServerWithOptions("127.0.0.1", 7124, opts, engine)
 
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+		req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 		req.Header.Set("X-Proxy-URL", "http://proxy.example:8080")
 		resp, err := srv.app.Test(req, -1)
 		if err != nil {
@@ -825,7 +623,7 @@ func TestProxiedRequestWithMarketMetadataUsesCache(t *testing.T) {
 	srv := NewServerWithOptions("127.0.0.1", 7125, opts, engine)
 
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+		req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 		req.Header.Set("X-Proxy-URL", "http://proxy.example:8080")
 		req.Header.Set("X-Proxy-Country", "us")
 		resp, err := srv.app.Test(req, -1)
@@ -916,318 +714,6 @@ func TestDedicatedEndpointFallbackDoesNotBypassProxyPolicy(t *testing.T) {
 	}
 	if fallback.searchCalls != 0 {
 		t.Fatalf("fallback engine should not be called when proxy policy fails closed, got %d calls", fallback.searchCalls)
-	}
-}
-
-func TestMegaSearchCachesWholeQueryWithEngineOrderNormalization(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://example.com/shared", Title: "shared"}}, nil
-		},
-	}
-	yandex := &engineMock{
-		name:        "yandex",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://example.com/shared", Title: "shared"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.CacheTTL = time.Minute
-	opts.CacheMaxSize = 10
-	srv := NewServerWithOptions("127.0.0.1", 7083, opts, google, yandex)
-
-	first := request(t, srv, "/mega/search?text=golang&engines=yandex,google")
-	if first.StatusCode != http.StatusOK {
-		t.Fatalf("expected first mega request to succeed, got %d", first.StatusCode)
-	}
-	if got := first.Header.Get("X-Cache"); got != "MISS" {
-		t.Fatalf("expected cache MISS on first mega request, got %q", got)
-	}
-
-	second := request(t, srv, "/mega/search?text=golang&engines=google,yandex")
-	if second.StatusCode != http.StatusOK {
-		t.Fatalf("expected second mega request to succeed, got %d", second.StatusCode)
-	}
-	if got := second.Header.Get("X-Cache"); got != "HIT" {
-		t.Fatalf("expected cache HIT on reordered mega request, got %q", got)
-	}
-
-	if google.searchCalls != 1 || yandex.searchCalls != 1 {
-		t.Fatalf("expected one live mega call per engine before cache hit, got google=%d yandex=%d", google.searchCalls, yandex.searchCalls)
-	}
-}
-
-func TestMegaImageCachesWholeQueryWithEngineOrderNormalization(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		imageFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://img.example.com/shared", Title: "shared"}}, nil
-		},
-	}
-	yandex := &engineMock{
-		name:        "yandex",
-		initialized: true,
-		imageFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://img.example.com/shared", Title: "shared"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.CacheTTL = time.Minute
-	opts.CacheMaxSize = 10
-	srv := NewServerWithOptions("127.0.0.1", 7084, opts, google, yandex)
-
-	first := request(t, srv, "/mega/image?text=golang+logo&engines=yandex,google")
-	if first.StatusCode != http.StatusOK {
-		t.Fatalf("expected first mega image request to succeed, got %d", first.StatusCode)
-	}
-	if got := first.Header.Get("X-Cache"); got != "MISS" {
-		t.Fatalf("expected cache MISS on first mega image request, got %q", got)
-	}
-
-	second := request(t, srv, "/mega/image?text=golang+logo&engines=google,yandex")
-	if second.StatusCode != http.StatusOK {
-		t.Fatalf("expected second mega image request to succeed, got %d", second.StatusCode)
-	}
-	if got := second.Header.Get("X-Cache"); got != "HIT" {
-		t.Fatalf("expected cache HIT on reordered mega image request, got %q", got)
-	}
-
-	if google.imageCalls != 1 || yandex.imageCalls != 1 {
-		t.Fatalf("expected one live mega image call per engine before cache hit, got google=%d yandex=%d", google.imageCalls, yandex.imageCalls)
-	}
-}
-
-func TestMegaSearchDeduplicatesRepeatedEngineNames(t *testing.T) {
-	google := &engineMock{name: "google", initialized: true}
-	yandex := &engineMock{name: "yandex", initialized: true}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7085, opts, google, yandex)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google,google,yandex,google")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected mega request to succeed, got %d", resp.StatusCode)
-	}
-	if google.searchCalls != 1 || yandex.searchCalls != 1 {
-		t.Fatalf("expected deduplicated engine execution, got google=%d yandex=%d", google.searchCalls, yandex.searchCalls)
-	}
-}
-
-func TestMegaSearchInvalidModeReturnsBadRequest(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7181, opts, engine)
-
-	resp := request(t, srv, "/mega/search?text=golang&mode=turbo")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid mode, got %d", resp.StatusCode)
-	}
-
-	var payload JSONErrorResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode error payload: %v", err)
-	}
-	if payload.Reason != ReasonInvalidParam {
-		t.Fatalf("expected reason=%q, got %q", ReasonInvalidParam, payload.Reason)
-	}
-}
-
-func TestMegaSearchAnyModeStopsAfterFirstSuccessInRequestedOrder(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return nil, errors.New("google failed")
-		},
-	}
-	yandex := &engineMock{
-		name:        "yandex",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://example.com/yandex", Title: "yandex"}}, nil
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://example.com/bing", Title: "bing"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.CacheTTL = 0
-	srv := NewServerWithOptions("127.0.0.1", 7182, opts, google, yandex, bing)
-
-	resp := request(t, srv, "/mega/search?text=golang&mode=any&engines=google,yandex,bing")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var env Envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if len(env.Results) == 0 || env.Results[0].Engine != "yandex" {
-		t.Fatalf("expected yandex result in any mode, got %#v", env.Results)
-	}
-
-	if google.searchCalls != 1 || yandex.searchCalls != 1 || bing.searchCalls != 0 {
-		t.Fatalf("expected google=1 yandex=1 bing=0 calls, got google=%d yandex=%d bing=%d", google.searchCalls, yandex.searchCalls, bing.searchCalls)
-	}
-}
-
-func TestMegaSearchFastModeUsesFastestEngineFromCircuitStats(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			time.Sleep(25 * time.Millisecond)
-			return []SearchResult{{Rank: 1, URL: "https://example.com/google", Title: "google"}}, nil
-		},
-	}
-	yandex := &engineMock{
-		name:        "yandex",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			time.Sleep(1 * time.Millisecond)
-			return []SearchResult{{Rank: 1, URL: "https://example.com/yandex", Title: "yandex"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.CacheTTL = 0
-	srv := NewServerWithOptions("127.0.0.1", 7183, opts, google, yandex)
-
-	_ = request(t, srv, "/google/search?text=warm-google")
-	_ = request(t, srv, "/yandex/search?text=warm-yandex")
-
-	google.mu.Lock()
-	beforeGoogle := google.searchCalls
-	google.mu.Unlock()
-	yandex.mu.Lock()
-	beforeYandex := yandex.searchCalls
-	yandex.mu.Unlock()
-
-	resp := request(t, srv, "/mega/search?text=golang&mode=fast&engines=google,yandex")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var env Envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if len(env.Results) == 0 || env.Results[0].Engine != "yandex" {
-		t.Fatalf("expected fast mode to use yandex, got %#v", env.Results)
-	}
-
-	google.mu.Lock()
-	afterGoogle := google.searchCalls
-	google.mu.Unlock()
-	yandex.mu.Lock()
-	afterYandex := yandex.searchCalls
-	yandex.mu.Unlock()
-
-	if afterGoogle-beforeGoogle != 0 || afterYandex-beforeYandex != 1 {
-		t.Fatalf("expected delta calls google=0 yandex=1, got google=%d yandex=%d", afterGoogle-beforeGoogle, afterYandex-beforeYandex)
-	}
-}
-
-func TestMegaSearchBalancedModeMergeAndDedupeFlags(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://example.com/shared", Title: "google"}}, nil
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 2, URL: "https://example.com/shared", Title: "bing"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.CacheTTL = 0
-	srv := NewServerWithOptions("127.0.0.1", 7184, opts, google, bing)
-
-	respNoDedupe := request(t, srv, "/mega/search?text=golang&mode=balanced&dedupe=false&engines=google,bing")
-	if respNoDedupe.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for dedupe=false, got %d", respNoDedupe.StatusCode)
-	}
-	var envNoDedupe Envelope
-	if err := json.NewDecoder(respNoDedupe.Body).Decode(&envNoDedupe); err != nil {
-		t.Fatalf("decode dedupe=false envelope: %v", err)
-	}
-	if len(envNoDedupe.Results) != 2 {
-		t.Fatalf("expected 2 results with dedupe=false, got %d", len(envNoDedupe.Results))
-	}
-
-	respNoMerge := request(t, srv, "/mega/search?text=golang&mode=balanced&merge=false&engines=google,bing")
-	if respNoMerge.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for merge=false, got %d", respNoMerge.StatusCode)
-	}
-	var envNoMerge Envelope
-	if err := json.NewDecoder(respNoMerge.Body).Decode(&envNoMerge); err != nil {
-		t.Fatalf("decode merge=false envelope: %v", err)
-	}
-	if len(envNoMerge.Results) != 1 || envNoMerge.Results[0].Engine != "google" {
-		t.Fatalf("expected merge=false to keep first requested engine results, got %#v", envNoMerge.Results)
-	}
-}
-
-func TestMegaSearchCachesForHealthySubsetWhenOneCircuitIsOpen(t *testing.T) {
-	google := &engineMock{name: "google", initialized: true}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return nil, errors.New("bing failed")
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	opts.Resilience.CircuitBreaker.FailureThreshold = 1
-	opts.Resilience.CircuitBreaker.RecoveryTimeout = 5 * time.Minute
-	opts.CacheTTL = time.Minute
-	opts.CacheMaxSize = 10
-	srv := NewServerWithOptions("127.0.0.1", 7086, opts, google, bing)
-
-	first := request(t, srv, "/mega/search?text=golang&engines=google,bing")
-	if first.StatusCode != http.StatusOK {
-		t.Fatalf("expected first mega request to succeed with partial results, got %d", first.StatusCode)
-	}
-	if got := first.Header.Get("X-Cache"); got != "MISS" {
-		t.Fatalf("expected first response to populate cache, got %q", got)
-	}
-
-	second := request(t, srv, "/mega/search?text=golang&engines=google,bing")
-	if second.StatusCode != http.StatusOK {
-		t.Fatalf("expected second mega request to succeed, got %d", second.StatusCode)
-	}
-	if got := second.Header.Get("X-Cache"); got != "HIT" {
-		t.Fatalf("expected second response to hit subset cache, got %q", got)
-	}
-
-	if google.searchCalls != 1 || bing.searchCalls != 1 {
-		t.Fatalf("expected subset cache hit to avoid new engine calls, got google=%d bing=%d", google.searchCalls, bing.searchCalls)
 	}
 }
 
@@ -1597,7 +1083,7 @@ func TestRequestProxyURLHonoredWhenEnabled(t *testing.T) {
 	}
 	srv := NewServerWithOptions("127.0.0.1", 7118, opts, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
 	req.Header.Set("X-Proxy-Country", " US ")
 	req.Header.Set("X-Proxy-Class", " Residential ")
@@ -1650,7 +1136,7 @@ func TestRequestProxyURLBeatsTagOverride(t *testing.T) {
 	}
 	srv := NewServerWithOptions("127.0.0.1", 7123, opts, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Use-Proxy", "us")
 	req.Header.Set("X-Proxy-URL", "http://request-proxy:8080")
 	resp, err := srv.app.Test(req, -1)
@@ -1688,7 +1174,7 @@ func TestRequestProxyOverrideDirectIgnoresRequestProxyURL(t *testing.T) {
 	}
 	srv := NewServerWithOptions("127.0.0.1", 7119, opts, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Use-Proxy", "direct")
 	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
 	resp, err := srv.app.Test(req, -1)
@@ -1764,7 +1250,7 @@ func TestCaptchaDropsProxyLaneCookies(t *testing.T) {
 	}
 	srv := NewServerWithOptions("127.0.0.1", 7120, opts, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
 	req.Header.Set("X-Proxy-Session-ID", "sid-a")
 	resp, err := srv.app.Test(req, -1)
@@ -1805,7 +1291,7 @@ func TestProxyErrorDoesNotDropProxyLaneCookies(t *testing.T) {
 	}
 	srv := NewServerWithOptions("127.0.0.1", 7121, opts, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
 	req.Header.Set("X-Proxy-Session-ID", "sid-a")
 	resp, err := srv.app.Test(req, -1)
@@ -1862,7 +1348,7 @@ func TestStableSearchErrorJSONWithProxyMeta(t *testing.T) {
 			}
 			srv := NewServerWithOptions("127.0.0.1", 7122, opts, engine)
 
-			req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+			req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 			req.Header.Set("X-Proxy-URL", "http://user:sentinel-password@proxy.example:8080")
 			req.Header.Set("X-Proxy-Country", "US")
 			req.Header.Set("X-Proxy-Class", "Residential")
@@ -1966,7 +1452,7 @@ func TestSearchErrorIncludesSanitizedDetail(t *testing.T) {
 	}
 	srv := NewServerWithOptions("127.0.0.1", 7123, opts, engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/google/search?text=golang", nil)
+	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Proxy-URL", "http://user:sentinel-password@proxy.example:8080")
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
@@ -2055,41 +1541,6 @@ func TestRequestProxyOverrideMissingTagFailsClosed(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Proxy-Tag"); got != "missing" {
 		t.Fatalf("expected X-Proxy-Tag=missing, got %q", got)
-	}
-}
-
-func TestMegaProxyOverrideHeaderBeatsGlobal(t *testing.T) {
-	var googleProxy string
-	engine := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			googleProxy = q.ProxyURL
-			return []SearchResult{{Rank: 1, URL: "https://example.com/google", Title: "google"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Proxy = ProxyConfig{
-		Runtime: ProxyRuntimeRaw,
-		Proxies: ProxiesConfig{
-			Global: "http://global-proxy:8080",
-			Entries: []ProxyEntryConfig{
-				{URL: "http://proxy-us:8080", Tags: []string{"us"}},
-			},
-		},
-	}
-
-	srv := NewServerWithOptions("127.0.0.1", 7102, opts, engine)
-	resp := requestWithHeader(t, srv, "/mega/search?text=golang&engines=google", "X-Use-Proxy", "us")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected mega override request to succeed, got %d", resp.StatusCode)
-	}
-	if googleProxy != "http://proxy-us:8080" {
-		t.Fatalf("expected mega override to use pool proxy, got %q", googleProxy)
-	}
-	if got := resp.Header.Get("X-Proxy-Tag"); got != "us" {
-		t.Fatalf("expected mega X-Proxy-Tag=us, got %q", got)
 	}
 }
 
@@ -2379,217 +1830,6 @@ func TestRegionQueryParamEchoesAndReachesEngine(t *testing.T) {
 	}
 }
 
-func TestMegaSearchPassesRegionToEngines(t *testing.T) {
-	makeEngine := func(name string) *engineMock {
-		return &engineMock{
-			name:        name,
-			initialized: true,
-			searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-				if q.Region != "RU" {
-					return nil, fmt.Errorf("%s got region %q", name, q.Region)
-				}
-				return []SearchResult{{Rank: 1, URL: "https://example.com/" + name, Title: name}}, nil
-			},
-		}
-	}
-	google := makeEngine("google")
-	bing := makeEngine("bing")
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7231, opts, google, bing)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google,bing&region=RU")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-}
-
-func TestMegaSearchReturnsV2EnvelopeWithEnginesFailed(t *testing.T) {
-	good := &engineMock{name: "google", initialized: true}
-	bad := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return nil, errors.New("bing down")
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7201, opts, good, bad)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google,bing")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 even with one engine failing, got %d", resp.StatusCode)
-	}
-
-	var env Envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if env.Meta.Version != "2.1" {
-		t.Fatalf("expected meta.version=2.1, got %q", env.Meta.Version)
-	}
-	if len(env.Meta.EnginesFailed) == 0 {
-		t.Fatal("expected engines_failed to contain bing")
-	}
-	found := false
-	for _, name := range env.Meta.EnginesFailed {
-		if name == "bing" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected bing in engines_failed, got %v", env.Meta.EnginesFailed)
-	}
-	if len(env.Meta.EngineErrors) != 1 || env.Meta.EngineErrors[0].Engine != "bing" || env.Meta.EngineErrors[0].Message == "" {
-		t.Fatalf("expected bing engine error detail, got %#v", env.Meta.EngineErrors)
-	}
-}
-
-func TestMegaSearchReturnsAggregateNetworkBytesHeader(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(ctx context.Context, q Query) ([]SearchResult, error) {
-			AddNetworkBytes(ctx, 10)
-			return []SearchResult{{Rank: 1, URL: "https://example.com/google", Title: "google"}}, nil
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(ctx context.Context, q Query) ([]SearchResult, error) {
-			AddNetworkBytes(ctx, 20)
-			return []SearchResult{{Rank: 1, URL: "https://example.com/bing", Title: "bing"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7212, opts, google, bing)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google,bing")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-Network-Bytes"); got != "30" {
-		t.Fatalf("expected X-Network-Bytes=30, got %q", got)
-	}
-}
-
-func TestMegaSearchAllFailuresReturnsDetails(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return nil, fmt.Errorf("%w: selector timeout", ErrSearchTimeout)
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return nil, fmt.Errorf("%w: 403", ErrBlocked)
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7210, opts, google, bing)
-
-	resp := requestWithHeader(t, srv, "/mega/search?text=golang&engines=google,bing", "X-Request-ID", "mega-fail")
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", resp.StatusCode)
-	}
-
-	var payload JSONErrorResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode error response: %v", err)
-	}
-	if payload.RequestID != "mega-fail" {
-		t.Fatalf("expected request_id=mega-fail, got %q", payload.RequestID)
-	}
-	if payload.Error != "all_engines_failed" {
-		t.Fatalf("expected all_engines_failed, got %q", payload.Error)
-	}
-	engineErrors, ok := payload.Meta["engine_errors"].([]interface{})
-	if !ok || len(engineErrors) != 2 {
-		t.Fatalf("expected two engine_errors, got %#v", payload.Meta["engine_errors"])
-	}
-}
-
-func TestMegaSearchSingleEngineFailureMessageIncludesCause(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return nil, fmt.Errorf("%w: selector timeout", ErrSearchTimeout)
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7211, opts, google)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google")
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", resp.StatusCode)
-	}
-
-	var payload JSONErrorResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode error response: %v", err)
-	}
-	if payload.Error != "all_engines_failed" {
-		t.Fatalf("expected all_engines_failed, got %q", payload.Error)
-	}
-	if !strings.Contains(payload.Message, "google:") || !strings.Contains(payload.Message, "selector timeout") {
-		t.Fatalf("expected message to include google failure cause, got %q", payload.Message)
-	}
-}
-
-func TestMegaSearchClustersGroupSameURL(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://go.dev/", Title: "Go"}}, nil
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 2, URL: "https://go.dev/", Title: "Go"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7202, opts, google, bing)
-
-	resp := request(t, srv, "/mega/search?text=golang&engines=google,bing")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var env Envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if env.Clusters == nil || len(*env.Clusters) == 0 {
-		t.Fatal("expected clusters to be populated")
-	}
-	c := (*env.Clusters)[0]
-	if c.EnginesCount < 2 {
-		t.Fatalf("expected cluster with 2 engines, got %d", c.EnginesCount)
-	}
-	if c.Score <= 0 {
-		t.Fatalf("expected positive cluster score, got %f", c.Score)
-	}
-}
-
 func TestFormatParamReturnsCorrectContentType(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 	opts := DefaultServerOptions()
@@ -2757,88 +1997,6 @@ func TestPaginatedPositionUsesAbsoluteRank(t *testing.T) {
 	}
 }
 
-func TestImageEnvelopeEnrichesMetadataFromDescription(t *testing.T) {
-	engine := &engineMock{
-		name:        "google",
-		initialized: true,
-		imageFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{
-				Rank:        1,
-				URL:         "https://cdn.example.com/image.jpg",
-				Title:       "Image",
-				Description: "Height:800, Width:1200, Source Page: https://example.com/article",
-			}}, nil
-		},
-	}
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7208, opts, engine)
-
-	resp := request(t, srv, "/google/image?text=image")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var env ImageEnvelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if len(env.Results) != 1 {
-		t.Fatalf("expected one image result, got %d", len(env.Results))
-	}
-	got := env.Results[0]
-	if got.Image.Width != 1200 || got.Image.Height != 800 {
-		t.Fatalf("expected image dimensions 1200x800, got %dx%d", got.Image.Width, got.Image.Height)
-	}
-	if got.Source.PageURL != "https://example.com/article" || got.Source.Domain != "example.com" {
-		t.Fatalf("unexpected source: %+v", got.Source)
-	}
-}
-
-func TestMegaSearchDeduplicatesByNormalizedURLDeterministically(t *testing.T) {
-	google := &engineMock{
-		name:        "google",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 2, URL: "https://example.com/page?utm_source=test", Title: "Google"}}, nil
-		},
-	}
-	bing := &engineMock{
-		name:        "bing",
-		initialized: true,
-		searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-			return []SearchResult{{Rank: 1, URL: "https://example.com/page", Title: "Bing"}}, nil
-		},
-	}
-
-	opts := DefaultServerOptions()
-	opts.Resilience.Retry.MaxRetries = 0
-	srv := NewServerWithOptions("127.0.0.1", 7209, opts, google, bing)
-
-	resp := request(t, srv, "/mega/search?text=dedupe&engines=google,bing")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var env Envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
-	if len(env.Results) != 1 {
-		t.Fatalf("expected one deduped result, got %d", len(env.Results))
-	}
-	if env.Results[0].Engine != "bing" || env.Results[0].Rank != 1 {
-		t.Fatalf("expected best-ranked bing result, got engine=%q rank=%d", env.Results[0].Engine, env.Results[0].Rank)
-	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestResultIDIsStableAcrossRequests(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 	opts := DefaultServerOptions()
@@ -2901,7 +2059,7 @@ func TestUseProfileHeaderExposedInCORS(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 	srv := NewServerWithOptions("127.0.0.1", 7223, DefaultServerOptions(), engine)
 
-	req := httptest.NewRequest(http.MethodOptions, "/google/search", nil)
+	req := httptest.NewRequest(http.MethodOptions, BasePath+"/google/search", nil)
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("preflight request failed: %v", err)

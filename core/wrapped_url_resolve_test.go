@@ -341,28 +341,27 @@ func TestServerGoogleResolveDefaultsAndOverrides(t *testing.T) {
 		{"2", "&resolve_urls=false", false, 0},
 		{"false", "&resolve_urls=3", true, 3},
 	} {
-		for _, path := range []string{"/google/search?text=q", "/mega/search?text=q"} {
-			t.Run(tc.setting+path+tc.query, func(t *testing.T) {
-				opts := DefaultServerOptions()
-				opts.CacheTTL = 0
-				opts.GoogleResolve.URLs = tc.setting
-				received := make(chan Query, 1)
-				engine := &engineMock{name: "google", initialized: true, searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
-					received <- q
-					return []SearchResult{{Rank: 1, URL: "https://example.org/", Title: "Result"}}, nil
-				}}
-				srv := NewServerWithOptions("127.0.0.1", 0, opts, engine)
-				resp := request(t, srv, path+tc.query)
-				DrainAndCloseResponse(resp)
-				if resp.StatusCode != http.StatusOK {
-					t.Fatalf("unexpected status: %d", resp.StatusCode)
-				}
-				q := <-received
-				if q.ResolveURLs != tc.enabled || q.ResolveTop != tc.top || q.ResolveConfig == nil || *q.ResolveConfig != opts.GoogleResolve {
-					t.Fatalf("unexpected resolution settings: %s, config=%+v", q.String(), q.ResolveConfig)
-				}
-			})
-		}
+		path := "/google/search?text=q"
+		t.Run(tc.setting+path+tc.query, func(t *testing.T) {
+			opts := DefaultServerOptions()
+			opts.CacheTTL = 0
+			opts.ResolveConfig.URLs = tc.setting
+			received := make(chan Query, 1)
+			engine := &engineMock{name: "google", initialized: true, searchFn: func(_ context.Context, q Query) ([]SearchResult, error) {
+				received <- q
+				return []SearchResult{{Rank: 1, URL: "https://example.org/", Title: "Result"}}, nil
+			}}
+			srv := NewServerWithOptions("127.0.0.1", 0, opts, engine)
+			resp := request(t, srv, path+tc.query)
+			DrainAndCloseResponse(resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("unexpected status: %d", resp.StatusCode)
+			}
+			q := <-received
+			if q.ResolveURLs != tc.enabled || q.ResolveTop != tc.top || q.ResolveConfig == nil || *q.ResolveConfig != opts.ResolveConfig {
+				t.Fatalf("unexpected resolution settings: %s, config=%+v", q.String(), q.ResolveConfig)
+			}
+		})
 	}
 }
 

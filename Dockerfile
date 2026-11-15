@@ -27,6 +27,10 @@ RUN apt-get update \
 
 COPY --from=builder /app/web2api /usr/local/bin/web2api
 COPY --chown=chrome:chrome config.yaml ./config.yaml
+# Admin panel static files, served by the serve command at /web-tool/ (fixed
+# sub-path, see core.BasePath). The platform package (bbolt keys/usage store,
+# JWT admin auth) is compiled into the binary above — no runtime files needed.
+COPY --chown=chrome:chrome web/admin ./web/admin
 
 # Rod's launcher.LookPath does not know about /headless-shell/headless-shell.
 # Viper auto-binds WEB2API_APP_BROWSER_PATH to app.browser_path, so this pins the binary and avoids Rod's runtime chromium auto-download (which would fail in this non-root, network-restricted image).
@@ -37,7 +41,7 @@ ENV WEB2API_APP_BROWSER_PATH=/headless-shell/headless-shell \
 USER chrome
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget --quiet --tries=1 --spider "http://127.0.0.1:${WEB2API_SERVER_PORT}/health" || exit 1
+  CMD wget --quiet --tries=1 --spider "http://127.0.0.1:${WEB2API_SERVER_PORT}/web-tool/health" || exit 1
 
 # -s keeps reaping when another init is PID 1 (`docker run --init`, compose `init: true`).
 ENTRYPOINT ["/usr/bin/tini", "-s", "--", "web2api"]

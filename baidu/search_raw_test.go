@@ -11,7 +11,7 @@ import (
 
 // TestBaiduParseHTMLFixtures covers the no-results and captcha fixtures.
 // The happy path is covered in TestParseBaiduHTML; this file ensures the
-// shared parser (used by both raw mode and the /baidu/parse endpoint) does
+// shared parser (used by both raw mode and the browser search path) does
 // not over-extract on captcha or empty SERPs.
 func TestBaiduParseHTMLFixtures(t *testing.T) {
 	t.Parallel()

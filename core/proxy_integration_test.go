@@ -94,11 +94,6 @@ func (e *proxyIntegrationEngine) Search(_ context.Context, q Query) ([]SearchRes
 	}}, nil
 }
 
-func (e *proxyIntegrationEngine) SearchImage(_ context.Context, q Query) ([]SearchResult, error) {
-	_ = q
-	return nil, ErrSearchTimeout
-}
-
 func proxyIntegrationConfig(t *testing.T) proxyIntegrationURLs {
 	t.Helper()
 	testutil.RequireIntegration(t)

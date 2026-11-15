@@ -1,0 +1,90 @@
+# Web2API — 收录情报 & 国内搜索 Agent 数据平台
+
+> 单二进制自托管的国内搜索数据平台:百度/搜狗/360/必应四引擎的网页搜索与 URL 收录判定,内建 API 密钥鉴权、配额计费、限流与引擎冷却风控;为 AI Agent 提供原生 MCP 接口与 OpenAPI 规范。壁垒在引擎反爬对抗与收录判定,不在转发。
+
+## 快速开始
+
+- 鉴权方式:请求头 `X-API-Key: <你的密钥>`(计费)或 `Authorization: Bearer <管理员JWT>`(管理员,不计费)。密钥在管理面板「API密钥」页创建。
+- 所有路径都在前缀 `/web-tool` 之下。本文中的链接为相对路径,请拼接你的部署域名,例如 `https://your-host/web-tool/mcp`。
+- OpenAPI 3.1 规范(供 Dify/Coze/n8n/LangChain OpenAPI toolkit 导入):[openapi.yaml](/web-tool/openapi.yaml)
+- 管理面板:`/web-tool/`(登录 / 总览 / API密钥 / 使用日志 / 引擎状态 / 在线调试 / Agent 集成 / 系统设置)
+
+## MCP 接入(Agent 一等公民)
+
+- MCP streamable HTTP 端点(仅 POST,JSON-RPC 2.0,响应式 JSON):[POST /mcp](/web-tool/mcp)
+- 鉴权:`X-API-Key` 请求头(计费)或 `Authorization: Bearer <JWT>`(管理员不计费)。
+- 握手:`initialize`(protocolVersion 默认 `2025-06-18`,serverInfo.name=`web2api`)→ 响应头取 `Mcp-Session-Id` → 发 `notifications/initialized`(HTTP 204)→ `tools/list` / `tools/call`。
+- 工具(4 个):
+  - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;计费 1 unit/次。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
+  - `check_indexed{urls[1..20], engines?}` → 与 GET /v1/index/check 相同的 results 结构;计费 urls×engines units。
+  - `get_quota{}` → 当前调用方配额对象(管理员不计费)。
+  - `list_engines{}` → 四引擎及冷却/熔断状态。
+- tools/call 结果统一为 `{content:[{type:"text",text:"<JSON字符串>"}], isError}`;入参校验失败返回 JSON-RPC `-32602`。
+- Claude / Claude Desktop 配置示例(mcpServers):
+
+```json
+{
+  "mcpServers": {
+    "web2api": {
+      "type": "http",
+      "url": "https://your-host/web-tool/mcp",
+      "headers": { "X-API-Key": "sk-w2a-你的密钥" }
+    }
+  }
+}
+```
+
+## HTTP API 端点清单
+
+### 数据平面(鉴权:X-API-Key,计费)
+
+- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定,`{"urls":[...],"engines":[...]}`,1..20 个 URL;计费 = urls×engines units。
+- [GET /v1/index/check](/web-tool/v1/index/check?url=…&engines=baidu,bing) — 单 URL 收录判定。
+- [GET /v1/quota](/web-tool/v1/quota) — 当前密钥配额与用量。
+- [GET /v1/engines](/web-tool/v1/engines) — 引擎列表与熔断状态。
+- [GET /{engine}/search](/web-tool/baidu/search?text=关键词&limit=10) — 单引擎搜索(engine ∈ baidu|sogou|so360|360|bing;免鉴权,公网部署请加网关鉴权)。
+
+### Agent 平面
+
+- [POST /mcp](/web-tool/mcp) — MCP JSON-RPC 2.0(见上)。
+- [GET /openapi.yaml](/web-tool/openapi.yaml) — OpenAPI 3.1 全端点规范。
+- [GET /llms.txt](/web-tool/llms.txt) — 本文件。
+
+### 控制平面(鉴权:Authorization: Bearer <JWT>)
+
+- [POST /api/auth/login](/web-tool/api/auth/login) — `{"username","password"}` → JWT。防爆破:同 用户名+IP 连续 5 次失败锁定 15 分钟(429 too_many_attempts)。
+- [POST /api/auth/password](/web-tool/api/auth/password) — 修改密码(新密码 ≥ 8 位;成功后全部旧 token 失效)。
+- GET /api/me、GET|POST /api/keys、PATCH|DELETE /api/keys/{id} — 密钥管理。
+- GET /api/stats/overview、GET /api/stats/timeseries?days=14、GET /api/usage — 用量统计与日志。
+- GET /api/engines — 引擎状态看板(含冷却状态机字段)。
+- POST /api/engines/{name}/cooldown/reset — 强制恢复引擎。
+- POST /api/engines/{name}/cooldown/force — 强制冷却引擎 `{"minutes":N}`。
+- [POST /api/playground/check](/web-tool/api/playground/check) — 面板在线调试收录检测(JWT,不计费,响应结构与 /v1/index/check 一致)。
+
+### 运维
+
+- GET /health、GET /ready、GET /stats — 健康/就绪/运行统计。
+
+## 错误信封与限速
+
+- 平台信封(`/v1/*`、`/mcp`):`{"error":"unauthorized|quota_exceeded|..."}`;数据面信封(search):`{"error","code","request_id","message","reason","meta"}`;/mcp 用 JSON-RPC 信封。
+- 所有 429/503 响应带 `Retry-After` 头(秒)。管理 API 默认限速 60 req/min。
+- 配额超限:`429 {"error":"quota_exceeded"}`;未授权:`401 {"error":"unauthorized"}`。
+
+## 引擎冷却(IP 风控)
+
+引擎返回 blocked(403)/429/captcha 会进入冷却:第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续无拦截 240 分钟后计数归零(`stability.engine_cooldown` 可调)。冷却期内该引擎 search/check 快速失败:`503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}` + `Retry-After`。`/v1` 与 `/{engine}/search` 响应 `meta.engines_cooldown:[{engine,until,reason}]` 可预判冷却。Agent 应优先调用 `list_engines` 工具或在收到 engine_cooldown 后切换引擎。
+
+## 示例
+
+```bash
+# 批量收录判定(X-API-Key,计费 = 2 urls × 2 engines = 4 units)
+curl -X POST https://your-host/web-tool/v1/index/check \
+  -H "X-API-Key: sk-w2a-你的密钥" -H "Content-Type: application/json" \
+  -d '{"urls":["https://example.com/a","https://example.com/b"],"engines":["baidu","bing"]}'
+
+# MCP 握手
+curl -s https://your-host/web-tool/mcp \
+  -H "Content-Type: application/json" -H "X-API-Key: sk-w2a-你的密钥" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"demo","version":"1.0"}}}'
+```

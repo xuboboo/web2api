@@ -3,14 +3,13 @@
 // 360 Search is one of the major mainland-China search engines. It renders
 // most organic cards server-side but hydrates ad/AI blocks with JS, so the
 // engine drives a real browser and parses the resulting DOM with the shared
-// goquery parser (also exposed as POST /so360/parse).
+// goquery parser.
 package so360
 
 import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -181,12 +180,6 @@ func (eng *So360) searchBrowser(ctx context.Context, query core.Query) (results 
 	parsed = core.StripResultFeatures(parsed, query.Features)
 	parsed = core.LimitOrganicResults(parsed, query.Limit)
 	return parsed, nil
-}
-
-// SearchImage reports that 360 image search is not implemented yet; callers
-// get a typed engine error instead of an empty (and misleading) result set.
-func (eng *So360) SearchImage(_ context.Context, _ core.Query) ([]core.SearchResult, error) {
-	return nil, fmt.Errorf("%w: 360 image search is not supported", core.ErrNotImplemented)
 }
 
 // looksLikeSo360Challenge reports whether the live URL is 360's verification

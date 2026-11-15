@@ -80,9 +80,9 @@ func CreateBrowser(t *testing.T) *core.Browser {
 	return b
 }
 
-// RunEngineTests runs the live web + image search smoke checks shared by every
-// engine's integration test: results come back, and the first one has a URL
-// and a title. newEngine receives a fresh browser per subtest.
+// RunEngineTests runs the live web search smoke check shared by every engine's
+// integration test: results come back, and the first one has a URL and a
+// title. newEngine receives a fresh browser per subtest.
 func RunEngineTests(t *testing.T, newEngine func(*core.Browser) core.SearchEngine) {
 	testutil.RequireIntegration(t)
 
@@ -92,17 +92,6 @@ func RunEngineTests(t *testing.T, newEngine func(*core.Browser) core.SearchEngin
 		results, err := engine.Search(context.Background(), query)
 		HandleError(t, engine.Name()+" web search", err)
 		requireResults(t, results)
-	})
-
-	t.Run("image", func(t *testing.T) {
-		engine := newEngine(CreateBrowser(t))
-		query := core.Query{Text: "golden retriever puppy", Limit: 10}
-		results, err := engine.SearchImage(context.Background(), query)
-		HandleError(t, engine.Name()+" image search", err)
-		requireResults(t, results)
-		if len(results) > query.Limit {
-			t.Fatalf("image limit=%d, got %d results", query.Limit, len(results))
-		}
 	})
 }
 

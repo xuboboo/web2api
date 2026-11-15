@@ -10,7 +10,7 @@
 | --- | --- |
 | `url.go` | 纯函数 URL 构造，拒绝空查询，处理翻页/过滤参数 |
 | `selectors.go` | 选择器集中定义（改版时只改这里） |
-| `parse_html.go` | `ParseHTML(io.Reader)`，纯函数、无网络，供测试与 `POST /{engine}/parse` 复用 |
+| `parse_html.go` | `ParseHTML(io.Reader)`，纯函数、无网络，供测试与 引擎内测试复用 |
 | `search.go` | 浏览器通道：`Navigate` → 轮询 `page.HTML()` → `ParseHTML`，并做双通道编排 |
 | `search_raw.go` | 纯 HTTP 通道（强烈建议实现，反爬兜底与 CLI raw 模式都依赖它） |
 | `features.go` | 可选：SERP 特性模块提取 |
@@ -67,7 +67,7 @@ func (e *Engine) Search(ctx context.Context, q core.Query) ([]core.SearchResult,
 - `core/response_builder.go`：引擎首页映射（用于补全显示 URL）
 - `core/server.go`：仅当需要**特殊端点别名**时改 `engineEndpointName`/`resolveEngineAlias`（如 `so360` ↔ `360`）
 - `config.yaml`：限速、`profile`、可选代理 tag
-- 文档：根 `README.md` 的引擎表、`docs/openapi.yaml` 的引擎枚举、`docs/CONFIGURATION.md` 的引擎段
+- 文档：根 `README.md` 的引擎表、`docs/CONFIGURATION.md` 的引擎段、`docs/CONFIGURATION.md` 的引擎段
 
 ## 4. 测试
 

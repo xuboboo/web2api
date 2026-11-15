@@ -1,17 +1,14 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,12 +16,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/sirupsen/logrus"
 	browserprofile "github.com/xuboboo/web2api/core/browser"
 	"github.com/xuboboo/web2api/core/fpcheck"
 	"github.com/xuboboo/web2api/core/fpcheck/detectors"
-	apidocs "github.com/xuboboo/web2api/docs"
-	extractpkg "github.com/xuboboo/web2api/extract"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
 
@@ -34,6 +29,14 @@ var credentialedURLPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s/
 // configured. It is relative to the server's working directory at start time.
 var DefaultFingerprintArtifactDir = filepath.Join("core", "testdata")
 
+// BasePath is the fixed URL prefix the whole application is served under:
+// the admin panel, /v1/* public API, /api/* admin API, and the health/stats
+// endpoints all live below it (e.g. /web-tool/health, /web-tool/v1/index/check,
+// /web-tool/api/auth/login). It is intentionally NOT a configuration knob —
+// deployments (container probes, reverse proxies) can rely on the constant.
+// Nothing is mounted at the root; there is no unprefixed copy of any route.
+const BasePath = "/web-tool"
+
 // SearchEngine defines the contract required by the HTTP server and resilient
 // search pipeline.
 type SearchEngine interface {
@@ -41,8 +44,6 @@ type SearchEngine interface {
 	// Implementations should return sentinel errors such as ErrCaptcha and
 	// ErrSearchTimeout for policy-aware handling.
 	Search(context.Context, Query) ([]SearchResult, error)
-	// SearchImage runs an image search request and returns normalized results.
-	SearchImage(context.Context, Query) ([]SearchResult, error)
 	// IsInitialized reports whether the engine is ready to serve requests.
 	IsInitialized() bool
 	// Name returns a stable engine identifier used in routes and telemetry.
@@ -84,28 +85,19 @@ type ServerOptions struct {
 	FingerprintBrowserOpts BrowserOpts
 	// Resilience defines retry/circuit-breaker/proxy strategy settings.
 	Resilience ResilientConfig
-	// MegaTimeout bounds total wait time for a /mega/* request. When a
-	// mega request exceeds this deadline, engines that have already
-	// responded contribute their results and slower engines are reported
-	// as failed with a context-deadline error. Zero disables the bound
-	// (legacy behavior — wait until the slowest engine finishes).
-	MegaTimeout time.Duration
-	// RequestTimeout bounds wall-clock time of any request that does not
-	// manage its own deadline budget (/mega/* uses MegaTimeout, /extract has
-	// a per-batch budget). Exceeding it returns 504 request_timeout. Zero
-	// disables the bound. The serve command derives it from the engine
-	// timeout and retry budget via RequestTimeoutForRetries instead of
-	// exposing a separate config knob.
+	// RequestTimeout bounds wall-clock time of any request. Exceeding it
+	// returns 504 request_timeout. Zero disables the bound. The serve command
+	// derives it from the engine timeout and retry budget via
+	// RequestTimeoutForRetries instead of exposing a separate config knob.
 	RequestTimeout time.Duration
-	// BrowserResolver returns a pooled browser for rendered extraction.
-	BrowserResolver BrowserResolver
-	// Extract configures the URL extraction endpoint and search enrichment.
-	Extract extractpkg.Config
-	// GoogleResolve configures Google result URL resolution.
-	GoogleResolve URLResolveConfig
+	// ResolveConfig configures wrapped result URL resolution limits.
+	ResolveConfig URLResolveConfig
+	// RequestAuth, when non-nil, guards the data-plane routes (dedicated
+	// /{engine}/search and /stats/*) with an authentication check (契约: 数据
+	// 面可选鉴权开关). It is a validator: return nil to allow, an error to
+	// reject; it must NOT call c.Next().
+	RequestAuth fiber.Handler
 }
-
-type BrowserResolver func(proxyURL string) (*Browser, error)
 
 // DefaultServerOptions returns production-oriented defaults for cache, CORS,
 // and resilient search policies.
@@ -122,13 +114,11 @@ func DefaultServerOptions() ServerOptions {
 			IsHeadless: true,
 			Timeout:    30 * time.Second,
 		},
-		Resilience:  DefaultResilientConfig(),
-		MegaTimeout: 90 * time.Second,
+		Resilience: DefaultResilientConfig(),
 		// 30s matches the default engine timeout (app.timeout); the serve
 		// command re-derives from the configured values.
 		RequestTimeout: RequestTimeoutForRetries(30*time.Second, DefaultRetryConfig()),
-		Extract:        extractpkg.DefaultConfig(),
-		GoogleResolve:  DefaultURLResolveConfig(),
+		ResolveConfig:  DefaultURLResolveConfig(),
 	}
 }
 
@@ -179,8 +169,8 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	}
 
 	// Defense-in-depth: engine panics are recovered in the resilient layer
-	// (invokeEngine); this catches panics in handlers that bypass it (parse,
-	// extract, stats) so the process survives.
+	// (invokeEngine); this catches panics in handlers that bypass it (stats,
+	// fingerprint check) so the process survives.
 	app.Use(fiberrecover.New(fiberrecover.Config{EnableStackTrace: true}))
 	app.Use(RequestContextMiddleware())
 	if opts.RequestTimeout > 0 {
@@ -191,17 +181,17 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	}
 	app.Use(RequestLoggerMiddleware())
 
-	app.Get("/openapi.yaml", serv.handleOpenAPISpec)
-	app.Get("/docs", serv.handleSwaggerUI)
-	app.Get("/docs/", serv.handleSwaggerUI)
-	app.Get("/health", serv.handleHealthCheck)
-	app.Get("/ready", serv.handleReadinessCheck)
-	app.Get("/stats", serv.handleStats)
-	app.Get("/stats/cache", serv.handleCacheStats)
-	app.Get("/stats/proxy", serv.handleProxyStats)
-	app.Get("/stats/cb", serv.handleCircuitBreakerStats)
+	// Every route — health/stats endpoints, dedicated engine search, and the
+	// platform /api /v1 groups mounted later by the serve command — lives under
+	// the fixed BasePath. The root serves nothing.
+	app.Get(BasePath+"/health", serv.handleHealthCheck)
+	app.Get(BasePath+"/ready", serv.handleReadinessCheck)
+	serv.registerDataPlaneRoute(app, BasePath+"/stats", serv.handleStats)
+	serv.registerDataPlaneRoute(app, BasePath+"/stats/cache", serv.handleCacheStats)
+	serv.registerDataPlaneRoute(app, BasePath+"/stats/proxy", serv.handleProxyStats)
+	serv.registerDataPlaneRoute(app, BasePath+"/stats/cb", serv.handleCircuitBreakerStats)
 	if opts.EnableDebugEndpoints {
-		app.Get("/debug/fingerprint-check", serv.handleFingerprintCheck)
+		app.Get(BasePath+"/debug/fingerprint-check", serv.handleFingerprintCheck)
 	}
 
 	for _, engine := range searchEngines {
@@ -210,54 +200,66 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 		endpointName := engineEndpointName(locEngine.Name())
 
 		searchHandler := func(c *fiber.Ctx) error {
-			return serv.handleDedicatedEndpoint(c, locEngine, false)
-		}
-		imageHandler := func(c *fiber.Ctx) error {
-			return serv.handleDedicatedEndpoint(c, locEngine, true)
+			return serv.handleDedicatedEndpoint(c, locEngine)
 		}
 
-		serv.app.Get(fmt.Sprintf("/%s/search", endpointName), searchHandler)
-		serv.app.Get(fmt.Sprintf("/%s/image", endpointName), imageHandler)
+		serv.registerDataPlaneRoute(app, fmt.Sprintf("%s/%s/search", BasePath, endpointName), searchHandler)
 		if canonicalName := strings.ToLower(locEngine.Name()); canonicalName != endpointName {
-			serv.app.Get(fmt.Sprintf("/%s/search", canonicalName), searchHandler)
-			serv.app.Get(fmt.Sprintf("/%s/image", canonicalName), imageHandler)
+			serv.registerDataPlaneRoute(app, fmt.Sprintf("%s/%s/search", BasePath, canonicalName), searchHandler)
 		}
 	}
-
-	for _, engine := range searchEngines {
-		parser, ok := engine.(HTMLParser)
-		if !ok {
-			continue
-		}
-		locParser := parser
-		// Parse registers the canonical-name path, plus the endpoint slug when it
-		// differs (e.g. /duckduckgo/parse and /duck/parse both resolve).
-		parserName := strings.ToLower(parser.Name())
-		parseHandler := func(c *fiber.Ctx) error {
-			return serv.handleParseEndpoint(c, locParser)
-		}
-		serv.app.Post(fmt.Sprintf("/%s/parse", parserName), parseHandler)
-		if slug := engineEndpointName(parser.Name()); slug != parserName {
-			serv.app.Post(fmt.Sprintf("/%s/parse", slug), parseHandler)
-		}
-	}
-
-	serv.app.Get("/mega/search", serv.handleMegaSearch)
-	serv.app.Get("/mega/image", serv.handleMegaImage)
-	serv.app.Get("/mega/engines", serv.handleListEngines)
-	serv.app.Get("/extract", serv.handleExtract)
-	serv.app.Post("/extract", serv.handleExtract)
-	serv.app.Post("/extract/batch", serv.handleBatchExtract)
 
 	return &serv
 }
 
-func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isImage bool) error {
+// registerDataPlaneRoute mounts one data-plane route, applying the optional
+// RequestAuth validator (数据面可选鉴权) when configured. Health/ready stay
+// public for orchestrator probes.
+func (s *Server) registerDataPlaneRoute(app *fiber.App, path string, handler fiber.Handler) {
+	if s.opts.RequestAuth == nil {
+		app.Get(path, handler)
+		return
+	}
+	auth := s.opts.RequestAuth
+	app.Get(path, func(c *fiber.Ctx) error {
+		if err := auth(c); err != nil {
+			return err
+		}
+		return handler(c)
+	})
+}
+
+func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine) error {
 	startedAt := time.Now()
 	requestCtx := withRequestUsage(c.UserContext(), engine.Name())
 	c.SetUserContext(requestCtx)
 	defer setNetworkBytesHeader(c, requestCtx)
 	defer setBrowserProfileHeader(c, requestCtx)
+
+	// 契约 A: cooldown gate first — a cooling engine fails fast (503 +
+	// Retry-After) without touching the engine, before any parsing/cache work.
+	gate, gateErr := s.resilient.GateEngine(requestCtx, engine.Name())
+	if gateErr != nil {
+		WithRequest(requestCtx).WithError(gateErr).Warn("Engine cooldown gate canceled")
+		return gateErr
+	}
+	if gate.Blocked() {
+		WithRequest(requestCtx).WithFields(logrus.Fields{
+			"engine": engine.Name(),
+			"reason": gate.Reason(),
+			"until":  gate.Until().UTC().Format(time.RFC3339),
+		}).Info("Engine in cooldown, failing fast")
+		return s.errEngineCooldownForServer(engine.Name(), gate)
+	}
+
+	// A granted probe MUST be settled exactly once even when the handler
+	// returns early (bad params etc.): default the outcome to "incomplete"
+	// (postpones the cooldown) and overwrite it with the real search error.
+	var probeErr error
+	if gate.IsProbe() {
+		probeErr = errProbeIncomplete
+		defer func() { gate.FinishProbe(probeErr) }()
+	}
 
 	if profileID := strings.TrimSpace(c.Get(useProfileHeader)); profileID != "" {
 		if _, ok := browserprofile.ProfileByID(profileID); !ok {
@@ -267,7 +269,7 @@ func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isIm
 		c.SetUserContext(requestCtx)
 	}
 
-	q := Query{ResolveConfig: &s.opts.GoogleResolve}
+	q := Query{ResolveConfig: &s.opts.ResolveConfig}
 	if err := q.InitFromContext(c); err != nil {
 		WithRequest(c.UserContext()).WithError(err).Warn("Invalid query parameters")
 		return err
@@ -281,6 +283,11 @@ func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isIm
 	if err != nil {
 		return err
 	}
+	// Agent-friendly alias: ?output=markdown behaves like format=markdown
+	// (one LLM-quotable line per result); plain JSON responses are unchanged.
+	if strings.EqualFold(strings.TrimSpace(c.Query("output", "")), "markdown") {
+		format = "markdown"
+	}
 
 	requestCtx = WithQueryHash(c.UserContext(), QueryHashFromQuery(q))
 	c.SetUserContext(requestCtx)
@@ -288,14 +295,13 @@ func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isIm
 	requestID := RequestIDFromContext(requestCtx)
 
 	action := "search"
-	if isImage {
-		action = "image"
-	}
 	WithRequest(requestCtx).
 		WithField("action", action).
 		Debugf("Starting %s request for query: %s", action, q.Text)
 
-	if format == "json" && !q.Extract && !ShouldBypassCacheForProxyMarket(q) {
+	// The cooldown-expiry probe must hit the real engine — cache hits would
+	// fake a recovery — so probe requests bypass the response cache.
+	if format == "json" && !gate.IsProbe() && !ShouldBypassCacheForProxyMarket(q) {
 		if hit, err := s.tryServeCacheHit(
 			c,
 			startedAt,
@@ -310,54 +316,17 @@ func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isIm
 
 	engineNames := []string{engine.Name()}
 
-	if isImage {
-		var (
-			res        []SearchResult
-			usedEngine string
-			proxyMeta  ProxyExecutionMeta
-			searchErr  error
-		)
-		if s.opts.AllowEndpointFallback {
-			res, usedEngine, proxyMeta, searchErr = s.resilient.SearchImageWithFallback(requestCtx, engine, q)
-		} else {
-			res, usedEngine, proxyMeta, searchErr = s.resilient.SearchImagePrimary(requestCtx, engine, q)
-		}
-		s.applyProxyHeaders(c, proxyMeta)
-		if searchErr != nil {
-			WithRequest(requestCtx).WithFields(logrus.Fields{"action": action}).WithError(searchErr).Error("Search failed")
-			return searchAPIError(searchErr, usedEngine, q, proxyMeta)
-		}
-
-		env := NewImageEnvelope(q, requestID, startedAt, engineNames)
-		if usedEngine != "" && usedEngine != engine.Name() {
-			env.Meta.EnginesFailed = []string{engine.Name()}
-		}
-		ectx := EnrichContext{Engine: usedEngine, Query: q}
-		for _, r := range res {
-			env.Results = append(env.Results, EnrichImageResult(r, ectx))
-		}
-		env.Finalize(startedAt, q)
-
-		if format == "json" {
-			cacheStatus := s.cacheEnvelopeIfEligible(engine.Name(), usedEngine, action, q, env)
-			if cacheStatus != "" {
-				c.Set("X-Cache", cacheStatus)
-			}
-		}
-		if usedEngine != "" && usedEngine != engine.Name() {
-			c.Set("X-Fallback-Engine", usedEngine)
-		}
-		WithRequest(requestCtx).WithFields(logrus.Fields{"action": action, "results_count": len(res)}).Info("Search completed")
-		return sendImageEnvelope(c, format, env)
-	}
-
 	var (
 		res        []SearchResult
 		usedEngine string
 		proxyMeta  ProxyExecutionMeta
 		searchErr  error
 	)
-	if s.opts.AllowEndpointFallback {
+	if gate.IsProbe() {
+		// Single-engine probe: fallback would dilute the recovery signal.
+		res, usedEngine, proxyMeta, searchErr = s.resilient.SearchPrimary(requestCtx, engine, q)
+		probeErr = searchErr
+	} else if s.opts.AllowEndpointFallback {
 		res, usedEngine, proxyMeta, searchErr = s.resilient.SearchWithFallback(requestCtx, engine, q)
 	} else {
 		res, usedEngine, proxyMeta, searchErr = s.resilient.SearchPrimary(requestCtx, engine, q)
@@ -373,17 +342,14 @@ func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isIm
 	if usedEngine != "" && usedEngine != engine.Name() {
 		env.Meta.EnginesFailed = []string{engine.Name()}
 	}
+	env.Meta.EnginesCooldown = s.enginesCooldownMeta()
 	ectx := EnrichContext{Engine: usedEngine, Query: q}
 	for _, r := range res {
 		AppendEnrichedSearchResult(env, r, ectx, startedAt)
 	}
 	env.Finalize(startedAt, q)
 
-	if q.Extract {
-		EnrichEnvelopeWithExtraction(requestCtx, env, q, format, s.newExtractor(), s.opts.Extract)
-	}
-
-	if format == "json" && !q.Extract {
+	if format == "json" {
 		cacheStatus := s.cacheEnvelopeIfEligible(engine.Name(), usedEngine, action, q, env)
 		if cacheStatus != "" {
 			c.Set("X-Cache", cacheStatus)
@@ -399,62 +365,6 @@ func (s *Server) handleDedicatedEndpoint(c *fiber.Ctx, engine SearchEngine, isIm
 	}
 	WithRequest(completionCtx).WithFields(logrus.Fields{"action": action, "results_count": len(res)}).Info("Search completed")
 	return sendEnvelope(c, format, env)
-}
-
-func (s *Server) handleParseEndpoint(c *fiber.Ctx, parser HTMLParser) error {
-	startedAt := time.Now()
-	requestCtx := withRequestUsage(c.UserContext(), parser.Name())
-	c.SetUserContext(requestCtx)
-
-	body := c.Body()
-	if len(body) == 0 {
-		return errInvalidParam("request body is empty")
-	}
-
-	format, err := resolveFormat(c)
-	if err != nil {
-		return err
-	}
-
-	results, err := parser.ParseHTML(bytes.NewReader(body))
-	if err != nil {
-		if isParseEndpointSearchError(err) {
-			spec := mapSearchError(err)
-			return &APIError{
-				HTTPStatus: spec.status,
-				ErrorCode:  spec.code,
-				Message:    spec.message,
-				Meta: map[string]any{
-					"engine":       parser.Name(),
-					"error_detail": err.Error(),
-				},
-			}
-		}
-		return &APIError{
-			HTTPStatus: fiber.StatusBadRequest,
-			ErrorCode:  "parser_failure",
-			Message:    fmt.Sprintf("failed to parse HTML: %v", err),
-		}
-	}
-
-	requestID := RequestIDFromContext(requestCtx)
-	q := Query{}
-	env := NewEnvelope(q, requestID, startedAt, []string{parser.Name()})
-	ectx := EnrichContext{Engine: parser.Name(), Query: q}
-	for _, r := range results {
-		AppendEnrichedSearchResult(env, r, ectx, startedAt)
-	}
-	env.Finalize(startedAt, q)
-
-	return sendEnvelope(c, format, env)
-}
-
-func isParseEndpointSearchError(err error) bool {
-	return errors.Is(err, ErrCaptcha) ||
-		errors.Is(err, ErrBlocked) ||
-		errors.Is(err, ErrRateLimited) ||
-		errors.Is(err, ErrSearchTimeout) ||
-		errors.Is(err, ErrParser)
 }
 
 type searchErrorSpec struct {
@@ -552,15 +462,6 @@ func addErrorDetail(meta map[string]interface{}, err error, message string, q Qu
 	meta["error_detail"] = detail
 }
 
-func engineErrorDetail(engineName string, err error, q Query) EngineErrorDetail {
-	spec := mapSearchError(err)
-	return EngineErrorDetail{
-		Engine:  engineName,
-		Error:   spec.code,
-		Message: sanitizeErrorDetail(err.Error(), q),
-	}
-}
-
 func sanitizeErrorDetail(detail string, q Query) string {
 	detail = strings.TrimSpace(detail)
 	if detail == "" {
@@ -597,11 +498,6 @@ func (s *Server) cacheEnvelopeIfEligible(engineName, usedEngine, action string, 
 	// Detect empty results via reflection-free type switch.
 	switch v := payload.(type) {
 	case *Envelope:
-		if len(v.Results) == 0 {
-			s.cache.RecordBypass()
-			return "BYPASS"
-		}
-	case *ImageEnvelope:
 		if len(v.Results) == 0 {
 			s.cache.RecordBypass()
 			return "BYPASS"
@@ -932,365 +828,12 @@ func parseNonNegativeIntQuery(raw string, defaultValue int) (int, error) {
 	return value, nil
 }
 
-// MegaSearchResult extends SearchResult with the engine source name.
-type MegaSearchResult struct {
-	SearchResult
-	Engine string `json:"engine"`
-}
-
-const (
-	megaModeBalanced = "balanced"
-	megaModeAny      = "any"
-	megaModeFast     = "fast"
-)
-
-type megaRunConfig struct {
-	Mode   string
-	Dedupe bool
-	Merge  bool
-}
-
-func (s *Server) handleMegaSearch(c *fiber.Ctx) error {
-	return s.handleMegaEndpoint(c, "search")
-}
-
-func (s *Server) handleMegaImage(c *fiber.Ctx) error {
-	return s.handleMegaEndpoint(c, "image")
-}
-
-func (s *Server) handleMegaEndpoint(c *fiber.Ctx, action string) error {
-	startedAt := time.Now()
-	requestCtx := withRequestUsage(c.UserContext(), "mega")
-	c.SetUserContext(requestCtx)
-	defer setNetworkBytesHeader(c, requestCtx)
-	defer setBrowserProfileHeader(c, requestCtx)
-
-	q := Query{ResolveConfig: &s.opts.GoogleResolve}
-	if err := q.InitFromContext(c); err != nil {
-		WithRequest(c.UserContext()).WithError(err).Warn("Invalid query parameters")
-		return err
-	}
-	if err := s.validateRequestProxyURL(&q); err != nil {
-		WithRequest(c.UserContext()).WithError(err).Warn("Invalid request proxy URL")
-		return err
-	}
-
-	format, err := resolveFormat(c)
-	if err != nil {
-		return err
-	}
-
-	requestCtx = WithQueryHash(c.UserContext(), QueryHashFromQuery(q))
-	c.SetUserContext(requestCtx)
-
-	requestID := RequestIDFromContext(requestCtx)
-	runCfg, err := parseMegaRunConfig(c)
-	if err != nil {
-		return err
-	}
-
-	enginesToUse := s.resolveEngines(requestCtx, c.Query("engines", ""))
-	if len(enginesToUse) == 0 {
-		return &APIError{HTTPStatus: 400, Reason: ReasonNoEngines, Message: "no valid search engines specified"}
-	}
-
-	engineNames := make([]string, len(enginesToUse))
-	for i, engine := range enginesToUse {
-		engineNames[i] = engine.Name()
-	}
-	engineNamesJoined := strings.Join(engineNames, ",")
-	s.applyProxyHeaders(c, s.resilient.ResolveMegaProxyMeta(q, enginesToUse))
-	WithRequest(requestCtx).WithFields(logrus.Fields{
-		"action":  action,
-		"engines": engineNamesJoined,
-		"mode":    runCfg.Mode,
-	}).Debugf("Starting mega %s request for query: %s", action, q.Text)
-
-	if format == "json" && !q.Extract && !ShouldBypassCacheForProxyMarket(q) && runCfg.Mode != megaModeFast {
-		cacheHitCandidates := []cacheHitCandidate{
-			{
-				key:        s.buildMegaCacheKey(action, enginesToUse, q, runCfg),
-				logMessage: fmt.Sprintf("Cache hit for mega %s: engines=%s query=%s mode=%s", action, engineNamesJoined, q.Text, runCfg.Mode),
-			},
-		}
-		if runCfg.Mode == megaModeBalanced {
-			cacheableEngines := s.megaCacheableEngines(enginesToUse)
-			if len(cacheableEngines) > 0 && len(cacheableEngines) < len(enginesToUse) {
-				cacheHitCandidates = append(cacheHitCandidates, cacheHitCandidate{
-					key:        s.buildMegaCacheKey(action, cacheableEngines, q, runCfg),
-					logMessage: fmt.Sprintf("Cache hit for mega %s partial set: engines=%s query=%s mode=%s", action, engineNamesJoined, q.Text, runCfg.Mode),
-				})
-			}
-		}
-		if hit, err := s.tryServeCacheHit(c, startedAt, cacheHitCandidates...); hit || err != nil {
-			return err
-		}
-	}
-
-	runCtx := requestCtx
-	if s.opts.MegaTimeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(requestCtx, s.opts.MegaTimeout)
-		defer cancel()
-	}
-
-	var (
-		rawResults   []MegaSearchResult
-		responded    []string
-		engineErrors []EngineErrorDetail
-	)
-	switch runCfg.Mode {
-	case megaModeAny:
-		rawResults, responded, engineErrors = s.resilient.searchAnyDetailed(runCtx, q, enginesToUse, action == "image")
-	case megaModeFast:
-		rawResults, responded, engineErrors = s.resilient.searchFastestDetailed(runCtx, q, enginesToUse, action == "image")
-	default:
-		if action == "image" {
-			rawResults, responded, engineErrors = s.resilient.searchAllImageParallelDetailed(runCtx, q, enginesToUse)
-		} else {
-			rawResults, responded, engineErrors = s.resilient.searchAllParallelDetailed(runCtx, q, enginesToUse)
-		}
-	}
-
-	rawResults = s.applyMegaMergePolicy(rawResults, enginesToUse, runCfg)
-
-	enginesFailed := engineErrorNames(engineErrors)
-	if len(responded) == 0 {
-		err := fmt.Errorf("%w: %s", ErrAllEnginesFailed, strings.Join(enginesFailed, ","))
-		apiErr := searchAPIError(err, "mega", q, ProxyExecutionMeta{})
-		if detail := megaFailureMessage(engineErrors); detail != "" {
-			apiErr.Message = detail
-		}
-		apiErr.Meta["engine_errors"] = engineErrors
-		WithRequest(requestCtx).WithFields(logrus.Fields{
-			"action": action, "engines": engineNamesJoined,
-		}).WithError(err).Error("Mega search failed")
-		return apiErr
-	}
-
-	if action == "image" {
-		imageResults := rawResults
-		if runCfg.Dedupe {
-			imageResults = s.deduplicateMegaResults(imageResults)
-		}
-		env := NewImageEnvelope(q, requestID, startedAt, engineNames)
-		env.Meta.EnginesResponded = responded
-		env.Meta.EnginesFailed = enginesFailed
-		env.Meta.EngineErrors = engineErrors
-		for _, r := range imageResults {
-			ectx := EnrichContext{Engine: r.Engine, Query: q}
-			env.Results = append(env.Results, EnrichImageResult(r.SearchResult, ectx))
-		}
-		env.Finalize(startedAt, q)
-
-		if format == "json" && s.cache != nil && runCfg.Mode != megaModeFast {
-			c.Set("X-Cache", s.cacheMegaImageResults(action, enginesToUse, q, env, runCfg))
-		}
-		WithRequest(requestCtx).WithFields(logrus.Fields{
-			"action": action, "engines_count": len(enginesToUse), "results_count": len(env.Results),
-		}).Info("Mega search completed")
-		return sendImageEnvelope(c, format, env)
-	}
-
-	webResults := rawResults
-	if runCfg.Dedupe {
-		webResults = s.deduplicateMegaResults(webResults)
-	}
-	env := NewEnvelope(q, requestID, startedAt, engineNames)
-	env.Meta.EnginesResponded = responded
-	env.Meta.EnginesFailed = enginesFailed
-	env.Meta.EngineErrors = engineErrors
-	for _, r := range webResults {
-		ectx := EnrichContext{Engine: r.Engine, Query: q}
-		AppendEnrichedSearchResult(env, r.SearchResult, ectx, startedAt)
-	}
-	env.Finalize(startedAt, q)
-	if q.Extract {
-		EnrichEnvelopeWithExtraction(requestCtx, env, q, format, s.newExtractor(), s.opts.Extract)
-	}
-
-	if runCfg.Merge {
-		allEnriched := make([]Result, 0, len(rawResults))
-		for _, r := range rawResults {
-			ectx := EnrichContext{Engine: r.Engine, Query: q}
-			allEnriched = append(allEnriched, EnrichResult(r.SearchResult, ectx))
-		}
-		clusters := BuildClusters(allEnriched, len(enginesToUse))
-		if len(clusters) > 0 {
-			env.Clusters = &clusters
-		}
-	}
-
-	if format == "json" && s.cache != nil && !q.Extract && runCfg.Mode != megaModeFast {
-		c.Set("X-Cache", s.cacheMegaEnvelopeResults(action, enginesToUse, q, env, runCfg))
-	}
-
-	WithRequest(requestCtx).WithFields(logrus.Fields{
-		"action":        action,
-		"engines_count": len(enginesToUse),
-		"results_count": len(env.Results),
-	}).Info("Mega search completed")
-	return sendEnvelope(c, format, env)
-}
-
-func engineErrorNames(details []EngineErrorDetail) []string {
-	names := make([]string, 0, len(details))
-	for _, d := range details {
-		names = append(names, d.Engine)
-	}
-	return names
-}
-
-func megaFailureMessage(details []EngineErrorDetail) string {
-	if len(details) == 1 {
-		detail := strings.TrimSpace(details[0].Message)
-		if detail == "" {
-			detail = details[0].Error
-		}
-		if detail != "" {
-			return fmt.Sprintf("all selected engines failed; %s: %s", details[0].Engine, detail)
-		}
-	}
-	return ""
-}
-
-func parseMegaRunConfig(c *fiber.Ctx) (megaRunConfig, error) {
-	cfg := megaRunConfig{
-		Mode:   megaModeBalanced,
-		Dedupe: true,
-		Merge:  true,
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(c.Query("mode", megaModeBalanced)))
-	switch mode {
-	case "", megaModeBalanced:
-		cfg.Mode = megaModeBalanced
-	case megaModeAny:
-		cfg.Mode = megaModeAny
-	case megaModeFast:
-		cfg.Mode = megaModeFast
-	default:
-		return megaRunConfig{}, errInvalidParam("mode: must be one of fast, any, balanced")
-	}
-
-	if raw := strings.TrimSpace(c.Query("dedupe", "")); raw != "" {
-		value, err := strconv.ParseBool(raw)
-		if err != nil {
-			return megaRunConfig{}, errInvalidParam(fmt.Sprintf("dedupe: %v", err))
-		}
-		cfg.Dedupe = value
-	}
-
-	if raw := strings.TrimSpace(c.Query("merge", "")); raw != "" {
-		value, err := strconv.ParseBool(raw)
-		if err != nil {
-			return megaRunConfig{}, errInvalidParam(fmt.Sprintf("merge: %v", err))
-		}
-		cfg.Merge = value
-	}
-
-	return cfg, nil
-}
-
-func (s *Server) applyMegaMergePolicy(results []MegaSearchResult, engines []SearchEngine, cfg megaRunConfig) []MegaSearchResult {
-	if cfg.Merge || len(results) == 0 {
-		return results
-	}
-
-	byEngine := make(map[string]struct{}, len(results))
-	for _, r := range results {
-		byEngine[r.Engine] = struct{}{}
-	}
-
-	selected := ""
-	for _, eng := range engines {
-		if _, ok := byEngine[eng.Name()]; ok {
-			selected = eng.Name()
-			break
-		}
-	}
-	if selected == "" {
-		return []MegaSearchResult{}
-	}
-
-	filtered := make([]MegaSearchResult, 0, len(results))
-	for _, r := range results {
-		if r.Engine == selected {
-			filtered = append(filtered, r)
-		}
-	}
-	return filtered
-}
-
-func (s *Server) handleListEngines(c *fiber.Ctx) error {
-	var engines []map[string]interface{}
-
-	for _, engine := range s.searchEngines {
-		engineInfo := map[string]interface{}{
-			"name":        engine.Name(),
-			"initialized": engine.IsInitialized(),
-		}
-
-		for _, cbStat := range s.resilient.GetCircuitBreakerStats() {
-			engineName, _ := cbStat["engine"].(string)
-			if engineName == engine.Name() {
-				engineInfo["circuit_state"] = cbStat["state"]
-				break
-			}
-		}
-
-		engines = append(engines, engineInfo)
-	}
-
-	return c.JSON(map[string]interface{}{
-		"engines": engines,
-		"total":   len(engines),
-	})
-}
-
-func (s *Server) resolveEngines(ctx context.Context, enginesParam string) []SearchEngine {
-	if enginesParam == "" {
-		return s.searchEngines
-	}
-
-	var enginesToUse []SearchEngine
-	seen := make(map[string]bool)
-	engineNames := strings.Split(enginesParam, ",")
-	for _, name := range engineNames {
-		name = strings.TrimSpace(strings.ToLower(name))
-		if name == "" {
-			continue
-		}
-		// Dedupe on the resolved name so aliases of the same engine
-		// ("duck,ddg") don't run one engine twice.
-		name = resolveEngineAlias(name)
-		if seen[name] {
-			continue
-		}
-		matched := false
-		for _, engine := range s.searchEngines {
-			if strings.ToLower(engine.Name()) == name {
-				enginesToUse = append(enginesToUse, engine)
-				seen[name] = true
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			WithRequest(ctx).Warnf("Unknown engine %q requested, skipping", name)
-		}
-	}
-	return enginesToUse
-}
-
+// engineEndpointName maps an engine name to its public URL slug. 360 Search is
+// best known as "360"; serve /360/search and keep /so360/search working too.
 func engineEndpointName(name string) string {
 	name = strings.ToLower(name)
 	switch name {
-	case "duckduckgo":
-		return "duck"
 	case "so360":
-		// 360 Search is best known as "360"; serve /360/* and keep /so360/*
-		// (the canonical engine name) working too.
 		return "360"
 	}
 	return name
@@ -1298,8 +841,6 @@ func engineEndpointName(name string) string {
 
 func resolveEngineAlias(name string) string {
 	switch strings.ToLower(name) {
-	case "duck", "ddg":
-		return "duckduckgo"
 	case "360", "so", "so.com":
 		return "so360"
 	case "sougou":
@@ -1307,60 +848,6 @@ func resolveEngineAlias(name string) string {
 	default:
 		return strings.ToLower(name)
 	}
-}
-
-func (s *Server) deduplicateMegaResults(results []MegaSearchResult) []MegaSearchResult {
-	urlMap := make(map[string]MegaSearchResult)
-	order := []string{}
-
-	for _, result := range results {
-		if result.URL == "" {
-			continue
-		}
-		normalizedURL := NormalizeURLForClustering(result.URL)
-		if normalizedURL == "" {
-			continue
-		}
-		key := resultDedupKey(SearchResult{URL: normalizedURL, Ad: result.Ad})
-		existing, exists := urlMap[key]
-		if !exists {
-			urlMap[key] = result
-			order = append(order, key)
-			continue
-		}
-		if betterMegaResult(result, existing) {
-			urlMap[key] = result
-		}
-	}
-
-	deduped := make([]MegaSearchResult, 0, len(urlMap))
-	for _, key := range order {
-		deduped = append(deduped, urlMap[key])
-	}
-
-	sort.Slice(deduped, func(i, j int) bool {
-		if resultLess(deduped[i].SearchResult, deduped[j].SearchResult) {
-			return true
-		}
-		if resultLess(deduped[j].SearchResult, deduped[i].SearchResult) {
-			return false
-		}
-		if deduped[i].Engine != deduped[j].Engine {
-			return deduped[i].Engine < deduped[j].Engine
-		}
-		return NormalizeURLForClustering(deduped[i].URL) < NormalizeURLForClustering(deduped[j].URL)
-	})
-	return deduped
-}
-
-func betterMegaResult(candidate, current MegaSearchResult) bool {
-	if candidate.Rank > 0 && (current.Rank <= 0 || candidate.Rank < current.Rank) {
-		return true
-	}
-	if candidate.Rank == current.Rank && candidate.Engine < current.Engine {
-		return true
-	}
-	return false
 }
 
 type cacheHitCandidate struct {
@@ -1418,95 +905,6 @@ func (s *Server) cacheJSON(cacheKey string, payload interface{}) bool {
 	}
 	s.cache.Set(cacheKey, data)
 	return true
-}
-
-func (s *Server) cacheMegaEnvelopeResults(action string, enginesToUse []SearchEngine, q Query, env *Envelope, cfg megaRunConfig) string {
-	if s.cache == nil {
-		return ""
-	}
-	if ShouldBypassCacheForProxyMarket(q) {
-		s.cache.RecordBypass()
-		return "BYPASS"
-	}
-	if len(env.Results) == 0 {
-		s.cache.RecordBypass()
-		return "BYPASS"
-	}
-	cacheEngines := s.megaCacheableEngines(enginesToUse)
-	if len(cacheEngines) == 0 {
-		s.cache.RecordBypass()
-		return "BYPASS"
-	}
-	if s.cacheJSON(s.buildMegaCacheKey(action, cacheEngines, q, cfg), env) {
-		return "MISS"
-	}
-	return "BYPASS"
-}
-
-func (s *Server) cacheMegaImageResults(action string, enginesToUse []SearchEngine, q Query, env *ImageEnvelope, cfg megaRunConfig) string {
-	if s.cache == nil {
-		return ""
-	}
-	if ShouldBypassCacheForProxyMarket(q) {
-		s.cache.RecordBypass()
-		return "BYPASS"
-	}
-	if len(env.Results) == 0 {
-		s.cache.RecordBypass()
-		return "BYPASS"
-	}
-	cacheEngines := s.megaCacheableEngines(enginesToUse)
-	if len(cacheEngines) == 0 {
-		s.cache.RecordBypass()
-		return "BYPASS"
-	}
-	if s.cacheJSON(s.buildMegaCacheKey(action, cacheEngines, q, cfg), env) {
-		return "MISS"
-	}
-	return "BYPASS"
-}
-
-func (s *Server) buildMegaCacheKey(action string, engines []SearchEngine, q Query, cfg megaRunConfig) string {
-	names := make([]string, 0, len(engines))
-	for _, eng := range engines {
-		names = append(names, strings.ToLower(strings.TrimSpace(eng.Name())))
-	}
-	sort.Strings(names)
-
-	// Deduplicate engine names in key to keep cache stable when order differs
-	// or repeated names are passed in the engines query parameter.
-	uniq := names[:0]
-	last := ""
-	for _, name := range names {
-		if name == last {
-			continue
-		}
-		uniq = append(uniq, name)
-		last = name
-	}
-
-	prefix := fmt.Sprintf("mega:%s:%t:%t:%s", cfg.Mode, cfg.Merge, cfg.Dedupe, strings.Join(uniq, ","))
-	return BuildCacheKey(prefix, action, q)
-}
-
-func (s *Server) megaCacheableEngines(engines []SearchEngine) []SearchEngine {
-	open := make(map[string]bool)
-	for _, stat := range s.resilient.GetCircuitBreakerStats() {
-		name, _ := stat["engine"].(string)
-		state, _ := stat["state"].(string)
-		if strings.EqualFold(state, "open") {
-			open[strings.ToLower(strings.TrimSpace(name))] = true
-		}
-	}
-
-	cacheable := make([]SearchEngine, 0, len(engines))
-	for _, eng := range engines {
-		if open[strings.ToLower(strings.TrimSpace(eng.Name()))] {
-			continue
-		}
-		cacheable = append(cacheable, eng)
-	}
-	return cacheable
 }
 
 func (s *Server) cacheStatsPayload() interface{} {
@@ -1581,45 +979,6 @@ func (s *Server) validateRequestProxyURL(q *Query) error {
 	return nil
 }
 
-func (s *Server) handleOpenAPISpec(c *fiber.Ctx) error {
-	c.Set("Content-Type", "application/yaml; charset=utf-8")
-	return c.Send(apidocs.OpenAPIYAML)
-}
-
-func (s *Server) handleSwaggerUI(c *fiber.Ctx) error {
-	const specPath = "/openapi.yaml"
-	page := fmt.Sprintf(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Web2API API Docs</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
-  <style>
-    body { margin: 0; background: #f6f8fb; }
-    #swagger-ui { max-width: 1200px; margin: 0 auto; }
-  </style>
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
-  <script>
-    window.onload = function () {
-      window.ui = SwaggerUIBundle({
-        url: %q,
-        dom_id: "#swagger-ui",
-        deepLinking: true,
-        displayRequestDuration: true,
-        presets: [SwaggerUIBundle.presets.apis],
-      });
-    };
-  </script>
-</body>
-</html>`, html.EscapeString(specPath))
-	c.Set("Content-Type", "text/html; charset=utf-8")
-	return c.SendString(page)
-}
-
 // resolveFormat returns the output format from ?format= or Accept header.
 // Supported values: "json" (default), "markdown", "text", "ndjson".
 func resolveFormat(c *fiber.Ctx) (string, error) {
@@ -1664,26 +1023,387 @@ func sendEnvelope(c *fiber.Ctx, format string, env *Envelope) error {
 	}
 }
 
-// sendImageEnvelope is sendEnvelope for ImageEnvelope.
-func sendImageEnvelope(c *fiber.Ctx, format string, env *ImageEnvelope) error {
-	switch format {
-	case "markdown":
-		c.Set("Content-Type", "text/markdown; charset=utf-8")
-		return c.Send(RenderMarkdownImage(env))
-	case "text":
-		c.Set("Content-Type", "text/plain; charset=utf-8")
-		return c.Send(RenderTextImage(env))
-	case "ndjson":
-		c.Set("Content-Type", "application/x-ndjson; charset=utf-8")
-		return c.Send(RenderNDJSONImage(env))
-	default:
-		return c.JSON(env)
+// indexCheckRequestBody is the POST /v1/index/check JSON body.
+type indexCheckRequestBody struct {
+	URLs    []string `json:"urls"`
+	Engines []string `json:"engines"`
+}
+
+// parseIndexCheckRequest reads the request parameters for both supported
+// shapes: POST body {"urls":[...],"engines":[...]} and GET
+// ?url=...&engines=baidu,bing. It returns the URL list (trimmed, 1..20), the
+// requested engine names (may be empty = all engines), or a 400 APIError with
+// reason EMPTY_QUERY | TOO_MANY_URLS | INVALID_PARAM.
+func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
+	var (
+		rawURLs    []string
+		rawEngines []string
+	)
+	if c.Method() == fiber.MethodPost {
+		var body indexCheckRequestBody
+		if err := c.BodyParser(&body); err != nil {
+			return nil, nil, errInvalidParam(fmt.Sprintf(
+				"request body must be JSON: {\"urls\":[\"...\"],\"engines\":[\"...\"]}: %v", err))
+		}
+		rawURLs, rawEngines = body.URLs, body.Engines
+	} else {
+		if raw := c.Query("url"); strings.TrimSpace(raw) != "" {
+			rawURLs = []string{raw}
+		}
+		if engines := strings.TrimSpace(c.Query("engines")); engines != "" {
+			rawEngines = strings.Split(engines, ",")
+		}
 	}
+
+	urls := make([]string, 0, len(rawURLs))
+	for _, raw := range rawURLs {
+		urls = append(urls, strings.TrimSpace(raw))
+	}
+	switch {
+	case len(urls) == 0:
+		return nil, nil, errEmptyQuery()
+	case len(urls) > MaxIndexCheckURLs:
+		return nil, nil, errTooManyURLs(fmt.Sprintf("urls accepts at most %d entries, got %d", MaxIndexCheckURLs, len(urls)))
+	}
+	for i, u := range urls {
+		if _, ok := indexURLKeyFrom(u); !ok {
+			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q is not a valid absolute URL", i, u))
+		}
+	}
+	return urls, rawEngines, nil
+}
+
+// IndexCheckHandler serves the public index-status API:
+//
+//	POST /v1/index/check  body {"urls":["..."](1..20),"engines":["baidu","sogou","so360","bing"](optional)}
+//	GET  /v1/index/check?url=...&engines=baidu,bing
+//
+// Every (URL × engine) unit runs through the resilient pipeline; engine-level
+// failures (403/429/captcha/circuit open/cooldown/timeout) are reported inside
+// that unit's error field and the HTTP status stays 200 — unless EVERY
+// selected engine is cooling, when the whole request 503s with
+// engine_cooldown + Retry-After. Authentication, quota accounting, and route
+// registration are owned by the platform module. The response structure is
+// byte-identical to POST /api/playground/check and the MCP check_indexed tool
+// because all three mount points share CheckIndexBatch.
+func (s *Server) IndexCheckHandler(c *fiber.Ctx) error {
+	startedAt := time.Now()
+	requestCtx := withRequestUsage(c.UserContext(), "index_check")
+	c.SetUserContext(requestCtx)
+
+	urls, rawEngines, apiErr := parseIndexCheckRequest(c)
+	if apiErr != nil {
+		WithRequest(requestCtx).WithField("reason", apiErr.Reason).Warn("Invalid index check parameters")
+		return apiErr
+	}
+
+	payload, err := s.CheckIndexBatch(requestCtx, urls, rawEngines)
+	if err != nil {
+		return err
+	}
+	WithRequest(requestCtx).WithField("took_ms", time.Since(startedAt).Milliseconds()).Info("Index check completed")
+	return c.JSON(payload)
+}
+
+// CheckIndexBatch is the shared index-check orchestration used by
+// /v1/index/check, POST /api/playground/check and the MCP check_indexed tool.
+// urls must be 1..20 absolute URLs; engines holds the raw requested names
+// (nil/empty = every available engine). It returns an IndexCheckResponse, or
+// an *APIError: 400 for invalid parameters, 503 engine_cooldown (with
+// Retry-After and meta.engines_cooldown) when every selected engine is
+// currently cooling.
+func (s *Server) CheckIndexBatch(ctx context.Context, urls []string, engines []string) (any, error) {
+	startedAt := time.Now()
+	requestCtx := withRequestUsage(ctx, "index_check")
+
+	urls, apiErr := validateIndexCheckURLs(urls)
+	if apiErr != nil {
+		WithRequest(requestCtx).WithField("reason", apiErr.Reason).Warn("Invalid index check parameters")
+		return nil, apiErr
+	}
+	selected, selErr := SelectIndexCheckEngines(s.searchEngines, engines)
+	if selErr != nil {
+		WithRequest(requestCtx).WithField("reason", selErr.Reason).Warn("Invalid index check engines")
+		return nil, selErr
+	}
+
+	requestID := RequestIDFromContext(requestCtx)
+	WithRequest(requestCtx).WithFields(logrus.Fields{
+		"urls":    len(urls),
+		"engines": len(selected),
+		"units":   len(urls) * len(selected),
+	}).Info("Index check started")
+
+	// 契约 A batch semantics: only when EVERY selected engine is cooling does
+	// the whole request 503 (fail fast, zero engine contact). Otherwise units
+	// of cooling engines answer engine_cooldown while the rest still judge.
+	if cooling := s.coolingEntriesFor(selected); len(selected) > 0 && len(cooling) == len(selected) {
+		err := errCooldownBatchAsAPIError(&engineCooldownBatchError{
+			RetryAfterSeconds: retryAfterSecondsFor(cooling, time.Now()),
+			Cooldowns:         cooling,
+		})
+		WithRequest(requestCtx).WithField("engines", strings.Join(IndexCheckEngineNames(selected), ",")).Info("All requested engines in cooldown, failing fast")
+		return nil, err
+	}
+
+	results := RunIndexCheckUnits(requestCtx, s.resilient, selected, urls)
+
+	WithRequest(requestCtx).WithField("took_ms", time.Since(startedAt).Milliseconds()).Info("Index check completed")
+	return IndexCheckResponse{
+		ID:        requestID,
+		CreatedAt: startedAt.UTC().Format(time.RFC3339),
+		Results:   results,
+		Meta: IndexCheckMeta{
+			RequestID:       requestID,
+			TookMs:          time.Since(startedAt).Milliseconds(),
+			Units:           len(urls) * len(selected),
+			EnginesCooldown: s.enginesCooldownMeta(),
+		},
+	}, nil
+}
+
+// validateIndexCheckURLs applies the platform URL rules (trim, 1..20 entries,
+// absolute URL) shared by the fiber request parser and CheckIndexBatch.
+func validateIndexCheckURLs(urls []string) ([]string, *APIError) {
+	cleaned := make([]string, 0, len(urls))
+	for _, raw := range urls {
+		cleaned = append(cleaned, strings.TrimSpace(raw))
+	}
+	switch {
+	case len(cleaned) == 0:
+		return nil, errEmptyQuery()
+	case len(cleaned) > MaxIndexCheckURLs:
+		return nil, errTooManyURLs(fmt.Sprintf("urls accepts at most %d entries, got %d", MaxIndexCheckURLs, len(cleaned)))
+	}
+	for i, u := range cleaned {
+		if _, ok := indexURLKeyFrom(u); !ok {
+			return nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q is not a valid absolute URL", i, u))
+		}
+	}
+	return cleaned, nil
+}
+
+// engineByName resolves a requested engine name (alias-aware: 360/so/so.com →
+// so360, sougou → sogou) against the registered engines; nil when unknown.
+func (s *Server) engineByName(name string) SearchEngine {
+	wanted := resolveEngineAlias(strings.TrimSpace(name))
+	for _, engine := range s.searchEngines {
+		if strings.ToLower(engine.Name()) == wanted {
+			return engine
+		}
+	}
+	return nil
+}
+
+// coolingEntriesFor renders meta.engines_cooldown entries for the given
+// engines (registration order) that are currently cooling.
+func (s *Server) coolingEntriesFor(engines []SearchEngine) []EngineCooldownEntry {
+	entries := make([]EngineCooldownEntry, 0, len(engines))
+	for _, engine := range engines {
+		st := s.resilient.EngineCooldownStatus(engine.Name())
+		if st.InCooldown {
+			entries = append(entries, cooldownEntryFromStatus(engine.Name(), st))
+		}
+	}
+	return entries
+}
+
+// enginesCooldownMeta renders meta.engines_cooldown for ALL registered engines
+// currently cooling (nil when none — omitted from JSON).
+func (s *Server) enginesCooldownMeta() []EngineCooldownEntry {
+	return s.coolingEntriesFor(s.searchEngines)
+}
+
+// SearchViaEngine runs one search through the existing resilient pipeline for
+// the named engine with the cooldown gate applied (契约 A seam for the MCP
+// web_search tool). It returns LLM-ready result maps
+// ({"rank","title","url","snippet"}) or an *APIError (400 unknown engine /
+// empty query, 503 engine_cooldown with Retry-After, or the mapped search
+// error).
+func (s *Server) SearchViaEngine(ctx context.Context, engineName, text string, limit int) ([]map[string]any, error) {
+	engine := s.engineByName(engineName)
+	if engine == nil {
+		return nil, errInvalidParam(fmt.Sprintf(
+			"unknown engine %q: available engines are %s",
+			strings.TrimSpace(engineName), strings.Join(IndexCheckEngineNames(s.searchEngines), ", ")))
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, errEmptyQuery()
+	}
+	if limit <= 0 {
+		limit = defaultQueryLimit
+	}
+	if limit > MaxQueryLimit {
+		limit = MaxQueryLimit
+	}
+
+	requestCtx := withRequestUsage(ctx, engine.Name())
+	gate, gateErr := s.resilient.GateEngine(requestCtx, engine.Name())
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	if gate.Blocked() {
+		return nil, s.errEngineCooldownForServer(engine.Name(), gate)
+	}
+
+	q := Query{Text: strings.TrimSpace(text), Limit: limit, ResolveConfig: &s.opts.ResolveConfig}
+	results, _, _, searchErr := s.resilient.SearchPrimary(requestCtx, engine, q)
+	if gate.IsProbe() {
+		gate.FinishProbe(searchErr)
+	}
+	if searchErr != nil {
+		WithRequest(requestCtx).WithError(searchErr).Error("Search failed")
+		return nil, searchAPIError(searchErr, engine.Name(), q, ProxyExecutionMeta{})
+	}
+
+	out := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		out = append(out, map[string]any{
+			"rank":    r.Rank,
+			"title":   r.Title,
+			"url":     r.URL,
+			"snippet": r.Description,
+		})
+	}
+	return out, nil
+}
+
+// EnginesStatusWithCooldown renders GET /api/engines (契约 A 管理面): one entry
+// per registered engine with the cooldown extension fields
+// {state:"ok|cooldown|circuit_open", until, reason, consecutive_blocks,
+// last_error_at} on top of the shared engine/endpoint/enabled/breaker block.
+// until/last_error_at are RFC3339 UTC strings (null when absent); reason is
+// "COOLDOWN"|"FORCED" ("" when ok).
+func (s *Server) EnginesStatusWithCooldown() any {
+	breakers := make(map[string]map[string]interface{}, len(s.searchEngines))
+	for _, stat := range s.resilient.GetCircuitBreakerStats() {
+		if name, _ := stat["engine"].(string); name != "" {
+			breakers[name] = stat
+		}
+	}
+
+	snapshot := make([]map[string]interface{}, 0, len(s.searchEngines))
+	for _, engine := range s.searchEngines {
+		breaker := map[string]interface{}{
+			"engine":        engine.Name(),
+			"state":         "closed",
+			"failure_count": 0,
+		}
+		if stat, ok := breakers[engine.Name()]; ok {
+			breaker = stat
+		}
+		breakerState, _ := breaker["state"].(string)
+
+		cooldown := s.resilient.EngineCooldownStatus(engine.Name())
+		state := "ok"
+		switch {
+		case cooldown.InCooldown:
+			state = "cooldown"
+		case breakerState == "open":
+			state = "circuit_open"
+		}
+
+		until := interface{}(nil)
+		reason := ""
+		if cooldown.InCooldown {
+			until = cooldown.Until.UTC().Format(time.RFC3339)
+			reason = cooldown.Reason
+		}
+		lastErrorAt := interface{}(nil)
+		if !cooldown.LastErrorAt.IsZero() {
+			lastErrorAt = cooldown.LastErrorAt.UTC().Format(time.RFC3339)
+		}
+
+		snapshot = append(snapshot, map[string]interface{}{
+			"engine":             engine.Name(),
+			"endpoint":           fmt.Sprintf("%s/%s/search", BasePath, engineEndpointName(engine.Name())),
+			"enabled":            engine.IsInitialized(),
+			"breaker":            breaker,
+			"state":              state,
+			"until":              until,
+			"reason":             reason,
+			"consecutive_blocks": cooldown.ConsecutiveBlocks,
+			"last_error_at":      lastErrorAt,
+		})
+	}
+	return snapshot
+}
+
+// ResetCooldown force-recovers the named engine's cooldown (契约 A 管理面).
+func (s *Server) ResetCooldown(name string) error {
+	engine := s.engineByName(name)
+	if engine == nil {
+		return errInvalidParam(fmt.Sprintf("unknown engine %q: available engines are %s",
+			strings.TrimSpace(name), strings.Join(IndexCheckEngineNames(s.searchEngines), ", ")))
+	}
+	s.resilient.ResetCooldown(engine.Name())
+	logrus.WithField("engine", engine.Name()).Info("Engine cooldown reset by admin")
+	return nil
+}
+
+// ForceCooldown puts the named engine into a maintenance-window cooldown for
+// the given minutes (契约 A 管理面). minutes must be positive.
+func (s *Server) ForceCooldown(name string, minutes int) error {
+	engine := s.engineByName(name)
+	if engine == nil {
+		return errInvalidParam(fmt.Sprintf("unknown engine %q: available engines are %s",
+			strings.TrimSpace(name), strings.Join(IndexCheckEngineNames(s.searchEngines), ", ")))
+	}
+	if minutes <= 0 {
+		return errInvalidParam(fmt.Sprintf("minutes must be > 0, got %d", minutes))
+	}
+	s.resilient.ForceCooldown(engine.Name(), minutes)
+	logrus.WithFields(logrus.Fields{"engine": engine.Name(), "minutes": minutes}).Info("Engine forced into cooldown by admin")
+	return nil
 }
 
 // SetDraining controls readiness state exposed by /ready.
 func (s *Server) SetDraining(draining bool) {
 	s.draining.Store(draining)
+}
+
+// FiberApp exposes the underlying fiber app so the serve command can mount the
+// platform API groups (/api/*, /v1/*) and the admin panel static files under
+// the same BasePath as the routes registered here. API groups are registered
+// before the static wildcard so API routes take priority.
+func (s *Server) FiberApp() *fiber.App {
+	return s.app
+}
+
+// EngineStatusSnapshot is the reusable engine list + circuit-breaker state
+// source shared by GET /web-tool/v1/engines (public) and GET /web-tool/api/engines
+// (admin). It returns one entry per registered engine, in registration order:
+//
+//	{"engine": "baidu", "endpoint": "/web-tool/baidu/search", "enabled": true,
+//	 "breaker": {"engine": "baidu", "state": "closed", "failure_count": 0, ...}}
+//
+// Engines without a created breaker yet report a closed breaker.
+func (s *Server) EngineStatusSnapshot() any {
+	breakers := make(map[string]map[string]interface{}, len(s.searchEngines))
+	for _, stat := range s.resilient.GetCircuitBreakerStats() {
+		if name, _ := stat["engine"].(string); name != "" {
+			breakers[name] = stat
+		}
+	}
+
+	snapshot := make([]map[string]interface{}, 0, len(s.searchEngines))
+	for _, engine := range s.searchEngines {
+		breaker := map[string]interface{}{
+			"engine":        engine.Name(),
+			"state":         "closed",
+			"failure_count": 0,
+		}
+		if stat, ok := breakers[engine.Name()]; ok {
+			breaker = stat
+		}
+		snapshot = append(snapshot, map[string]interface{}{
+			"engine":   engine.Name(),
+			"endpoint": fmt.Sprintf("%s/%s/search", BasePath, engineEndpointName(engine.Name())),
+			"enabled":  engine.IsInitialized(),
+			"breaker":  breaker,
+		})
+	}
+	return snapshot
 }
 
 const defaultShutdownTimeout = 30 * time.Second

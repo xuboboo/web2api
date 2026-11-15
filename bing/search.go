@@ -2,7 +2,6 @@ package bing
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -41,7 +40,7 @@ func (bing *Bing) Name() string {
 }
 
 // checkCaptcha classifies the live page with classifyBingDocument
-// (parse_html.go), so /bing/search and /bing/parse agree.
+// (parse_html.go), the same classifier the browser search path uses.
 func (bing *Bing) checkCaptcha(page *rod.Page) bool {
 	if page == nil {
 		return false
@@ -298,149 +297,4 @@ func (bing *Bing) parsePage(ctx context.Context, page *rod.Page, url string, loa
 		}
 	}
 	return results, nil
-}
-
-// BingImageData represents metadata encoded in the image result `m` attribute.
-type BingImageData struct {
-	T      string `json:"t"`      // Title
-	Desc   string `json:"desc"`   // Description
-	IMGURL string `json:"imgurl"` // Original image URL
-	W      int    `json:"w"`      // Width
-	H      int    `json:"h"`      // Height
-	PURL   string `json:"purl"`   // Page URL
-	TURL   string `json:"turl"`   // Thumbnail URL
-	MURL   string `json:"murl"`   // Image URL
-}
-
-func resolveImageLinkElement(container *rod.Element) (*rod.Element, error) {
-	if container == nil {
-		return nil, errors.New("nil image container")
-	}
-	if core.HasAttribute(container, "m") {
-		return container, nil
-	}
-	return container.Element("a")
-}
-
-// SearchImage executes a Bing image search and returns normalized image
-// results. It may return core.ErrCaptcha or core.ErrSearchTimeout.
-func (bing *Bing) SearchImage(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
-	ctx = core.PrepareEngineContext(ctx, query, bing.Name())
-	scoped := *bing
-	scoped.logger = bing.logger.WithRequest(ctx)
-	bing = &scoped
-
-	bing.logger.Debug("Starting image search, query: %+v", query)
-
-	searchResults := []core.SearchResult{}
-
-	// Build Bing image search URL
-	url, err := BuildImageURL(query)
-	if err != nil {
-		return nil, err
-	}
-
-	page, err := bing.Navigate(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	defer core.DeferClosePage(ctx, page, &bing.Browser)()
-
-	// Check for captcha
-	if bing.checkCaptcha(page) {
-		bing.logger.Error("Captcha detected during image search: %s", url)
-		return nil, core.ErrCaptcha
-	}
-
-	// Accept cookies if present
-	if err := bing.acceptCookies(ctx, page); err != nil {
-		return nil, err
-	}
-
-	imageContainers, _, err := core.WaitForElements(
-		ctx,
-		page,
-		[]string{Selectors.ImageResults},
-		bing.GetSelectorTimeout(),
-	)
-	if err != nil {
-		if bing.checkCaptcha(page) {
-			return nil, core.ErrCaptcha
-		}
-		bing.logger.Error("Cannot parse image results: %s", err)
-		return nil, core.ErrSearchTimeout
-	}
-
-	if len(imageContainers) == 0 {
-		return nil, errors.New("no image results found")
-	}
-
-	bing.logger.Info("Found %d image elements", len(imageContainers))
-
-	rank := 0
-	// The selector list matches a tile's div and the a.iusc inside it, and both
-	// resolve to the same anchor, so every tile arrives twice.
-	seen := make(map[string]struct{}, len(imageContainers))
-	for _, c := range imageContainers {
-		srchRes := core.SearchResult{}
-
-		linkElem, err := resolveImageLinkElement(c)
-		if err != nil {
-			bing.logger.Debug("Missing image link element")
-			continue
-		}
-
-		// Extract image metadata from m attribute (contains JSON)
-		mAttr, err := linkElem.Attribute("m")
-		if err != nil || mAttr == nil {
-			bing.logger.Debug("Missing m attribute")
-			continue
-		}
-
-		// Ensure we have valid JSON data to unmarshal
-		jsonData := []byte(*mAttr)
-		if len(jsonData) == 0 {
-			bing.logger.Debug("Empty JSON data")
-			continue
-		}
-
-		// Initialize imgData properly
-		var imgData BingImageData
-		err = json.Unmarshal(jsonData, &imgData)
-		if err != nil {
-			bing.logger.Debug("Failed to parse JSON: %s", err)
-			continue
-		}
-
-		// Extract information from the parsed data
-		srchRes.Title = imgData.T
-		srchRes.URL = imgData.IMGURL
-		srchRes.Description = fmt.Sprintf(
-			"%s Source Page: %s, thumb_url:%s, %dx%d",
-			imgData.Desc,
-			imgData.PURL,
-			imgData.TURL,
-			imgData.W,
-			imgData.H,
-		)
-
-		// Get the page URL
-		if imgData.MURL != "" {
-			srchRes.URL = imgData.MURL
-		}
-		if _, dup := seen[srchRes.URL]; dup {
-			continue
-		}
-		seen[srchRes.URL] = struct{}{}
-
-		rank++
-		srchRes.Rank = rank
-
-		searchResults = append(searchResults, srchRes)
-		if query.Limit > 0 && len(searchResults) >= query.Limit {
-			break
-		}
-	}
-
-	return searchResults, nil
 }

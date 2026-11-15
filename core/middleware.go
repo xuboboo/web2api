@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,9 @@ type JSONErrorResponse struct {
 	Message   string                 `json:"message,omitempty"`
 	Reason    string                 `json:"reason,omitempty"`
 	Meta      map[string]interface{} `json:"meta,omitempty"`
+	// RetryAfterSeconds is set (>0) on 429/503 errors that carry a Retry-After
+	// header (engine cooldown, quota, rate limiting).
+	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
 }
 
 type CORSConfig struct {
@@ -70,12 +74,9 @@ func RequestContextMiddleware() fiber.Handler {
 
 // RequestTimeoutMiddleware bounds wall-clock time per request by attaching a
 // deadline to the user context, which fasthttp never cancels on client
-// disconnect. /mega/* (MegaTimeout) and /extract* (batch budget) are exempt.
+// disconnect.
 func RequestTimeoutMiddleware(timeout time.Duration) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if strings.HasPrefix(c.Path(), "/mega/") || c.Path() == "/extract" || c.Path() == "/extract/batch" {
-			return c.Next()
-		}
 		ctx, cancel := context.WithTimeout(c.UserContext(), timeout)
 		defer cancel()
 		c.SetUserContext(ctx)
@@ -197,7 +198,9 @@ func JSONErrorMiddleware() fiber.ErrorHandler {
 			code = e.Code
 		}
 		isAPIError := false
-		if apiErr, ok := err.(*APIError); ok {
+		var apiErr *APIError
+		if e, ok := err.(*APIError); ok {
+			apiErr = e
 			code = apiErr.HTTPStatus
 			errorCode = apiErr.ErrorCode
 			reason = apiErr.Reason
@@ -235,6 +238,12 @@ func JSONErrorMiddleware() fiber.ErrorHandler {
 			Message:   message,
 			Reason:    reason,
 			Meta:      meta,
+		}
+		if isAPIError {
+			if apiErr.RetryAfterSeconds > 0 {
+				c.Set(fiber.HeaderRetryAfter, strconv.Itoa(apiErr.RetryAfterSeconds))
+				resp.RetryAfterSeconds = apiErr.RetryAfterSeconds
+			}
 		}
 
 		c.Set("Content-Type", "application/json")

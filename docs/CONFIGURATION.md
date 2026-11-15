@@ -14,7 +14,10 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `app.browser_path` | `WEB2API_APP_BROWSER_PATH` |
 | `baidu.disabled` | `WEB2API_BAIDU_DISABLED` |
 | `sogou.rate_requests` | `WEB2API_SOGOU_RATE_REQUESTS` |
-| `google.resolve_urls` | `WEB2API_GOOGLE_RESOLVE_URLS` |
+| `platform.admin_password` | `WEB2API_PLATFORM_ADMIN_PASSWORD` |
+
+> 注意:整个应用固定部署在 `/web-tool` 子路径下(代码内常量 `core.BasePath`),
+> 没有 `base_path` 之类的配置项,也不支持根路径挂载。
 
 下文“默认值”指代码内置默认（`cmd/root.go` 的 `setConfigDefaults` 与 `core.SearchEngineOptions.Init`），“本仓库”指仓库自带 `config.yaml` 的实际取值。
 
@@ -48,20 +51,20 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `debug_endpoints` | `false` | — | 开启 `/debug/fingerprint-check` |
 | `max_processes` | `4` | `6` | 并发 Chrome 进程上限 |
 | `idle_ttl` | `10m` | `5m` | 空闲 Chrome 回收时间 |
-| `mega_timeout` | `90s` | `90s` | `/mega/*` 总预算，超时返回部分结果 |
 
-## extract（`/extract`、`/extract/batch`、内联 `extract=N`）
+## platform（收录查询平台：管理面板 + /v1/* 公网 API + /api/* 管理 API）
 
 | 键 | 默认值 | 本仓库 | 说明 |
 | --- | --- | --- | --- |
-| `enabled` | `true` | `true` | 关闭后端点返回 404 |
-| `default_mode` | `auto` | `auto` | `auto/fast/rendered` |
-| `timeout` | `20s` | `20s` | 单页面提取超时 |
-| `max_bytes` | `2000000` | `2000000` | 抓取字节上限 |
-| `max_concurrent` | `2` | `2` | 并发提取数 |
-| `allow_private_networks` | `false` | — | 允许抓取内网地址（默认禁止） |
+| `enabled` | `true` | `true` | 关闭后不挂载 `/api/*` 与 `/v1/*`，面板静态页与健康端点仍可用 |
+| `data_dir` | `./data` | `./data` | bbolt 数据库 `web2api.db`、JWT 密钥 `secret.key` 的存放目录 |
+| `admin_username` | `admin` | `admin` | 面板管理员登录名 |
+| `admin_password` | `admin123` | `admin123` | 面板管理员密码（生产环境务必修改） |
+| `jwt_expire_hours` | `24` | `24` | 管理员 JWT 有效期（小时） |
 
-批量端点单次最多 20 个 URL（硬编码 `maxBatchExtractURLs`）。
+说明:存储主路径为 bbolt(纯 Go 无 CGO),打开失败时自动回退等价 JSON 文件存储
+(`<data_dir>/web2api.json`),接口不变。API key 只存 SHA-256 哈希,完整 key 仅在
+创建时返回一次。1 URL × 1 引擎 = 1 unit;`daily_quota=0` 为不限。
 
 ## proxies
 
@@ -110,7 +113,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 
 ## 引擎通用配置
 
-每个引擎（`google` `yandex` `baidu` `bing` `duckduckgo` `ecosia` `sogou` `so360`）都支持：
+每个引擎（`baidu` `sogou` `so360` `bing`）都支持：
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -121,22 +124,13 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `captcha` | `false` | 引擎级验证码求解开关 |
 | `profile` | 空（自动选） | 固定浏览器指纹，如 `chrome-win-uhd620` |
 | `proxy` | 空 | 绑定 `proxies.entries` 中的 tag |
-| `disabled` | `false` | 关闭后不注册端点、不参与 mega |
+| `disabled` | `false` | 关闭后不注册端点 |
 
 ### Bing 额外项
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
 | `bing.search_box` | `true` | 通过首页搜索框提交查询（更贴近真实用户，避免不相干结果） |
-
-### Google 额外项
-
-| 键 | 默认值 | 说明 |
-| --- | --- | --- |
-| `google.resolve_urls` | `true` | 解析 Google 跳转链接：`true`/`false`/`N` |
-| `google.resolve_concurrency` | `4` | 并发解析数 |
-| `google.resolve_timeout` | `3s` | 单次解析预算 |
-| `google.resolve_cooldown` | `10m` | 命中挑战后的冷却时间 |
 
 ## 本仓库的实际取值（摘要）
 
@@ -145,8 +139,8 @@ baidu: { rate_requests: 12, rate_burst: 2, profile: chrome-win-uhd620 }
 bing:  { rate_requests: 60, rate_burst: 3, search_box: true }
 sogou: { rate_requests: 8,  rate_burst: 1, profile: chrome-win-uhd620 }
 so360: { rate_requests: 20, rate_burst: 2, profile: chrome-win-uhd620 }
-google/yandex/duckduckgo/ecosia: { disabled: true }
 circuit_breaker: { failures: 8, recovery_seconds: 20, successes: 1 }
+platform: { enabled: true, data_dir: ./data, admin_username: admin, admin_password: admin123, jwt_expire_hours: 24 }
 ```
 
 ## 其它环境变量

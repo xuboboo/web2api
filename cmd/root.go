@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xuboboo/web2api/core"
-	browserprofile "github.com/xuboboo/web2api/core/browser"
-	extractpkg "github.com/xuboboo/web2api/extract"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"github.com/xuboboo/web2api/core"
+	browserprofile "github.com/xuboboo/web2api/core/browser"
+	"github.com/xuboboo/web2api/platform"
 )
 
 const (
@@ -24,25 +24,34 @@ const (
 )
 
 type Config struct {
-	Server           ServerConfig         `mapstructure:"server"`
-	App              AppConfig            `mapstructure:"app"`
-	Proxies          core.ProxiesConfig   `mapstructure:"proxies"`
-	Cache            CacheConfig          `mapstructure:"cache"`
-	Extract          extractpkg.Config    `mapstructure:"extract"`
-	Resilience       ResilienceConfig     `mapstructure:"resilience"`
-	CircuitBreaker   CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	CORS             CORSConfig           `mapstructure:"cors"`
-	Captcha          CaptchaConfig        `mapstructure:"captcha"`
-	Config2Capcha    Config2Captcha       `mapstructure:"2captcha"`
-	GoogleConfig     GoogleConfig         `mapstructure:"google"`
-	YandexConfig     EngineConfig         `mapstructure:"yandex"`
-	BaiduConfig      EngineConfig         `mapstructure:"baidu"`
-	BingConfig       BingConfig           `mapstructure:"bing"`
-	DuckDuckGoConfig EngineConfig         `mapstructure:"duckduckgo"`
-	EcosiaConfig     EngineConfig         `mapstructure:"ecosia"`
+	Server         ServerConfig         `mapstructure:"server"`
+	App            AppConfig            `mapstructure:"app"`
+	Proxies        core.ProxiesConfig   `mapstructure:"proxies"`
+	Cache          CacheConfig          `mapstructure:"cache"`
+	Resilience     ResilienceConfig     `mapstructure:"resilience"`
+	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
+	CORS           CORSConfig           `mapstructure:"cors"`
+	Captcha        CaptchaConfig        `mapstructure:"captcha"`
+	Config2Capcha  Config2Captcha       `mapstructure:"2captcha"`
+	BaiduConfig    EngineConfig         `mapstructure:"baidu"`
+	BingConfig     BingConfig           `mapstructure:"bing"`
 	// Mainland-China engines.
 	SogouConfig EngineConfig `mapstructure:"sogou"`
 	So360Config EngineConfig `mapstructure:"so360"`
+
+	// Platform backs the 收录查询平台: API keys, quotas, usage journal, admin
+	// auth (JWT) and the static admin panel data. Field names are fixed by the
+	// product contract and map 1:1 onto the config.yaml `platform:` node.
+	Platform platform.PlatformConfig `mapstructure:"platform"`
+
+	// Stability carries the engine cooldown state machine knobs (契约 A):
+	// stability.engine_cooldown.{steps_minutes, reset_after_minutes}.
+	Stability core.StabilityConfig `mapstructure:"stability"`
+
+	// Security carries the platform hardening knobs (契约 B) plus the optional
+	// data-plane auth switch: security.{admin_rate_per_minute, data_plane_auth,
+	// login_lockout.{fails, minutes}}.
+	Security platform.SecurityConfig `mapstructure:"security"`
 }
 
 type Config2Captcha struct {
@@ -75,19 +84,13 @@ type AppConfig struct {
 	SaveLog        bool          `mapstructure:"save_log"`
 	MaxProcesses   int           `mapstructure:"max_processes"`
 	IdleTTL        time.Duration `mapstructure:"idle_ttl"`
-	MegaTimeout    time.Duration `mapstructure:"mega_timeout"`
 }
 
 type EngineConfig struct {
 	core.SearchEngineOptions `mapstructure:",squash"`
 	Proxy                    string `mapstructure:"proxy"`
-	// Disabled leaves the engine out of serve: no endpoints, not used by mega.
+	// Disabled leaves the engine out of serve: no endpoints registered.
 	Disabled bool `mapstructure:"disabled"`
-}
-
-type GoogleConfig struct {
-	EngineConfig          `mapstructure:",squash"`
-	core.URLResolveConfig `mapstructure:",squash"`
 }
 
 type BingConfig struct {
@@ -152,13 +155,12 @@ var flagToConfigKey = map[string]string{
 	"cb_recovery":             "circuit_breaker.recovery_seconds",
 	"cb_successes":            "circuit_breaker.successes",
 	"log_format":              "app.log_format",
-	"resolve-urls":            "google.resolve_urls",
 }
 
 var RootCmd = &cobra.Command{
 	Use:          "web2api",
 	Short:        "Web2API",
-	Long:         `Get [Google, Yandex, Baidu] search engine results via API or CLI.`,
+	Long:         `Get [Baidu, Sogou, 360, Bing] search engine results via API or CLI.`,
 	Version:      version,
 	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -233,7 +235,6 @@ func sanitizedConfigForLog(cfg Config) map[string]interface{} {
 			"save_log":        cfg.App.SaveLog,
 			"max_processes":   cfg.App.MaxProcesses,
 			"idle_ttl":        cfg.App.IdleTTL.String(),
-			"mega_timeout":    cfg.App.MegaTimeout.String(),
 		},
 		"proxies": map[string]interface{}{
 			"global":                  maskedProxyForLog(cfg.Proxies.Global),
@@ -243,7 +244,6 @@ func sanitizedConfigForLog(cfg Config) map[string]interface{} {
 			"lanes":                   cfg.Proxies.Lanes,
 		},
 		"cache":           cfg.Cache,
-		"extract":         cfg.Extract,
 		"resilience":      cfg.Resilience,
 		"circuit_breaker": cfg.CircuitBreaker,
 		"cors":            cfg.CORS,
@@ -251,14 +251,20 @@ func sanitizedConfigForLog(cfg Config) map[string]interface{} {
 		"2captcha": map[string]interface{}{
 			"apikey_configured": strings.TrimSpace(cfg.Config2Capcha.ApiKey) != "",
 		},
-		"google":     cfg.GoogleConfig,
-		"yandex":     cfg.YandexConfig,
-		"baidu":      cfg.BaiduConfig,
-		"bing":       cfg.BingConfig,
-		"duckduckgo": cfg.DuckDuckGoConfig,
-		"ecosia":     cfg.EcosiaConfig,
-		"sogou":      cfg.SogouConfig,
-		"so360":      cfg.So360Config,
+		"baidu": cfg.BaiduConfig,
+		"bing":  cfg.BingConfig,
+		"sogou": cfg.SogouConfig,
+		"so360": cfg.So360Config,
+		"platform": map[string]interface{}{
+			"enabled":              cfg.Platform.Enabled,
+			"data_dir":             cfg.Platform.DataDir,
+			"admin_username":       cfg.Platform.AdminUsername,
+			"admin_password_set":   strings.TrimSpace(cfg.Platform.AdminPassword) != "",
+			"jwt_expire_hours":     cfg.Platform.JWTExpireHours,
+			"usage_retention_days": cfg.Platform.UsageRetentionDays,
+		},
+		"stability": cfg.Stability,
+		"security":  cfg.Security,
 	}
 }
 
@@ -368,14 +374,6 @@ func initializeConfig(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("cannot unmarshall config: %v", err)
 	}
-	// Keep boolean true distinct from integer 1 (top one result).
-	config.GoogleConfig.URLs = v.GetString("google.resolve_urls")
-	if _, _, err := core.ParseResolveURLs(config.GoogleConfig.URLs); err != nil {
-		return fmt.Errorf("invalid google.resolve_urls: %w", err)
-	}
-	if config.GoogleConfig.Concurrency <= 0 || config.GoogleConfig.Timeout <= 0 || config.GoogleConfig.Cooldown <= 0 {
-		return fmt.Errorf("google.resolve_concurrency, google.resolve_timeout and google.resolve_cooldown must be positive")
-	}
 
 	if _, err := core.ParseBlockedResourceTypes(config.App.BlockResources); err != nil {
 		return fmt.Errorf("invalid app.block_resources: %w", err)
@@ -390,7 +388,7 @@ func initializeConfig(cmd *cobra.Command) error {
 }
 
 func validateEngineProxyTags(v *viper.Viper) error {
-	for _, engineName := range []string{"google", "yandex", "baidu", "bing", "duckduckgo", "ecosia", "sogou", "so360"} {
+	for _, engineName := range []string{"baidu", "bing", "sogou", "so360"} {
 		key := engineName + ".proxy"
 		if !v.IsSet(key) {
 			continue
@@ -425,16 +423,10 @@ func validateRemovedConfigPaths(v *viper.Viper) error {
 		"proxies.defaults":             "use proxies.global or per-engine proxy tags instead",
 		"proxies.defaults.mode":        "use proxies.global or per-engine proxy tags instead",
 		"proxies.defaults.tag":         "use per-engine proxy tags on each engine instead",
-		"google.proxy.mode":            "use google.proxy: <tag> or omit it for direct mode",
-		"google.proxy.tag":             "use google.proxy: <tag>",
-		"yandex.proxy.mode":            "use yandex.proxy: <tag> or omit it for direct mode",
-		"yandex.proxy.tag":             "use yandex.proxy: <tag>",
 		"baidu.proxy.mode":             "use baidu.proxy: <tag> or omit it for direct mode",
 		"baidu.proxy.tag":              "use baidu.proxy: <tag>",
 		"bing.proxy.mode":              "use bing.proxy: <tag> or omit it for direct mode",
 		"bing.proxy.tag":               "use bing.proxy: <tag>",
-		"duckduckgo.proxy.mode":        "use duckduckgo.proxy: <tag> or omit it for direct mode",
-		"duckduckgo.proxy.tag":         "use duckduckgo.proxy: <tag>",
 	}
 
 	for key, hint := range legacyKeys {
@@ -468,7 +460,6 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("app.debug_endpoints", false)
 	v.SetDefault("app.max_processes", 4)
 	v.SetDefault("app.idle_ttl", "10m")
-	v.SetDefault("app.mega_timeout", "90s")
 
 	v.SetDefault("proxies.entries", []interface{}{})
 	v.SetDefault("proxies.global", "")
@@ -480,12 +471,6 @@ func setConfigDefaults(v *viper.Viper) {
 
 	v.SetDefault("cache.ttl_seconds", 300)
 	v.SetDefault("cache.max_size", 1000)
-	v.SetDefault("extract.enabled", true)
-	v.SetDefault("extract.default_mode", "auto")
-	v.SetDefault("extract.timeout", "20s")
-	v.SetDefault("extract.max_bytes", 2*1024*1024)
-	v.SetDefault("extract.max_concurrent", 2)
-	v.SetDefault("extract.allow_private_networks", false)
 	// Keep stage2 defaults stable even when config file is absent.
 	v.SetDefault("resilience.max_retries", 3)
 	v.SetDefault("resilience.allow_endpoint_fallback", false)
@@ -498,15 +483,25 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("cors.allow_headers", core.DefaultCORSAllowHeaders)
 	v.SetDefault("cors.max_age", 86400)
 	v.SetDefault("captcha.solver_enabled", false)
+	// Platform (收录查询平台) defaults mirror platform.DefaultPlatformConfig.
+	v.SetDefault("platform.enabled", true)
+	v.SetDefault("platform.data_dir", "./data")
+	v.SetDefault("platform.admin_username", "admin")
+	v.SetDefault("platform.admin_password", "admin123")
+	v.SetDefault("platform.jwt_expire_hours", 24)
+	v.SetDefault("platform.usage_retention_days", 30)
+	// Stability (契约 A: 引擎冷却状态机) defaults mirror core.DefaultStabilityConfig.
+	v.SetDefault("stability.engine_cooldown.steps_minutes", []int{10, 30, 120})
+	v.SetDefault("stability.engine_cooldown.reset_after_minutes", 240)
+	// Security (契约 B) defaults mirror platform.DefaultSecurityConfig.
+	v.SetDefault("security.admin_rate_per_minute", 60)
+	v.SetDefault("security.data_plane_auth", false)
+	v.SetDefault("security.login_lockout.fails", 5)
+	v.SetDefault("security.login_lockout.minutes", 15)
 	for _, s := range engineSpecs() {
 		// A default makes WEB2API_<ENGINE>_DISABLED bindable without a config entry.
 		v.SetDefault(s.name+".disabled", false)
 	}
-	resolve := core.DefaultURLResolveConfig()
-	v.SetDefault("google.resolve_urls", resolve.URLs)
-	v.SetDefault("google.resolve_concurrency", resolve.Concurrency)
-	v.SetDefault("google.resolve_timeout", resolve.Timeout)
-	v.SetDefault("google.resolve_cooldown", resolve.Cooldown)
 	v.SetDefault("bing.search_box", true)
 }
 

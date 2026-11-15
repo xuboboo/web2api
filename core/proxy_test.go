@@ -317,7 +317,22 @@ func TestNewRawHTTPClientSocks5hUsesProxyDNS(t *testing.T) {
 	const proxyOnlyHost = "proxy-target.invalid"
 	proxyAddr := startSOCKS5TestServer(t, proxyOnlyHost, targetAddr.IP)
 
-	directClient := &http.Client{Timeout: 500 * time.Millisecond}
+	// Direct resolution of the proxy-only hostname must fail. The assertion
+	// used to rely on ".invalid" DNS lookups failing, which some resolver
+	// environments answer; inject the deterministic resolution failure instead
+	// so the test intent (direct clients cannot resolve proxy-only hosts)
+	// stays environment-independent. NewRawHTTPClient behavior is untouched.
+	directClient := &http.Client{
+		Timeout: 500 * time.Millisecond,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if host, _, splitErr := net.SplitHostPort(addr); splitErr == nil && host == proxyOnlyHost {
+					return nil, &net.DNSError{Err: "no such host (simulated)", Name: proxyOnlyHost, IsNotFound: true}
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			},
+		},
+	}
 	targetURL := fmt.Sprintf("http://%s:%d/", proxyOnlyHost, targetAddr.Port)
 	if _, err := directClient.Get(targetURL); err == nil {
 		t.Fatal("expected direct request to fail without proxy DNS")

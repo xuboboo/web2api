@@ -2,37 +2,14 @@ package baidu
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	neturl "net/url"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
 	"github.com/xuboboo/web2api/core"
 )
-
-type imageDataJson struct {
-	Query        string `json:"queryExt"`
-	TotalResults int    `json:"displayNum"`
-
-	Data []struct {
-		Title       string `json:"fromPageTitle"`
-		PictureDate string `json:"bdImgnewsDate"`
-		ThumbURL    string `json:"thumbURL"`
-		Type        string
-		Height      int
-		Width       int
-		IsCopyright int
-		AdType      string `json:"adType"`
-		URL         []struct {
-			SourcePage string `json:"FromURL"`
-			Original   string `json:"ObjURL"`
-		} `json:"replaceUrl"`
-	}
-}
 
 // Baidu implements core.SearchEngine for Baidu SERP pages.
 type Baidu struct {
@@ -221,131 +198,4 @@ func (baid *Baidu) waitForParsedSearchResults(ctx context.Context, page *rod.Pag
 	// successful empty SERP — callers must retry/skip, not trust 0 results.
 	baid.logger.Debug("No result containers or block markers within selector timeout")
 	return nil, core.ErrSearchTimeout
-}
-
-// SearchImage executes a Baidu image search and returns normalized image
-// results. It may return core.ErrCaptcha or core.ErrSearchTimeout.
-func (baid *Baidu) SearchImage(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
-	ctx = core.PrepareEngineContext(ctx, query, baid.Name())
-	scoped := *baid
-	scoped.logger = baid.logger.WithRequest(ctx)
-	baid = &scoped
-
-	baid.logger.Debug("Starting image search, query: %+v", query)
-
-	searchResults := []core.SearchResult{}
-	searchPage := 0
-
-	// fetchPage loads one image-results page and appends parsed results.
-	// Returns (done, error): done=true ends the outer loop without error.
-	fetchPage := func() (bool, error) {
-		url, err := BuildImageURL(query, searchPage)
-		if err != nil {
-			return false, err
-		}
-
-		// First load often seeds anti-crawler cookies; results tend to become
-		// available after one explicit reload.
-		page, err := baid.Navigate(ctx, url)
-		if err != nil {
-			return false, err
-		}
-		defer core.DeferClosePage(ctx, page, &baid.Browser)()
-
-		jsonWaitTimeout := baid.GetSelectorTimeout()
-		if reloadErr := page.Reload(); reloadErr != nil {
-			return false, core.ErrSearchTimeout
-		}
-
-		preElements, _, err := core.WaitForElements(ctx, page, Selectors.ImageJSONRoot, jsonWaitTimeout)
-		if err != nil {
-			if blockErr := baid.classifyBlockPage(page, url); blockErr != nil {
-				return false, blockErr
-			}
-			baid.logger.Error("Cannot parse search results: %s", err)
-			return false, core.ErrSearchTimeout
-		}
-
-		if len(preElements) == 0 {
-			if blockErr := baid.classifyBlockPage(page, url); blockErr != nil {
-				return false, blockErr
-			}
-			return true, nil
-		}
-
-		jsonText, err := preElements[0].Text()
-		if err != nil {
-			return false, err
-		}
-
-		var data imageDataJson
-
-		// Fix broken JSON
-		jsonText = strings.ReplaceAll(jsonText, `\'`, "'")
-		matchNewlines, err := regexp.Compile(`[\r\n\t]`)
-		if err != nil {
-			return false, core.ErrParser
-		}
-		escapeNewlines := func(s string) string {
-			return matchNewlines.ReplaceAllString(s, "\\n")
-		}
-		re, err := regexp.Compile(`"[^"\\]*(?:\\[\s\S][^"\\]*)*"`)
-		if err != nil {
-			return false, core.ErrParser
-		}
-		fixedJson := re.ReplaceAllStringFunc(jsonText, escapeNewlines)
-
-		if err := json.Unmarshal([]byte(fixedJson), &data); err != nil {
-			baid.logger.Error("Failed to unmarshal JSON: %v", err)
-			return false, core.ErrParser
-		}
-		if len(data.Data) == 0 {
-			return true, nil
-		}
-
-		for i, img := range data.Data {
-			if len(img.URL) == 0 {
-				continue
-			}
-			res := core.SearchResult{
-				Rank:  (searchPage * 30) + (i + 1),
-				URL:   img.URL[0].Original,
-				Title: img.Title,
-				Description: fmt.Sprintf(
-					"Source Page: %s, thumb_url:%s, %dx%d, date:%v, type:%v, copyright:%v",
-					img.URL[0].SourcePage,
-					img.ThumbURL,
-					img.Width,
-					img.Height,
-					img.PictureDate,
-					img.Type,
-					img.IsCopyright,
-				),
-				Ad: img.AdType != "0",
-			}
-			searchResults = append(searchResults, res)
-			if query.Limit > 0 && len(searchResults) >= query.Limit {
-				return true, nil
-			}
-		}
-
-		return false, nil
-	}
-
-	for core.ShouldFetchResultPage(len(searchResults), query.Limit, searchPage) {
-		done, err := fetchPage()
-		if err != nil {
-			return nil, err
-		}
-		searchPage++
-		if done || !core.ShouldFetchResultPage(len(searchResults), query.Limit, searchPage) {
-			break
-		}
-	}
-
-	deduped := core.DeduplicateResults(searchResults)
-	if query.Limit > 0 && len(deduped) > query.Limit {
-		deduped = deduped[:query.Limit]
-	}
-	return deduped, nil
 }

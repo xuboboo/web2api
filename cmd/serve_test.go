@@ -52,7 +52,7 @@ func TestListenFailureClosesResources(t *testing.T) {
 }
 
 func TestRawEngineCachesRateLimiter(t *testing.T) {
-	engine := &rawEngine{name: "google"}
+	engine := &rawEngine{name: "baidu"}
 	first := engine.GetRateLimiter()
 	if first == nil {
 		t.Fatal("expected limiter")

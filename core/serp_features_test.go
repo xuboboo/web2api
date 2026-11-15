@@ -168,15 +168,15 @@ func TestEnrichSerpFeatureNormalizesRelativeLinks(t *testing.T) {
 			Title: "baidu related",
 			URL:   "/s?wd=python",
 		}},
-	}, "duckduckgo", "", time.Unix(0, 0))
+	}, "sogou", "", time.Unix(0, 0))
 
 	if feature.Items[0].Title != "python coding" || feature.Items[0].Text != "python coding" {
 		t.Fatalf("unexpected enriched item: %#v", feature.Items[0])
 	}
-	if got, want := feature.Items[0].Link, "https://duckduckgo.com/?q=python+coding&t=h"; got != want {
+	if got, want := feature.Items[0].Link, "https://www.sogou.com/?q=python+coding&t=h"; got != want {
 		t.Fatalf("item link = %q, want %q", got, want)
 	}
-	if got, want := feature.Links[0].URL, "https://duckduckgo.com/s?wd=python"; got != want {
+	if got, want := feature.Links[0].URL, "https://www.sogou.com/s?wd=python"; got != want {
 		t.Fatalf("feature link = %q, want %q", got, want)
 	}
 }

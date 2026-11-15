@@ -22,6 +22,12 @@ type ResilientSearcher struct {
 	proxyDefaults ProxyPolicy
 
 	effectivePolicies map[string]ProxyPolicy
+
+	// cdManager is the per-engine cooldown state machine (契约 A). Requests
+	// gate through it at the orchestration layer; interception outcomes are
+	// recorded here so every pipeline entry (search, index check, fallback)
+	// feeds the same state machine.
+	cdManager *engineCooldownManager
 }
 
 type ProxyExecutionMeta struct {
@@ -37,6 +43,9 @@ type ResilientConfig struct {
 	Retry          RetryConfig
 	CircuitBreaker CircuitBreakerConfig
 	Proxy          ProxyConfig
+	// Cooldown configures the per-engine IP cooldown state machine (契约 A);
+	// zero values fall back to DefaultEngineCooldownConfig.
+	Cooldown EngineCooldownConfig
 }
 
 type proxyLaneCookieDropper interface {
@@ -76,6 +85,7 @@ func NewResilientSearcher(engines []SearchEngine, cfg ResilientConfig) *Resilien
 		proxyRegistry:     proxyCfg.Registry,
 		proxyDefaults:     ResolveEffectiveProxyPolicy(proxyCfg.Proxies.Global, ""),
 		effectivePolicies: make(map[string]ProxyPolicy, len(engines)),
+		cdManager:         newEngineCooldownManager(cfg.Cooldown),
 	}
 
 	for _, engine := range engines {
@@ -90,7 +100,7 @@ func NewResilientSearcher(engines []SearchEngine, cfg ResilientConfig) *Resilien
 
 // SearchPrimary keeps dedicated endpoints engine-pure (no fallback).
 func (rs *ResilientSearcher) SearchPrimary(ctx context.Context, primaryEngine SearchEngine, q Query) ([]SearchResult, string, ProxyExecutionMeta, error) {
-	results, proxyMeta, err := rs.searchWithProtection(ctx, primaryEngine, q, false)
+	results, proxyMeta, err := rs.searchWithProtection(ctx, primaryEngine, q)
 	if err != nil {
 		return nil, primaryEngine.Name(), proxyMeta, err
 	}
@@ -99,25 +109,13 @@ func (rs *ResilientSearcher) SearchPrimary(ctx context.Context, primaryEngine Se
 
 // SearchWithFallback retries primary and then tries other initialized engines.
 func (rs *ResilientSearcher) SearchWithFallback(ctx context.Context, primaryEngine SearchEngine, q Query) ([]SearchResult, string, ProxyExecutionMeta, error) {
-	return rs.searchWithFallback(ctx, primaryEngine, q, false)
+	return rs.searchWithFallback(ctx, primaryEngine, q)
 }
 
-func (rs *ResilientSearcher) SearchImagePrimary(ctx context.Context, primaryEngine SearchEngine, q Query) ([]SearchResult, string, ProxyExecutionMeta, error) {
-	results, proxyMeta, err := rs.searchWithProtection(ctx, primaryEngine, q, true)
-	if err != nil {
-		return nil, primaryEngine.Name(), proxyMeta, err
-	}
-	return results, primaryEngine.Name(), proxyMeta, nil
-}
-
-func (rs *ResilientSearcher) SearchImageWithFallback(ctx context.Context, primaryEngine SearchEngine, q Query) ([]SearchResult, string, ProxyExecutionMeta, error) {
-	return rs.searchWithFallback(ctx, primaryEngine, q, true)
-}
-
-func (rs *ResilientSearcher) searchWithFallback(ctx context.Context, primaryEngine SearchEngine, q Query, isImage bool) ([]SearchResult, string, ProxyExecutionMeta, error) {
+func (rs *ResilientSearcher) searchWithFallback(ctx context.Context, primaryEngine SearchEngine, q Query) ([]SearchResult, string, ProxyExecutionMeta, error) {
 	ctx = EnsureContext(ctx)
 
-	results, proxyMeta, err := rs.searchWithProtection(ctx, primaryEngine, q, isImage)
+	results, proxyMeta, err := rs.searchWithProtection(ctx, primaryEngine, q)
 	if err == nil {
 		return results, primaryEngine.Name(), proxyMeta, nil
 	}
@@ -127,11 +125,6 @@ func (rs *ResilientSearcher) searchWithFallback(ctx context.Context, primaryEngi
 	if errors.Is(err, ErrProxyUnavailable) {
 		WithRequestEngine(ctx, primaryEngine.Name()).WithError(err).Warn("Proxy policy failed closed")
 		return nil, primaryEngine.Name(), proxyMeta, err
-	}
-
-	successMessage := "Fallback to %s succeeded with %d results"
-	if isImage {
-		successMessage = "Image fallback to %s succeeded with %d results"
 	}
 
 	WithRequestEngine(ctx, primaryEngine.Name()).
@@ -145,11 +138,11 @@ func (rs *ResilientSearcher) searchWithFallback(ctx context.Context, primaryEngi
 			continue
 		}
 
-		results, fallbackMeta, fallbackErr := rs.searchWithProtection(ctx, fallbackEngine, q, isImage)
+		results, fallbackMeta, fallbackErr := rs.searchWithProtection(ctx, fallbackEngine, q)
 		if fallbackErr == nil {
 			WithRequestEngine(ctx, fallbackEngine.Name()).
 				WithField("results_count", len(results)).
-				Infof(successMessage, fallbackEngine.Name(), len(results))
+				Infof("Fallback to %s succeeded with %d results", fallbackEngine.Name(), len(results))
 			return results, fallbackEngine.Name(), fallbackMeta, nil
 		}
 		WithRequestEngine(ctx, fallbackEngine.Name()).WithError(fallbackErr).Debug("Fallback engine also failed")
@@ -158,7 +151,7 @@ func (rs *ResilientSearcher) searchWithFallback(ctx context.Context, primaryEngi
 	return nil, primaryEngine.Name(), proxyMeta, ErrAllEnginesFailed
 }
 
-func (rs *ResilientSearcher) searchWithProtection(ctx context.Context, engine SearchEngine, q Query, isImage bool) ([]SearchResult, ProxyExecutionMeta, error) {
+func (rs *ResilientSearcher) searchWithProtection(ctx context.Context, engine SearchEngine, q Query) ([]SearchResult, ProxyExecutionMeta, error) {
 	ctx = EnsureContext(ctx)
 
 	if ctx.Err() != nil {
@@ -211,7 +204,7 @@ func (rs *ResilientSearcher) searchWithProtection(ctx context.Context, engine Se
 			lastProxyURL = proxyURL
 
 			requestCtx := proxyRequestContext(callCtx, engine.Name(), attemptQuery)
-			results, err := invokeEngine(requestCtx, engine, attemptQuery, isImage)
+			results, err := invokeEngine(requestCtx, engine, attemptQuery)
 
 			if reportToRegistry {
 				rs.reportProxyAttempt(engineCtx, proxyURL, err)
@@ -261,6 +254,12 @@ func (rs *ResilientSearcher) searchWithProtection(ctx context.Context, engine Se
 		if shouldRecordCircuitFailure(result.Err) {
 			cb.RecordFailure(engineCtx)
 		}
+		// 契约 A trigger point: after retries/proxy rotation the engine still
+		// answered blocked(403)/429/captcha → one cooldown block per request.
+		// Cooldown and circuit breaker count independently (never cross-feed).
+		if rs.cdManager != nil && IsProxyChallengeError(result.Err) {
+			rs.cdManager.RecordBlock(engine.Name(), result.Err)
+		}
 		return nil, attemptMeta, result.Err
 	}
 
@@ -300,7 +299,7 @@ func normalizeLimiterWaitErr(ctx context.Context, err error) error {
 // invokeEngine is the single panic-recovery point for every engine call made
 // through the resilient pipeline (browser, raw, and any future engine method).
 // A rod/CDP panic surfaces as ErrEngineInternal instead of killing the process.
-func invokeEngine(ctx context.Context, engine SearchEngine, q Query, isImage bool) (results []SearchResult, err error) {
+func invokeEngine(ctx context.Context, engine SearchEngine, q Query) (results []SearchResult, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			results = nil
@@ -308,217 +307,46 @@ func invokeEngine(ctx context.Context, engine SearchEngine, q Query, isImage boo
 		}
 	}()
 
-	if isImage {
-		return engine.SearchImage(ctx, q)
-	}
 	return engine.Search(ctx, q)
-}
-
-// SearchAllParallel applies retry/circuit protections per engine for mega search.
-// Returns results, list of engines that responded, and list of engines that failed.
-func (rs *ResilientSearcher) SearchAllParallel(ctx context.Context, q Query, engines []SearchEngine) ([]MegaSearchResult, []string, []string) {
-	results, responded, failed, _ := rs.runParallelDetailed(ctx, q, engines, false)
-	return results, responded, failed
-}
-
-func (rs *ResilientSearcher) SearchAllImageParallel(ctx context.Context, q Query, engines []SearchEngine) ([]MegaSearchResult, []string, []string) {
-	results, responded, failed, _ := rs.runParallelDetailed(ctx, q, engines, true)
-	return results, responded, failed
-}
-
-func (rs *ResilientSearcher) searchAllParallelDetailed(ctx context.Context, q Query, engines []SearchEngine) ([]MegaSearchResult, []string, []EngineErrorDetail) {
-	results, responded, _, errors := rs.runParallelDetailed(ctx, q, engines, false)
-	return results, responded, errors
-}
-
-func (rs *ResilientSearcher) searchAllImageParallelDetailed(ctx context.Context, q Query, engines []SearchEngine) ([]MegaSearchResult, []string, []EngineErrorDetail) {
-	results, responded, _, errors := rs.runParallelDetailed(ctx, q, engines, true)
-	return results, responded, errors
-}
-
-func (rs *ResilientSearcher) searchAnyDetailed(ctx context.Context, q Query, engines []SearchEngine, isImage bool) ([]MegaSearchResult, []string, []EngineErrorDetail) {
-	ctx = EnsureContext(ctx)
-
-	engineErrors := make([]EngineErrorDetail, 0, len(engines))
-	for _, engine := range engines {
-		if err := ctx.Err(); err != nil {
-			engineErrors = append(engineErrors, engineErrorDetail(engine.Name(), err, q))
-			break
-		}
-		if !engine.IsInitialized() {
-			engineErrors = append(engineErrors, engineErrorDetail(engine.Name(), fmt.Errorf("not initialized"), q))
-			continue
-		}
-
-		results, _, err := rs.searchWithProtection(ctx, engine, q, isImage)
-		if err != nil {
-			engineErrors = append(engineErrors, engineErrorDetail(engine.Name(), err, q))
-			continue
-		}
-
-		mega := make([]MegaSearchResult, len(results))
-		for i, r := range results {
-			mega[i] = MegaSearchResult{SearchResult: r, Engine: engine.Name()}
-		}
-		return mega, []string{engine.Name()}, engineErrors
-	}
-
-	if engineErrors == nil {
-		engineErrors = []EngineErrorDetail{}
-	}
-	return []MegaSearchResult{}, []string{}, engineErrors
-}
-
-func (rs *ResilientSearcher) searchFastestDetailed(ctx context.Context, q Query, engines []SearchEngine, isImage bool) ([]MegaSearchResult, []string, []EngineErrorDetail) {
-	ctx = EnsureContext(ctx)
-
-	var (
-		fastest      SearchEngine
-		bestLatency  = time.Duration(1<<63 - 1)
-		foundLatency bool
-		unavailable  []EngineErrorDetail
-		candidates   []SearchEngine
-	)
-
-	for _, engine := range engines {
-		cb := rs.cbManager.Get(engine.Name())
-		if !engine.IsInitialized() {
-			unavailable = append(unavailable, engineErrorDetail(engine.Name(), fmt.Errorf("not initialized"), q))
-			continue
-		}
-
-		engineCtx := WithEngine(ctx, engine.Name())
-		if !cb.AllowRequest(engineCtx) {
-			unavailable = append(unavailable, engineErrorDetail(engine.Name(), ErrCircuitOpen, q))
-			continue
-		}
-
-		candidates = append(candidates, engine)
-		if avg, ok := cb.AvgSuccessLatency(); ok {
-			if !foundLatency || avg < bestLatency {
-				bestLatency = avg
-				fastest = engine
-				foundLatency = true
-			}
-		}
-	}
-
-	if len(candidates) == 0 {
-		if unavailable == nil {
-			unavailable = []EngineErrorDetail{}
-		}
-		return []MegaSearchResult{}, []string{}, unavailable
-	}
-	if fastest == nil {
-		fastest = candidates[0]
-	}
-
-	results, _, err := rs.searchWithProtection(ctx, fastest, q, isImage)
-	if err != nil {
-		return []MegaSearchResult{}, []string{}, []EngineErrorDetail{engineErrorDetail(fastest.Name(), err, q)}
-	}
-
-	mega := make([]MegaSearchResult, len(results))
-	for i, r := range results {
-		mega[i] = MegaSearchResult{SearchResult: r, Engine: fastest.Name()}
-	}
-	return mega, []string{fastest.Name()}, []EngineErrorDetail{}
-}
-
-func (rs *ResilientSearcher) runParallelDetailed(ctx context.Context, q Query, engines []SearchEngine, isImage bool) ([]MegaSearchResult, []string, []string, []EngineErrorDetail) {
-	ctx = EnsureContext(ctx)
-
-	type engineResult struct {
-		name    string
-		results []MegaSearchResult
-		err     error
-	}
-
-	resultCh := make(chan engineResult, len(engines))
-	started := 0
-
-	for _, engine := range engines {
-		if ctx.Err() != nil {
-			break
-		}
-		if !engine.IsInitialized() {
-			resultCh <- engineResult{name: engine.Name(), err: fmt.Errorf("not initialized")}
-			started++
-			continue
-		}
-		engineCtx := WithEngine(ctx, engine.Name())
-		if !rs.cbManager.Get(engine.Name()).AllowRequest(engineCtx) {
-			WithRequest(engineCtx).Debug("Skipping engine in mega search: circuit open")
-			resultCh <- engineResult{name: engine.Name(), err: ErrCircuitOpen}
-			started++
-			continue
-		}
-
-		started++
-		go func(eng SearchEngine) {
-			results, _, err := rs.searchWithProtection(ctx, eng, q, isImage)
-			if err != nil {
-				resultCh <- engineResult{name: eng.Name(), err: err}
-				return
-			}
-			mega := make([]MegaSearchResult, len(results))
-			for i, r := range results {
-				mega[i] = MegaSearchResult{SearchResult: r, Engine: eng.Name()}
-			}
-			resultCh <- engineResult{name: eng.Name(), results: mega}
-		}(engine)
-	}
-
-	var allResults []MegaSearchResult
-	var responded, failed []string
-	var engineErrors []EngineErrorDetail
-
-	// Collect results, but bail out early if the parent context is cancelled
-	// (e.g. mega-search hits its aggregate deadline). Engines whose work has
-	// not yet returned a result are reported as failed with the context error
-	// so the caller can return partial results to the client instead of
-	// blocking on a slow/stuck engine.
-	pending := map[string]struct{}{}
-	for _, eng := range engines {
-		pending[eng.Name()] = struct{}{}
-	}
-	collected := 0
-collectLoop:
-	for collected < started {
-		select {
-		case res := <-resultCh:
-			collected++
-			delete(pending, res.name)
-			if res.err != nil {
-				failed = append(failed, res.name)
-				engineErrors = append(engineErrors, engineErrorDetail(res.name, res.err, q))
-			} else {
-				responded = append(responded, res.name)
-				allResults = append(allResults, res.results...)
-			}
-		case <-ctx.Done():
-			for name := range pending {
-				failed = append(failed, name)
-				engineErrors = append(engineErrors, engineErrorDetail(name, ctx.Err(), q))
-			}
-			break collectLoop
-		}
-	}
-
-	if responded == nil {
-		responded = []string{}
-	}
-	if failed == nil {
-		failed = []string{}
-	}
-	if engineErrors == nil {
-		engineErrors = []EngineErrorDetail{}
-	}
-	return allResults, responded, failed, engineErrors
 }
 
 func (rs *ResilientSearcher) GetCircuitBreakerStats() []map[string]interface{} {
 	return rs.cbManager.AllStats()
+}
+
+// GateEngine applies the cooldown gate for one engine at the orchestration
+// layer. Callers must treat a Blocked gate as a fast-fail (engine untouched),
+// and a Probe gate as THE single cooldown-expiry probe: run the engine once
+// and finish it with EngineGate.FinishProbe(err).
+func (rs *ResilientSearcher) GateEngine(ctx context.Context, engine string) (EngineGate, error) {
+	if rs.cdManager == nil {
+		return EngineGate{decision: gateProceed}, nil
+	}
+	return rs.cdManager.Gate(ctx, engine, func() bool {
+		return !rs.cbManager.Get(engine).AllowRequest(ctx)
+	})
+}
+
+// EngineCooldownStatus exposes one engine's cooldown state to admin surfaces.
+func (rs *ResilientSearcher) EngineCooldownStatus(engine string) EngineCooldownStatus {
+	if rs.cdManager == nil {
+		return EngineCooldownStatus{}
+	}
+	return rs.cdManager.Status(engine)
+}
+
+// ResetCooldown force-recovers an engine's cooldown (强制恢复).
+func (rs *ResilientSearcher) ResetCooldown(engine string) {
+	if rs.cdManager != nil {
+		rs.cdManager.ResetCooldown(engine)
+	}
+}
+
+// ForceCooldown puts an engine into a maintenance-window cooldown (强制冷却).
+func (rs *ResilientSearcher) ForceCooldown(engine string, minutes int) {
+	if rs.cdManager != nil {
+		rs.cdManager.ForceCooldown(engine, minutes)
+	}
 }
 
 func (rs *ResilientSearcher) GetProxyStats() ProxyStats {
@@ -596,63 +424,6 @@ func (rs *ResilientSearcher) browserPoolStats() BrowserPoolStats {
 		}
 	}
 	return BrowserPoolStats{}
-}
-
-func (rs *ResilientSearcher) ResolveMegaProxyMeta(q Query, engines []SearchEngine) ProxyExecutionMeta {
-	if len(engines) == 0 {
-		return ProxyExecutionMeta{Mode: ProxyModeOff, Used: "direct"}
-	}
-
-	allOff := true
-	proxiedTags := map[string]struct{}{}
-	hasOff := false
-
-	for _, engine := range engines {
-		policy := rs.effectivePolicyForQuery(engine.Name(), q)
-		if policy.Mode == ProxyModeOff {
-			hasOff = true
-			continue
-		}
-		if policy.Mode == ProxyModeRequestURL {
-			return ProxyExecutionMeta{Mode: ProxyModeRequestURL, Used: MaskProxyURL(q.ProxyURL)}
-		}
-
-		allOff = false
-		if policy.Tag != "" {
-			proxiedTags[policy.Tag] = struct{}{}
-		}
-	}
-
-	if allOff {
-		return ProxyExecutionMeta{Mode: ProxyModeOff, Used: "direct"}
-	}
-
-	meta := ProxyExecutionMeta{Mode: ProxyModeTagPool}
-	if len(proxiedTags) == 1 {
-		for tag := range proxiedTags {
-			meta.Tag = tag
-		}
-	}
-
-	if q.ProxyOverride == "" {
-		if global := strings.TrimSpace(rs.proxyCfg.Proxies.Global); global != "" && !hasOff {
-			meta.Used = MaskProxyURL(global)
-			return meta
-		}
-	}
-
-	if rs.proxyRuntime == ProxyRuntimeRaw {
-		meta.Used = "multiple"
-		if hasOff {
-			meta.Used = "mixed"
-		}
-		return meta
-	}
-	meta.Used = "multiple"
-	if hasOff {
-		meta.Used = "mixed"
-	}
-	return meta
 }
 
 func (rs *ResilientSearcher) baseProxyMeta(policy ProxyPolicy) ProxyExecutionMeta {

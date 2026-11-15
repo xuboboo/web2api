@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web2API 浏览验收截图画廊</title>
+<style>
+  :root {
+    --ink: #1d1d1f;
+    --ink-2: #515154;
+    --ink-3: #86868b;
+    --line: #e8e8ed;
+    --blue: #2e55a5;
+    --blue-soft: #eef2fa;
+    --amber-bg: #fff8e6;
+    --amber-bd: #e6c26a;
+    --bg: #f7f7f8;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.6; padding: 48px 24px 80px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+  header.hero { padding: 8px 0 28px; border-bottom: 1px solid var(--line); margin-bottom: 40px; }
+  .kicker { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .12em; color: var(--blue); text-transform: uppercase; }
+  h1 { font-size: 34px; font-weight: 700; margin: 10px 0 6px; letter-spacing: -.01em; }
+  .sub { color: var(--ink-2); font-size: 15px; }
+  .notice {
+    margin-top: 20px; background: var(--amber-bg); border: 1px solid var(--amber-bd);
+    border-radius: 10px; padding: 14px 18px; font-size: 13.5px; color: var(--ink-2);
+  }
+  .notice b { color: var(--ink); }
+  section.group { margin-bottom: 56px; }
+  .group-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+  .group-head h2 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+  .group-head .cnt { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 12px; color: var(--ink-3); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; }
+  figure.shot {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column;
+    transition: box-shadow .18s ease, transform .18s ease;
+  }
+  figure.shot:hover { box-shadow: 0 6px 24px rgba(29,29,31,.10); transform: translateY(-2px); }
+  figure.shot a { display: block; background: #101010; }
+  figure.shot img { display: block; width: 100%; height: 218px; object-fit: cover; object-position: top; }
+  figcaption { padding: 14px 16px 16px; border-top: 1px solid var(--line); }
+  figcaption h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .meta { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--ink-3); margin-bottom: 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .meta .who { color: var(--blue); }
+  .summary { font-size: 13px; color: var(--ink-2); }
+  .summary.ok::before { content: "✓ "; color: #2e7d46; font-weight: 700; }
+  .summary.defect::before { content: "▲ "; color: #b3590f; font-weight: 700; }
+  .summary.na { color: var(--ink-3); font-style: italic; }
+  .summary.defect { background: var(--blue-soft); border-radius: 6px; padding: 6px 10px; }
+  footer { border-top: 1px solid var(--line); padding-top: 20px; font-size: 12.5px; color: var(--ink-3); }
+  footer code { font-family: "Roboto Mono", ui-monospace, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">Web2API · QA Acceptance Gallery</div>
+  <h1>浏览验收截图画廊</h1>
+  <p class="sub">二期契约浏览器验收 · 独立实例 127.0.0.1:7721(种子数据)与 127.0.0.1:17999(空库)· 生成于 2026-11-15</p>
+  <div class="notice">
+    <b>来源说明:</b>「验收员A」各图摘要取自其最终 QAResult(3 项 low 缺陷:登录页标题 1366 下折行、总览无手动刷新按钮、空库总览空数据下成功率显示 100% 且图表 Y 轴出现小数刻度;其余检查全部通过,console 无未捕获报错)。<b>「验收员B」与 02:23 批次的最终 QAResult 未在工作目录留存(qa/ 下无结果 JSON 文件),其结论无法引用,摘要栏如实标注缺失,未做编造;</b>仅按文件名将截图归入对应页面组。
+  </div>
+</header>
+
+<section class="group">
+  <div class="group-head"><h2>登录页</h2><span class="cnt">5 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="a-login.png" target="_blank"><img src="a-login.png" alt="登录页" loading="lazy"></a>
+      <figcaption><h3>登录页 · 默认视图</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary defect">low:整体符合设计基因,但 H1「Web2API 收录情报平台」在 1366 宽度下折行且把「平台」拆开(「台」单独成行)。</p></figcaption></figure>
+    <figure class="shot"><a href="a-login-error.png" target="_blank"><img src="a-login-error.png" alt="登录页错误提示" loading="lazy"></a>
+      <figcaption><h3>登录页 · 错误密码提示</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">admin/wrongpass 提交后出现红字浅红底 alert「用户名或密码错误(同一用户名+IP 连续 5 次失败将锁定 15 分钟)」,文案无错别字。</p></figcaption></figure>
+    <figure class="shot"><a href="a-login-locked.png" target="_blank"><img src="a-login-locked.png" alt="登录锁定提示" loading="lazy"></a>
+      <figcaption><h3>登录页 · 连续失败锁定</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">连续 5 次错误密码后,第 6 次提交正确密码仍被拦截:「尝试次数过多,登录已被临时锁定,约 878 秒后可重试」,按钮呈禁用态;API 层同验 429 + Retry-After: 869 + too_many_attempts。</p></figcaption></figure>
+    <figure class="shot"><a href="b-style-login.png" target="_blank"><img src="b-style-login.png" alt="登录页样式对照" loading="lazy"></a>
+      <figcaption><h3>登录页 · 样式截图</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="b-style-login-lockout.png" target="_blank"><img src="b-style-login-lockout.png" alt="登录锁定样式" loading="lazy"></a>
+      <figcaption><h3>登录页 · 锁定样式截图</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>总览</h2><span class="cnt">4 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="a-dashboard.png" target="_blank"><img src="a-dashboard.png" alt="总览" loading="lazy"></a>
+      <figcaption><h3>总览 · 4 统计卡 + 14 日图 + 引擎状态</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary defect">数值与 /api/stats/overview 一致(55/55/2/100%),14 根柱与逐日 title 数据均与 API 一致;low 缺陷:页面无显式「刷新」按钮,刷新仅能靠路由重进(实测数值 55→56 实时更新)。</p></figcaption></figure>
+    <figure class="shot"><a href="a-dashboard-tooltip.png" target="_blank"><img src="a-dashboard-tooltip.png" alt="柱形悬停" loading="lazy"></a>
+      <figcaption><h3>总览 · 柱形悬停验证</h3><div class="meta"><span class="who">验收员A</span><span>1366×768 · 局部</span></div>
+      <p class="summary ok">悬停提示为 SVG 原生 &lt;title&gt;(app.js:705-707),自动化浏览器不渲染 OS tooltip;已改用 DOM 逐柱验证 14 条 title 文案与 /api/stats/timeseries 完全一致,非产品缺陷。</p></figcaption></figure>
+    <figure class="shot"><a href="a-dashboard-1920.png" target="_blank"><img src="a-dashboard-1920.png" alt="总览 1920" loading="lazy"></a>
+      <figcaption><h3>总览 · 1920×1080 布局</h3><div class="meta"><span class="who">验收员A</span><span>1920×1080</span></div>
+      <p class="summary ok">卡片拉伸自然、图表/引擎区无破版,数值 56/58/2/100% 与 API 一致。</p></figcaption></figure>
+    <figure class="shot"><a href="b-style-overview-1920.png" target="_blank"><img src="b-style-overview-1920.png" alt="总览样式对照" loading="lazy"></a>
+      <figcaption><h3>总览 · 样式截图(1920)</h3><div class="meta"><span class="who">验收员B</span><span>1920 · 摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>引擎状态</h2><span class="cnt">5 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="b-engines.png" target="_blank"><img src="b-engines.png" alt="引擎状态页" loading="lazy"></a>
+      <figcaption><h3>引擎状态 · 看板</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="b-engines-cooldown.png" target="_blank"><img src="b-engines-cooldown.png" alt="引擎冷却" loading="lazy"></a>
+      <figcaption><h3>引擎状态 · 冷却状态</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="b-style-engines-1920.png" target="_blank"><img src="b-style-engines-1920.png" alt="引擎状态 1920" loading="lazy"></a>
+      <figcaption><h3>引擎状态 · 样式截图(1920)</h3><div class="meta"><span class="who">验收员B</span><span>1920 · 摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="engines-1366.png" target="_blank"><img src="engines-1366.png" alt="引擎状态 1366" loading="lazy"></a>
+      <figcaption><h3>引擎状态 · 双尺寸(1366)</h3><div class="meta"><span>02:23 批次</span><span>1366 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+    <figure class="shot"><a href="engines-1920.png" target="_blank"><img src="engines-1920.png" alt="引擎状态 1920" loading="lazy"></a>
+      <figcaption><h3>引擎状态 · 双尺寸(1920)</h3><div class="meta"><span>02:23 批次</span><span>1920 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>API 密钥</h2><span class="cnt">6 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="a-keys.png" target="_blank"><img src="a-keys.png" alt="密钥页" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 表格 9 列</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">名称/前缀/状态/今日用量/累计/日配额/创建时间/最后使用/操作齐全;「演示-生产」58/58/不限、「演示-测试」0/0/5 与 GET /api/keys 一致。</p></figcaption></figure>
+    <figure class="shot"><a href="a-keys-modal.png" target="_blank"><img src="a-keys-modal.png" alt="创建密钥弹窗" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 创建弹窗</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">名称+日配额表单与「1 URL × 1 引擎 = 1 unit」说明正常,填「验收-临时」配额 3 后提交。</p></figcaption></figure>
+    <figure class="shot"><a href="a-keys-modal-success.png" target="_blank"><img src="a-keys-modal-success.png" alt="创建成功" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 创建成功(完整密钥仅显示一次)</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">琥珀警告「请立即保存:完整密钥仅显示这一次」+完整密钥+名称/前缀/日配额回显;复制按钮 toast「已复制到剪贴板」;关闭后 DOM 验证完整密钥不再出现。</p></figcaption></figure>
+    <figure class="shot"><a href="a-keys-disabled.png" target="_blank"><img src="a-keys-disabled.png" alt="停用密钥" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 启停开关立即生效</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">开关点击后 UI 即变灰色「停用」;curl 用该密钥调 /v1/index/check 得 HTTP 401 {"error":"unauthorized"}。</p></figcaption></figure>
+    <figure class="shot"><a href="a-keys-delete-confirm.png" target="_blank"><img src="a-keys-delete-confirm.png" alt="删除确认" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 删除确认弹窗</h3><div class="meta"><span class="who">验收员A</span><span>1366×768 · 局部</span></div>
+      <p class="summary ok">确认弹窗含密钥名与前缀及「不可恢复」警示;取消则保留,确认后行消失 + toast「密钥已删除」。</p></figcaption></figure>
+    <figure class="shot"><a href="a-keys-1920.png" target="_blank"><img src="a-keys-1920.png" alt="密钥页 1920" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 1920×1080 布局</h3><div class="meta"><span class="who">验收员A</span><span>1920×1080</span></div>
+      <p class="summary ok">表格列宽合理、无破版。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>使用日志</h2><span class="cnt">4 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="a-usage.png" target="_blank"><img src="a-usage.png" alt="使用日志" loading="lazy"></a>
+      <figcaption><h3>使用日志 · 表格与筛选</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">8 列字段与实际调用逐项一致(2-URL 记录 2/2、bing→必应、200 pill、耗时格式化);筛选下拉含全部/两把密钥。</p></figcaption></figure>
+    <figure class="shot"><a href="a-usage-page2.png" target="_blank"><img src="a-usage-page2.png" alt="日志第2页" loading="lazy"></a>
+      <figcaption><h3>使用日志 · 分页(第 51–56 条)</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">共 56 条 / limit 50:第 2 页 6 行、按钮 disabled 状态正确,含契约种子的 2-URL 记录。</p></figcaption></figure>
+    <figure class="shot"><a href="a-usage-empty.png" target="_blank"><img src="a-usage-empty.png" alt="日志筛选空态" loading="lazy"></a>
+      <figcaption><h3>使用日志 · 筛选空态</h3><div class="meta"><span class="who">验收员A</span><span>1366×768</span></div>
+      <p class="summary ok">选「演示-测试」(0 调用)显示空态「暂无调用记录:当前筛选条件下还没有日志,试试切换密钥或点击刷新。」</p></figcaption></figure>
+    <figure class="shot"><a href="a-usage-1920.png" target="_blank"><img src="a-usage-1920.png" alt="日志 1920" loading="lazy"></a>
+      <figcaption><h3>使用日志 · 1920×1080 布局</h3><div class="meta"><span class="who">验收员A</span><span>1920×1080</span></div>
+      <p class="summary ok">表格拉伸自然、分页区完整、无破版。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>空态(空库实例 17999)</h2><span class="cnt">3 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="a-empty-dashboard.png" target="_blank"><img src="a-empty-dashboard.png" alt="总览空态" loading="lazy"></a>
+      <figcaption><h3>总览 · 空库空态</h3><div class="meta"><span class="who">验收员A</span><span>1920×1080</span></div>
+      <p class="summary defect">low:空库下统计卡全 0、14 根灰色基线占位柱渲染正常,但 0 次调用显示「24h 成功率 100%」语义歧义,且图表 Y 轴刻度出现小数 1.25/2.5/3.75。</p></figcaption></figure>
+    <figure class="shot"><a href="a-empty-keys.png" target="_blank"><img src="a-empty-keys.png" alt="密钥空态" loading="lazy"></a>
+      <figcaption><h3>API 密钥 · 空库空态</h3><div class="meta"><span class="who">验收员A</span><span>1920×1080</span></div>
+      <p class="summary ok">「还没有 API 密钥:创建一个密钥,即可开始调用收录查询 API。」+ CTA「创建第一个密钥」,点击成功打开创建弹窗。</p></figcaption></figure>
+    <figure class="shot"><a href="a-empty-usage.png" target="_blank"><img src="a-empty-usage.png" alt="日志空态" loading="lazy"></a>
+      <figcaption><h3>使用日志 · 空库空态</h3><div class="meta"><span class="who">验收员A</span><span>1920×1080</span></div>
+      <p class="summary ok">「暂无调用记录:发起一次 /v1/index/check 调用后,这里会出现日志。」,工具栏在空态下正常呈现。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>在线调试</h2><span class="cnt">4 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="b-playground.png" target="_blank"><img src="b-playground.png" alt="在线调试" loading="lazy"></a>
+      <figcaption><h3>在线调试 · 表单</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="b-playground-result.png" target="_blank"><img src="b-playground-result.png" alt="在线调试结果" loading="lazy"></a>
+      <figcaption><h3>在线调试 · 调用结果</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="playground-1366.png" target="_blank"><img src="playground-1366.png" alt="在线调试 1366" loading="lazy"></a>
+      <figcaption><h3>在线调试 · 双尺寸(1366)</h3><div class="meta"><span>02:23 批次</span><span>1366 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+    <figure class="shot"><a href="playground-1920.png" target="_blank"><img src="playground-1920.png" alt="在线调试 1920" loading="lazy"></a>
+      <figcaption><h3>在线调试 · 双尺寸(1920)</h3><div class="meta"><span>02:23 批次</span><span>1920 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>Agent 集成</h2><span class="cnt">3 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="b-agents.png" target="_blank"><img src="b-agents.png" alt="Agent集成" loading="lazy"></a>
+      <figcaption><h3>Agent 集成 · MCP 接入页</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="agents-1366.png" target="_blank"><img src="agents-1366.png" alt="Agent集成 1366" loading="lazy"></a>
+      <figcaption><h3>Agent 集成 · 双尺寸(1366)</h3><div class="meta"><span>02:23 批次</span><span>1366 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+    <figure class="shot"><a href="agents-1920.png" target="_blank"><img src="agents-1920.png" alt="Agent集成 1920" loading="lazy"></a>
+      <figcaption><h3>Agent 集成 · 双尺寸(1920)</h3><div class="meta"><span>02:23 批次</span><span>1920 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>API 文档</h2><span class="cnt">1 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="b-docs.png" target="_blank"><img src="b-docs.png" alt="API文档" loading="lazy"></a>
+      <figcaption><h3>API 文档 · 全端点引用</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>系统设置</h2><span class="cnt">3 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="b-settings.png" target="_blank"><img src="b-settings.png" alt="系统设置" loading="lazy"></a>
+      <figcaption><h3>系统设置 · 修改密码与锁定说明</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="settings-1366.png" target="_blank"><img src="settings-1366.png" alt="系统设置 1366" loading="lazy"></a>
+      <figcaption><h3>系统设置 · 双尺寸(1366)</h3><div class="meta"><span>02:23 批次</span><span>1366 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+    <figure class="shot"><a href="settings-1920.png" target="_blank"><img src="settings-1920.png" alt="系统设置 1920" loading="lazy"></a>
+      <figcaption><h3>系统设置 · 双尺寸(1920)</h3><div class="meta"><span>02:23 批次</span><span>1920 · 摘要缺失</span></div>
+      <p class="summary na">早期批次截图,归属未核实;仅按文件名归组展示。</p></figcaption></figure>
+  </div>
+</section>
+
+<section class="group">
+  <div class="group-head"><h2>404 与全局</h2><span class="cnt">1 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="b-404.png" target="_blank"><img src="b-404.png" alt="404视图" loading="lazy"></a>
+      <figcaption><h3>404 视图</h3><div class="meta"><span class="who">验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;仅按文件名归组。</p></figcaption></figure>
+  </div>
+</section>
+
+<footer>
+  <p>纯静态零依赖画廊 · 图片相对引用(与本文件同目录)· 点击任意缩略图可在新标签页查看原图。</p>
+  <p style="margin-top:6px">覆盖 <code>39</code> 张截图:验收员A <code>a-*</code> 19 张(摘要引自其 QAResult,3 项 low 缺陷)、验收员B <code>b-*</code> 12 张与早期批次 <code>8</code> 张(结论文件未留存,摘要缺失如实标注)。</p>
+</footer>
+
+</div>
+</body>
+</html>

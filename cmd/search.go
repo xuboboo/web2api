@@ -4,16 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/xuboboo/web2api/core"
-	extractpkg "github.com/xuboboo/web2api/extract"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/xuboboo/web2api/core"
 )
 
 // searchFlags holds the per-invocation CLI flags for the search command.
@@ -27,7 +24,6 @@ type searchFlags struct {
 	format   string
 	full     bool
 	features bool
-	extract  int
 	timeout  int
 }
 
@@ -36,7 +32,7 @@ var searchOpts searchFlags
 var searchCMD = &cobra.Command{
 	Use:     "search [engine] [query]",
 	Aliases: []string{"find"},
-	Short:   "Search results using chosen web search engine (baidu, sogou, so360, bing, google, yandex, duckduckgo, ecosia)",
+	Short:   "Search results using chosen web search engine (baidu, sogou, so360, bing)",
 	// Validate the engine ourselves; cobra.OnlyValidArgs would also reject the
 	// query arg. ValidArgs still feeds shell completion.
 	Args:      cobra.MatchAll(cobra.ExactArgs(2), validateEngineArg),
@@ -81,14 +77,7 @@ func search(cmd *cobra.Command, args []string) error {
 		Filter:   true,
 		Features: searchOpts.features,
 		Insecure: config.Server.Insecure,
-
-		ResolveConfig: &config.GoogleConfig.URLResolveConfig,
 	}
-	if err := applyCLIExtractFlag(&query, searchOpts.extract); err != nil {
-		return err
-	}
-	// initializeConfig already rejected invalid values.
-	query.ResolveURLs, query.ResolveTop, _ = core.ParseResolveURLs(config.GoogleConfig.URLs)
 
 	captchaSolverEnabled, captchaSolverAPIKey, err := resolveCaptchaSolverConfig()
 	if err != nil {
@@ -149,12 +138,6 @@ func search(cmd *cobra.Command, args []string) error {
 	}).Info(fmt.Sprintf("Successfully completed SERP search using %s engine, returned %d results", engineType, len(results)))
 
 	env := buildCLIEnvelope(spec.name, query, results, startedAt)
-	if query.Extract {
-		query.ProxyURL = selectedProxy
-		extractor, closeExtractor := newCLIExtractor(captchaSolverEnabled, captchaSolverAPIKey)
-		defer closeExtractor()
-		core.EnrichEnvelopeWithExtraction(ctx, env, query, format, extractor, config.Extract)
-	}
 	payload := renderCLIEnvelope(env, format, searchOpts.full)
 	fmt.Println(strings.TrimRight(string(payload), "\n"))
 	return nil
@@ -192,124 +175,6 @@ func renderCLIEnvelope(env *core.Envelope, format string, full bool) []byte {
 		}
 		return b
 	}
-}
-
-const maxCLIExtractTop = 5
-
-func applyCLIExtractFlag(query *core.Query, extractTop int) error {
-	top, err := normalizeCLIExtractTop(extractTop)
-	if err != nil {
-		return err
-	}
-	if top == 0 {
-		return nil
-	}
-	if !config.Extract.Enabled {
-		return fmt.Errorf("extraction is disabled in config")
-	}
-	query.Extract = true
-	query.ExtractTop = top
-	query.ExtractMode = string(extractpkg.ModeAuto)
-	return nil
-}
-
-func normalizeCLIExtractTop(raw int) (int, error) {
-	if raw < 0 {
-		return 0, fmt.Errorf("--extract must be a non-negative integer")
-	}
-	if raw > maxCLIExtractTop {
-		return maxCLIExtractTop, nil
-	}
-	return raw, nil
-}
-
-// The CLI starts a browser only if extraction needs rendered HTML.
-func newCLIExtractor(captchaSolverEnabled bool, captchaSolverAPIKey string) (extractpkg.Extractor, func()) {
-	cfg := config.Extract.Normalized()
-	var browserMu sync.Mutex
-	var browser *core.Browser
-
-	closeExtractor := func() {
-		browserMu.Lock()
-		defer browserMu.Unlock()
-		if browser == nil {
-			return
-		}
-		if err := browser.Close(); err != nil {
-			logrus.WithError(err).Debug("Extraction browser close error")
-		}
-		browser = nil
-	}
-
-	extractor := extractpkg.Extractor{
-		Cfg: cfg,
-		RawFetch: func(ctx context.Context, req extractpkg.ExtractRequest) (*extractpkg.FetchResponse, error) {
-			return core.RawExtractFetch(ctx, req, cfg, config.Server.Insecure)
-		},
-		RenderedFetch: func(ctx context.Context, req extractpkg.ExtractRequest) (*extractpkg.FetchResponse, error) {
-			if err := validateCLIExtractTargetURL(ctx, req.URL, cfg.AllowPrivateNetworks); err != nil {
-				return nil, err
-			}
-			if core.IsAuthenticatedSocksProxyURL(req.ProxyURL) {
-				return nil, fmt.Errorf(
-					"%w: browser runtime does not support authenticated SOCKS proxy %s",
-					core.ErrProxyUnavailable,
-					core.MaskProxyURL(req.ProxyURL),
-				)
-			}
-
-			browserMu.Lock()
-			if browser == nil {
-				created, err := newCLIExtractBrowser(cfg, req.ProxyURL, captchaSolverEnabled, captchaSolverAPIKey)
-				if err != nil {
-					browserMu.Unlock()
-					return nil, err
-				}
-				browser = created
-			}
-			current := browser
-			browserMu.Unlock()
-
-			return core.RenderExtractHTML(ctx, current, req)
-		},
-	}
-	return extractor, closeExtractor
-}
-
-func newCLIExtractBrowser(cfg extractpkg.Config, proxyURL string, captchaSolverEnabled bool, captchaSolverAPIKey string) (*core.Browser, error) {
-	blockedResourceTypes, err := core.ParseBlockedResourceTypes(config.App.BlockResources)
-	if err != nil {
-		return nil, fmt.Errorf("invalid block_resources config: %w", err)
-	}
-	opts := core.BrowserOpts{
-		IsHeadless:           !config.App.IsBrowserHead && !config.Server.IsDebug,
-		IsLeakless:           config.App.IsLeakless,
-		Timeout:              cfg.Timeout,
-		LeavePageOpen:        false,
-		CaptchaSolverEnabled: captchaSolverEnabled,
-		CaptchaSolverApiKey:  captchaSolverAPIKey,
-		BrowserPath:          config.App.BrowserPath,
-		ProxyURL:             proxyURL,
-		Insecure:             config.Server.Insecure,
-		BlockResourceTypes:   blockedResourceTypes,
-		BlockTrackers:        config.App.BlockTrackers,
-	}
-	return core.NewBrowser(opts)
-}
-
-func validateCLIExtractTargetURL(ctx context.Context, rawURL string, allowPrivateNetworks bool) error {
-	targetURL := extractpkg.NormalizeURL(strings.TrimSpace(rawURL))
-	if allowPrivateNetworks {
-		parsed, err := url.ParseRequestURI(targetURL)
-		if err != nil {
-			return fmt.Errorf("invalid url: %w", err)
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return fmt.Errorf("url must use http or https")
-		}
-		return nil
-	}
-	return core.ValidatePublicHTTPURL(ctx, targetURL)
 }
 
 func normalizeSearchFormat(raw string) (string, error) {
@@ -417,8 +282,6 @@ func init() {
 	searchCMD.Flags().StringVar(&searchOpts.format, "format", "json", "Output format: json, text, markdown, ndjson")
 	searchCMD.Flags().BoolVar(&searchOpts.full, "full", false, "Include SERP features in text/markdown output")
 	searchCMD.Flags().BoolVar(&searchOpts.features, "features", false, "Parse SERP feature modules (browser mode)")
-	searchCMD.Flags().IntVar(&searchOpts.extract, "extract", 0, "Extract clean content from the top N organic results using auto mode (1-5)")
-	searchCMD.Flags().String("resolve-urls", "true", "Resolve Google redirect links to destination URLs: true, false, or top N")
 	searchCMD.Flags().IntVar(&searchOpts.timeout, "search-timeout", 60, "Overall search timeout in seconds")
 	RootCmd.AddCommand(searchCMD)
 }

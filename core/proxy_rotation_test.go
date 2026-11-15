@@ -32,10 +32,6 @@ func (e *captchaThenSuccessEngine) Search(ctx context.Context, q Query) ([]Searc
 	return nil, ErrCaptcha
 }
 
-func (e *captchaThenSuccessEngine) SearchImage(ctx context.Context, q Query) ([]SearchResult, error) {
-	return e.Search(ctx, q)
-}
-
 func (e *captchaThenSuccessEngine) attempts() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()

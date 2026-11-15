@@ -14,19 +14,19 @@ func TestDisabledEnginesAreLeftOutOfServe(t *testing.T) {
 	if err := initializeConfig(configCommand(t, "")); err != nil {
 		t.Fatal(err)
 	}
-	if !config.BingConfig.Disabled || config.GoogleConfig.Disabled {
-		t.Fatalf("disabled: bing=%v google=%v, want true false", config.BingConfig.Disabled, config.GoogleConfig.Disabled)
+	if !config.BingConfig.Disabled || config.BaiduConfig.Disabled {
+		t.Fatalf("disabled: bing=%v baidu=%v, want true false", config.BingConfig.Disabled, config.BaiduConfig.Disabled)
 	}
 
 	var names []string
 	for _, s := range browserEngineSpecs() {
 		names = append(names, s.name)
 	}
-	if slices.Contains(names, "bing") || !slices.Contains(names, "google") || len(names) != len(engineSpecs())-1 {
+	if slices.Contains(names, "bing") || !slices.Contains(names, "baidu") || len(names) != len(engineSpecs())-1 {
 		t.Fatalf("browser engines = %v, want every engine but bing", names)
 	}
-	if got := enabledEngineNames("google", "bing"); !slices.Equal(got, []string{"google"}) {
-		t.Fatalf("enabledEngineNames = %v, want [google]", got)
+	if got := enabledEngineNames("baidu", "bing"); !slices.Equal(got, []string{"baidu"}) {
+		t.Fatalf("enabledEngineNames = %v, want [baidu]", got)
 	}
 }
 

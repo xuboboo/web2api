@@ -5,7 +5,7 @@ web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/
 ## 执行模式
 
 - **浏览器模式（默认）**：`go-rod` + headless Chromium（容器内为 chromedp/headless-shell）。所有引擎都支持，能拿到 JS 水合后的结果。
-- **纯 HTTP 模式**：直接 HTTP + goquery 解析。由 `/{engine}/parse`、CLI 的 `--raw`、以及国内引擎的**兜底通道**共用。
+- **纯 HTTP 模式**：直接 HTTP + goquery 解析。由 CLI 的 `--raw`、以及国内引擎的**兜底通道**共用。
 - **双通道（国内引擎）**：浏览器通道被反爬拦截（captcha/timeout/block/parser）时，引擎自动改用 HTTP 通道拉取同一 URL；`core.CaptchaGate` 记录拦截状态，10 分钟内优先走 HTTP。
 
 ## 目录结构
@@ -14,28 +14,31 @@ web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/
 .
 ├── main.go
 ├── config.yaml                 # 本仓库国内部署配置
-├── baidu/ bing/ google/ yandex/ duckduckgo/ ecosia/ sogou/ so360/
+├── baidu/ bing/ sogou/ so360/
 │   ├── url.go                  # URL 构造（拒绝空查询、翻页换算）
 │   ├── selectors.go            # 选择器集中处（改版时优先改这里）
 │   ├── parse_html.go           # goquery 解析（纯函数，无网络）
 │   ├── search.go               # 浏览器通道 + 双通道编排
 │   ├── search_raw.go           # 纯 HTTP 通道（国内引擎均有）
+│   ├── index_check.go          # 收录判定入口（URL 为查询词 / bing "url:"）
 │   ├── features.go             # 可选：SERP 特性模块
 │   └── testdata/               # 真实 SERP 快照
 ├── core/
-│   ├── server.go               # 路由、handler、错误映射
+│   ├── server.go               # 路由（全部挂在 core.BasePath=/web-tool 下）、错误映射
 │   ├── common.go               # Query、引擎选项、结果工具
+│   ├── index_check.go          # 收录判定核心：归一化匹配、跳转解析、批量编排
 │   ├── browser.go              # 浏览器池、profile/lane、页面工具
 │   ├── http_client.go          # raw HTTP 客户端（tls-client）、GuardPrivateNetworks
 │   ├── resilient.go retry.go circuit_breaker.go   # 重试/熔断
 │   ├── captcha_gate.go         # 浏览器通道拦截门控
 │   ├── cache.go proxy*.go      # 响应缓存、代理策略与 lane
-│   ├── server_extract.go extract/                 # 正文提取
-│   ├── response*.go format_*.go clusters.go       # 响应构建与序列化
+│   ├── response*.go format_*.go                   # 响应构建与序列化
 │   └── enrichment_domain.go enrichment_domains.yaml
-├── cmd/                        # CLI：search / serve，引擎注册表
+├── platform/                   # 收录查询平台：API key/配额/用量(bbolt)、JWT 管理端、/v1 /api 路由
+├── web/admin/                  # 管理面板（纯静态零依赖，由 serve 挂在 /web-tool/ 下）
+├── cmd/                        # CLI：search / serve，引擎注册表与装配
 ├── deploy/                     # Docker 编排、E2E/稳态脚本、运维文档
-└── docs/                       # 架构、配置、测试、OpenAPI
+└── docs/                       # 架构、配置、测试
 ```
 
 ## 核心接口
@@ -43,10 +46,12 @@ web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/
 `core.SearchEngine`：
 
 - `Search(ctx, Query) ([]SearchResult, error)`
-- `SearchImage(ctx, Query) ([]SearchResult, error)`
 - `IsInitialized() bool`
 - `Name() string`
 - `GetRateLimiter() *rate.Limiter`
+
+收录判定另需实现 `core.IndexChecker`（`CheckIndexed(ctx, targetURL string, runtime Query)`），
+四个引擎均已实现；serve 模式下 `pooledBrowserEngine` 会把它转发给池内引擎实例。
 
 国内引擎额外导出包级 `SearchRaw(ctx, Query)`，供双通道兜底、CLI raw 模式与测试复用。
 
@@ -60,7 +65,6 @@ web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/
 
 - 文本与过滤：`text`、`site`、`file`、`date`（`YYYYMMDD..YYYYMMDD`）、`lang`、`region`
 - 分页与开关：`limit`（1–100，默认 10）、`start`（≥0）、`filter`、`features`
-- 提取：`extract`（bool 或 N≤5）、`extract_mode`（auto/fast/rendered）、`min_runes`
 - 跳转解析：`resolve_urls`（true/false/N）
 - 代理：`X-Use-Proxy`（direct/tag）、`X-Proxy-URL`、`X-Proxy-Country/Class/Provider/Session-ID`
 - 其它头：`X-Request-ID`、`X-Tenant`、`X-Use-Profile`
@@ -81,36 +85,43 @@ HTTP
  │         ├─ CaptchaGate 已拦截？→ SearchRaw
  │         ├─ 浏览器：Navigate → HTML → ParseHTML
  │         └─ 浏览器失败 → SearchRaw（HTTP 通道）
- ├─ 响应构建：稳定 ID、URL 规范化、pagination、domain_info/classification、图片元数据
- ├─ mega：URL 归一化去重 + clusters
+ ├─ 响应构建：稳定 ID、URL 规范化、pagination、domain_info/classification
  └─ 序列化：JSON / Markdown / text / NDJSON
+```
+
+收录判定流（`/web-tool/v1/index/check`，`core/index_check.go`）：
+
+```text
+APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1..20 URL）
+ └─ RunIndexCheckUnits：每 URL×引擎并发（≤8 worker），经 ResilientSearcher
+      ├─ engine.CheckIndexed（URL 为查询词；bing 用 "url:<url>"）
+      └─ EvaluateIndexSERP：候选跳转解析（/link、bing /ck/a）→ 归一化匹配
+           （host+path 相等 → indexed=true/exact，否则 none）
 ```
 
 ## 响应
 
-搜索信封（`/{engine}/search`、`/mega/search`）：
+搜索信封（`/web-tool/{engine}/search`）：
 
 - `query`：请求回显，含 `engines_requested`
 - `meta`：`request_id`、`requested_at`、`took_ms`、`engines_failed`、`version`
 - `results`：结构化结果（`rank`、`type`、`engine`、`title`、`url`、`domain`、`snippet` …）；跨页时 `rank` 为绝对排名
 - `pagination`：`page`、`has_more`、`next_start`
 - `serp_features`：非 organic 模块（相关搜索、answer box 等）
-- `clusters`：仅 `/mega/search`
 
-稳定 ID 前缀：`s_`（网页结果）、`i_`（图片）、`c_`（聚合簇）。
+稳定 ID 前缀：`s_`（网页结果）。
 
 响应头：`X-Request-ID`、`X-Cache`、`X-Fallback-Engine`、`X-Proxy-Mode/Tag/Used`、`X-Network-Bytes`、`X-Browser-Profile-Id`。
 
 错误体：`{"error","code","request_id","message","reason"?,"meta"?}`。引擎级错误把机器码放 `error`；参数校验错误 `error=bad_request`，具体原因放 `reason`（`INVALID_LIMIT` 等）。完整状态码表见根 README。
 
-## Mega 聚合
+## 收录判定（index check）
 
-`/mega/search`：
-
-- `engines` 指定引擎（空则用全部已启用引擎），先按别名归一化（`360`→`so360`、`duck`/`ddg`→`duckduckgo`）
-- `mode`：`balanced`（并行全部）、`any`（按序回退，首个成功即止）、`fast`（按熔断统计选最快引擎）
-- 允许部分成功，失败引擎写入 `meta.engines_failed`
-- 按归一化 URL 去重，构建 `clusters`（含逐引擎出现次数与排名），分数 = sum(1/rank)/引擎数，封顶 1.0
+- 查询词：baidu/sogou/so360 直接把目标 URL 当作查询词检索（limit 10）；bing 用 `"url:<url>"` 语法（最准）。
+- 候选跳转解析：sogou/so360 的 `/link` 在引擎内解析；漏网的 `baidu.com/link?url=`、`sogou.com/link`、`so.com/link` 由 core 复用 rawClickRequest 读 Location；bing 的 `/ck/a` 离线解码。
+- 归一化：协议与 host 小写、去默认端口、去 fragment、去尾部 `/`（根路径除外）、百分号解码；目标 URL 无 query 时忽略结果的 query，有 query 时参数排序后须相等。
+- 判定：host 与 path 相等 → `indexed=true, match="exact"`；否则 `indexed=false, match="none"`。
+- 准确率：以 URL 为查询词的引擎在“已收录但排名靠后”时会漏报（SERP 前 10 没有目标页）；bing 的 `url:` 语法最准。
 
 ## 弹性与反爬
 
@@ -130,6 +141,18 @@ HTTP
 ## 配置
 
 优先级：CLI > `WEB2API_*` 环境变量 > `config.yaml` > 默认值。逐项说明见 [CONFIGURATION.md](CONFIGURATION.md)。
+
+## 平台与装配（cmd/serve.go）
+
+- 所有路由（面板、`/v1/*`、`/api/*`、`/health /ready /stats`、`/{engine}/search`）统一挂载在
+  固定前缀 `core.BasePath = "/web-tool"` 之下，根路径 404；前缀不是配置项。
+- `cmd.mountPlatformAndPanel`：`platform.New(config.Platform, serv.EngineStatusSnapshot)`
+  → `RegisterAdmin`/`RegisterPublic`（根在 BasePath 的路由组）→ 静态面板 `web/admin`
+  以 fiber Static 挂在 BasePath（API 路由先注册，优先于静态通配）。
+- `platform.enabled=false` 只卸下 `/api/*` 与 `/v1/*`，面板静态页与健康端点保留。
+- 引擎清单/熔断状态的可复用数据源是 `Server.EngineStatusSnapshot()`，同时供给
+  `/web-tool/v1/engines` 与 `/web-tool/api/engines`。
+- 优雅关闭：`listenWithGracefulShutdown` 的 onClose 依次关闭浏览器池与 platform 存储。
 
 ## 测试
 

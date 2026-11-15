@@ -2,17 +2,12 @@ package cmd
 
 import (
 	"context"
-	"io"
 
 	"github.com/xuboboo/web2api/baidu"
 	"github.com/xuboboo/web2api/bing"
 	"github.com/xuboboo/web2api/core"
-	"github.com/xuboboo/web2api/duckduckgo"
-	"github.com/xuboboo/web2api/ecosia"
-	"github.com/xuboboo/web2api/google"
 	"github.com/xuboboo/web2api/so360"
 	"github.com/xuboboo/web2api/sogou"
-	"github.com/xuboboo/web2api/yandex"
 )
 
 // engineSpec is the single registry row for a search engine, driving CLI search,
@@ -24,7 +19,6 @@ type engineSpec struct {
 	aliases     []string
 	factory     func(core.Browser, core.SearchEngineOptions) core.SearchEngine
 	rawSearchFn func(context.Context, core.Query) ([]core.SearchResult, error)
-	parseHTMLFn func(io.Reader) ([]core.SearchResult, error)
 	cfg         *EngineConfig
 }
 
@@ -39,16 +33,14 @@ func (s engineSpec) opts() core.SearchEngineOptions {
 
 func engineSpecs() []engineSpec {
 	return []engineSpec{
-		{name: "google", factory: newEngine(google.New), rawSearchFn: google.Search, parseHTMLFn: google.ParseHTML, cfg: &config.GoogleConfig.EngineConfig},
-		{name: "yandex", factory: newEngine(yandex.New), rawSearchFn: yandex.Search, parseHTMLFn: yandex.ParseHTML, cfg: &config.YandexConfig},
-		{name: "baidu", factory: newEngine(baidu.New), rawSearchFn: baidu.SearchRaw, parseHTMLFn: baidu.ParseHTML, cfg: &config.BaiduConfig},
-		{name: "bing", factory: newBing, parseHTMLFn: bing.ParseHTML, cfg: &config.BingConfig.EngineConfig},
-		{name: "duckduckgo", aliases: []string{"duck", "ddg"}, factory: newEngine(duckduckgo.New), parseHTMLFn: duckduckgo.ParseHTML, cfg: &config.DuckDuckGoConfig},
-		{name: "ecosia", factory: newEngine(ecosia.New), rawSearchFn: ecosia.Search, parseHTMLFn: ecosia.ParseHTML, cfg: &config.EcosiaConfig},
-		// Mainland-China engines (browser-only: their SERPs hydrate result
-		// cards client-side, so there is no reliable raw HTTP mode).
-		{name: "sogou", factory: newEngine(sogou.New), rawSearchFn: sogou.SearchRaw, parseHTMLFn: sogou.ParseHTML, cfg: &config.SogouConfig},
-		{name: "so360", aliases: []string{"360"}, factory: newEngine(so360.New), rawSearchFn: so360.SearchRaw, parseHTMLFn: so360.ParseHTML, cfg: &config.So360Config},
+		{name: "baidu", factory: newEngine(baidu.New), rawSearchFn: baidu.SearchRaw, cfg: &config.BaiduConfig},
+		{name: "bing", factory: newBing, cfg: &config.BingConfig.EngineConfig},
+		// Mainland-China engines: a raw HTTP channel exists (rawSearchFn), but
+		// their SERPs hydrate result cards client-side, so raw output is
+		// inconsistent and may not even work — serve --raw registers them with
+		// that caveat, while bing stays browser-only (no rawSearchFn).
+		{name: "sogou", factory: newEngine(sogou.New), rawSearchFn: sogou.SearchRaw, cfg: &config.SogouConfig},
+		{name: "so360", aliases: []string{"360"}, factory: newEngine(so360.New), rawSearchFn: so360.SearchRaw, cfg: &config.So360Config},
 	}
 }
 

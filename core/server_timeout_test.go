@@ -11,10 +11,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// FP-2: every endpoint that doesn't manage its own deadline budget must get
-// one from RequestTimeoutMiddleware; /mega/* (MegaTimeout) and /extract,
-// /extract/batch (batch budget) keep theirs.
-func TestRequestTimeoutMiddlewareSetsDeadlineExceptBudgetedPaths(t *testing.T) {
+// FP-2: every request gets a wall-clock deadline from
+// RequestTimeoutMiddleware, regardless of the route.
+func TestRequestTimeoutMiddlewareSetsDeadline(t *testing.T) {
 	app := fiber.New()
 	app.Use(RequestTimeoutMiddleware(time.Minute))
 
@@ -29,17 +28,11 @@ func TestRequestTimeoutMiddlewareSetsDeadlineExceptBudgetedPaths(t *testing.T) {
 		}
 	}
 	app.Get("/google/search", record("/google/search"))
-	app.Post("/google/parse", record("/google/parse"))
-	app.Get("/mega/search", record("/mega/search"))
-	app.Get("/extract", record("/extract"))
-	app.Post("/extract/batch", record("/extract/batch"))
+	app.Get("/health", record("/health"))
 
 	for path, method := range map[string]string{
 		"/google/search": http.MethodGet,
-		"/google/parse":  http.MethodPost,
-		"/mega/search":   http.MethodGet,
-		"/extract":       http.MethodGet,
-		"/extract/batch": http.MethodPost,
+		"/health":        http.MethodGet,
 	} {
 		req := httptest.NewRequest(method, path, nil)
 		resp, err := app.Test(req, -1)
@@ -51,15 +44,9 @@ func TestRequestTimeoutMiddlewareSetsDeadlineExceptBudgetedPaths(t *testing.T) {
 		}
 	}
 
-	for path, want := range map[string]bool{
-		"/google/search": true,
-		"/google/parse":  true,
-		"/mega/search":   false,
-		"/extract":       false,
-		"/extract/batch": false,
-	} {
-		if deadlines[path] != want {
-			t.Errorf("%s: deadline attached = %v, want %v", path, deadlines[path], want)
+	for path := range deadlines {
+		if !deadlines[path] {
+			t.Errorf("%s: deadline attached = false, want true", path)
 		}
 	}
 }
@@ -114,7 +101,6 @@ func TestHungEngineReturns504RequestTimeoutAndServerSurvives(t *testing.T) {
 		name:        "google",
 		initialized: true,
 		searchFn:    hung,
-		imageFn:     hung,
 	}
 
 	opts := DefaultServerOptions()
@@ -122,7 +108,7 @@ func TestHungEngineReturns504RequestTimeoutAndServerSurvives(t *testing.T) {
 	opts.Resilience.Retry.MaxRetries = 0
 	srv := NewServerWithOptions("127.0.0.1", 7140, opts, engine)
 
-	for _, path := range []string{"/google/search?text=golang", "/google/image?text=golang"} {
+	for _, path := range []string{"/google/search?text=golang"} {
 		started := time.Now()
 		resp := request(t, srv, path)
 		if resp.StatusCode != http.StatusGatewayTimeout {

@@ -10,7 +10,6 @@ var Selectors = struct {
 	ResultItems      string
 	Results          string
 	Ads              string
-	ImageResults     string
 	Title            string
 	TitleFallbacks   []string
 	DescPrimary      string
@@ -34,11 +33,10 @@ var Selectors = struct {
 	SearchBox: "#sb_form_q",
 	// ResultItems matches the main-column children only, so carousels and
 	// "related searches" cards that reuse b_algo-style markup are excluded.
-	ResultItems:  "#b_results > li.b_algo, #b_results > li.b_ad",
-	Results:      "li.b_algo",
-	Ads:          "li.b_ad",
-	ImageResults: "a.iusc, div.iuscp, div.isv",
-	Title:        "h2 a",
+	ResultItems: "#b_results > li.b_algo, #b_results > li.b_ad",
+	Results:     "li.b_algo",
+	Ads:         "li.b_ad",
+	Title:       "h2 a",
 	// TitleFallbacks are tried when the primary Title selector matches but
 	// yields empty text (Bing occasionally renders an empty <h2><a/></h2>
 	// while the visible label sits in aria-label or h2).

@@ -9,6 +9,10 @@ type APIError struct {
 	Reason     string
 	Message    string
 	Meta       map[string]interface{}
+	// RetryAfterSeconds, when > 0, is echoed by the JSON error middleware as
+	// the Retry-After response header and a top-level retry_after_seconds
+	// body field (契约 A/B: 429/503 一律带 Retry-After).
+	RetryAfterSeconds int
 }
 
 func (e *APIError) Error() string {
@@ -44,4 +48,12 @@ func errInvalidParam(msg string) *APIError {
 
 func errEmptyQuery() *APIError {
 	return &APIError{HTTPStatus: 400, Reason: ReasonEmptyQuery, Message: "query cannot be empty: provide text, site, or file parameter"}
+}
+
+// ReasonTooManyURLs marks index-check requests whose URL list exceeds the
+// platform contract maximum (20).
+const ReasonTooManyURLs = "TOO_MANY_URLS"
+
+func errTooManyURLs(msg string) *APIError {
+	return &APIError{HTTPStatus: 400, Reason: ReasonTooManyURLs, Message: msg}
 }

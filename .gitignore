@@ -43,3 +43,13 @@ demo.yml
 docs/demo.tape
 docs/demo.Dockerfile
 .mimosa/
+
+# 平台运行时数据(bbolt 数据库、JWT 密钥、JSON fallback)
+data/
+
+# QA 运行时工作区(用后即弃的验证环境与一次性配置),不覆盖 qa/ 目录
+# —— qa/(验收证据、参考截图)保留在版本库
+data-qa*
+config-qa*
+deploy/e2e-results/
+server-*.log

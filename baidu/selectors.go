@@ -2,28 +2,26 @@ package baidu
 
 // Selectors is the single source of truth for Baidu SERP CSS selectors.
 var Selectors = struct {
-	Captcha       string
-	Timeout       string
-	NoResults     string
-	Results       string
-	ResultsAlt    []string
-	AdMarkers     []string
-	ImageJSONRoot []string
-	Link          string
-	Desc          string
+	Captcha    string
+	Timeout    string
+	NoResults  string
+	Results    string
+	ResultsAlt []string
+	AdMarkers  []string
+	Link       string
+	Desc       string
 	// DescAlt are additional description containers tried when Desc misses.
 	// Baidu varies abstract markup across feature blocks (info cards, news rows).
 	DescAlt []string
 }{
-	Captcha:       "div.passMod_dialog-wrapper",
-	Timeout:       "button.timeout-button",
-	NoResults:     "div.content_none, div.nors",
-	Results:       "#content_left div.result.c-container",
-	ResultsAlt:    []string{"#content_left div.result-op.c-container", "div.c-container.new-pmd"},
-	AdMarkers:     []string{"[data-tuiguang]", "[data-click*='tuiguang']", ".ec-tuiguang", ".c-icon-bear-p"},
-	ImageJSONRoot: []string{"body > pre", "pre"},
-	Link:          "a",
-	Desc:          "div.c-abstract",
+	Captcha:    "div.passMod_dialog-wrapper",
+	Timeout:    "button.timeout-button",
+	NoResults:  "div.content_none, div.nors",
+	Results:    "#content_left div.result.c-container",
+	ResultsAlt: []string{"#content_left div.result-op.c-container", "div.c-container.new-pmd"},
+	AdMarkers:  []string{"[data-tuiguang]", "[data-click*='tuiguang']", ".ec-tuiguang", ".c-icon-bear-p"},
+	Link:       "a",
+	Desc:       "div.c-abstract",
 	// DescAlt matches Baidu's hashed abstract containers by class *prefix*
 	// ([class*='summary-gap_']) rather than a frozen hash suffix
 	// (.summary-gap_3Jb4I): Baidu rotates the trailing hash per build (the same

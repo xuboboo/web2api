@@ -32,29 +32,9 @@ func RenderText(env *Envelope) []byte {
 			fmt.Fprintf(&b, "%s\n", r.Snippet)
 		}
 		fmt.Fprintf(&b, "URL: %s\n\n", r.URL)
-		if r.Extracted != nil && r.Extracted.Content != "" {
-			b.WriteString("Extracted content:\n")
-			b.WriteString(r.Extracted.Content)
-			b.WriteString("\n\n")
-		}
 	}
 
 	renderTextFeatures(&b, env.SerpFeatures, featureRenderOrderAfterResults(env.SerpFeatures))
-
-	return []byte(b.String())
-}
-
-// RenderTextImage formats an ImageEnvelope as plain text.
-func RenderTextImage(env *ImageEnvelope) []byte {
-	var b strings.Builder
-
-	fmt.Fprintf(&b, "Image search: %s\n\n", env.Query.Text)
-
-	for i, r := range env.Results {
-		fmt.Fprintf(&b, "[%d] %s (%s)\n", i+1, r.Title, r.Source.Domain)
-		fmt.Fprintf(&b, "Image: %s\n", r.Image.URL)
-		fmt.Fprintf(&b, "Page: %s\n\n", r.Source.PageURL)
-	}
 
 	return []byte(b.String())
 }
@@ -67,15 +47,6 @@ func RenderNDJSON(env *Envelope) []byte {
 	}
 	for _, feature := range env.SerpFeatures {
 		writeNDJSONLine(&b, "feature", feature)
-	}
-	return []byte(b.String())
-}
-
-// RenderNDJSONImage formats an ImageEnvelope as newline-delimited JSON.
-func RenderNDJSONImage(env *ImageEnvelope) []byte {
-	var b strings.Builder
-	for _, r := range env.Results {
-		writeNDJSONLine(&b, "result", r)
 	}
 	return []byte(b.String())
 }
