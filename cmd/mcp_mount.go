@@ -33,9 +33,10 @@ func mountMCP(app *fiber.App, serv *core.Server, plat *platform.Platform) {
 	mcp.Version = version
 
 	deps := mcp.Deps{
-		Search:        serv.SearchViaEngine,
-		CheckIndexed:  serv.CheckIndexBatch,
-		EnginesStatus: serv.EnginesStatusWithCooldown,
+		Search:          serv.SearchViaEngine,
+		CheckIndexed:    serv.CheckIndexBatch,
+		EnginesStatus:   serv.EnginesStatusWithCooldown,
+		OriginAllowlist: config.Security.MCPAllowedOrigins,
 	}
 	if err := mcp.Register(root, plat.AuthAny(), deps); err != nil {
 		logrus.WithError(err).Error("MCP Agent 平面挂载失败(已跳过;其余 API 不受影响)")

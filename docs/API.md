@@ -148,7 +148,7 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 字段说明：
 
-- 成功单元：`indexed`（是否收录）、`match`（仅 `exact` / `none` 两种取值）、`matched_result_url`（命中的候选地址，`match=none` 时无此字段）、`total_results`（SERP 内 organic 条数）、`took_ms`（该单元耗时）。
+- 成功单元：`indexed`（是否收录）、`match`（仅 `exact` / `none` 两种取值）、`matched_result_url`（命中的候选地址，`match=none` 时字段存在但为空串 `""`，解析方按空串判断即可）、`total_results`（SERP 内 organic 条数）、`took_ms`（该单元耗时）。
 - 失败单元：`error.code` / `error.message`，错误码与搜索端点同表（见 §7.2），例如 `blocked`、`captcha_detected`、`circuit_open`、`not_implemented`。
 - `meta.units = len(urls) × len(engines)`，即本次计费 unit 数。
 - `meta.engines_cooldown`：请求发出时已处于冷却期的引擎列表，元素为 `{"engine","until","reason"}`；`reason` 为 `COOLDOWN`（自然冷却）或 `FORCED`（运维强制冷却）。冷却中的引擎不会对真实引擎发请求——若**部分**引擎冷却，其余单元照常执行（200 信封内冷却单元的 `error.code` 为 `engine_cooldown`，附 `retry_after_seconds`）；若**所选引擎全部**冷却，整个请求 503（§1.3）。
@@ -786,9 +786,13 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
 ## 9. 计费口径
 
 - 单位：**1 URL × 1 引擎 = 1 unit**。`/web-tool/v1/index/check` 计 `len(urls) × len(engines)`；MCP `web_search` 计 1；MCP `check_indexed` 计 `len(urls) × len(engines)`。`/web-tool/v1/quota`、`/web-tool/v1/engines`、MCP `get_quota`、`list_engines`、管理 API、`/web-tool/api/playground/check` 不计费。
-- **扣费时点**：请求以 **HTTP 200 完成**即全额扣费。200 信封内个别引擎单元失败（`results[].engines.<engine>.error`）**不退费**——检索动作已发生。4xx（401/400）与配额预检 429、冷却 503 不扣费、不写用量记录。
-- 注意：这**不是**"仅成功计费"——引擎级失败单元包含在 200 信封内时同样计费。对计费敏感的批量任务建议：先小批量探测引擎健康度（`GET /web-tool/v1/engines` / `list_engines`），避开冷却与熔断中的引擎，再放大批量。
+- **扣费时点**：请求以 **HTTP 200 完成**即扣费，但按响应信封**逐引擎核对，仅成功单元计费**——200 信封内引擎级失败的单元（`results[].engines.<engine>.error`，含 `engine_cooldown` 冷却、`circuit_open` 熔断等）**不计费**。响应信封无法解析时按请求单元全额计费（兜底口径）。4xx（401/400）与配额预检 429、冷却 503 **不扣费**。MCP 平面与 `/v1` 同口径：`check_indexed` 的工具结果（`result.content[].text`）携带逐引擎明细时按成功单元计费；明细不可解析（`web_search` 结果、工具级错误信封）时按请求单元全额计费。
+- **用量日志如实化（B-01）**：被拒绝的请求（400 参数错误、401/403、429 配额与限速、503 冷却/熔断快速失败）同样写入用量日志，但 `status` 记录真实终态码、`units=0`，并携带 `outcome` 字段：`billed`（200 完成）/ `engine_failed`（5xx 引擎失败）/ `rejected`（未进入业务逻辑）。MCP 计费记录的 `outcome` 与 `/v1` 同规则落账。S4 之前的存量记录无 `outcome` 字段，按 reached 计。
+- **管理统计口径（P-01）**：`GET /api/stats/overview` 的 `today_calls`/`total_calls`/`success_rate_24h` 统计**有效调用**（到达业务逻辑的 billed+engine_failed），参数错误、配额与限速拒绝、冷却拒绝不计入；`today_calls_all`（今日全部请求）与 `rejected_today_24h`（24h 内拒绝数）为 additive 字段。口径变化在发布说明中说明,历史记录无法回填。
+- 对账：`GET /api/reconcile` 按日核对「落账 units」与「逐引擎成功单元数」；携带逐引擎明细的记录逐条核对，无明细的记录（MCP `web_search`、信封解析失败的存量数据）按落账口径计入、不判 mismatch。
+- 对计费敏感的批量任务建议：先小批量探测引擎健康度（`GET /web-tool/v1/engines` / `list_engines`），避开冷却与熔断中的引擎，再放大批量——冷却/熔断单元虽不计费，但整请求会因此缩水。
 - 配额维度：`daily_quota`（本地日重置，0 = 不限）与 `used_total`（累计）；用量日志（`/web-tool/api/usage`）逐笔记录 units、HTTP 状态与各引擎成功/失败数。
+- **配额硬上限语义（B-15）**：配额为「预检-事后扣减」两段式——并发在途请求可轻微超出 `daily_quota`（每请求最多超额「在途 units-1」）；扣减在 bbolt 单事务内完成,**无丢账**。严格 Reservation 语义（先记账后执行、失败回滚）未实现;对账接口 `GET /api/reconcile` 可核对扣费与流水差异。
 - 免费额度、QPS 分级等商用配额策略当前未实现；自托管场景配额即自我约束工具。
 
 ---
@@ -811,22 +815,38 @@ Agent 平面
   GET  /web-tool/llms.txt              Agent 能力清单
 
 控制平面（JWT）
-  POST   /web-tool/api/auth/login                                      登录（失败锁定）
-  POST   /web-tool/api/auth/password                                   修改密码（旧 token 全失效）
-  GET    /web-tool/api/me                                              当前管理员概览
-  POST   /web-tool/api/keys                                            创建 key（完整 key 仅此一次）
+  POST   /web-tool/api/auth/login                                      登录（失败锁定；同时下发 httpOnly 会话 cookie）
+  POST   /web-tool/api/auth/logout                                     退出登录（撤销当前会话 + 清 cookie, S4）
+  POST   /web-tool/api/auth/refresh                                    会话滑动续期（新 token 同会话, S4）
+  POST   /web-tool/api/auth/password                                   修改密码（旧 token 与全部会话失效）
+  GET    /web-tool/api/me                                              当前管理员概览（含应用版本号）
+  GET    /web-tool/api/runtime                                         运行时指标 goroutine/内存/Go 版本（S4,自 /health 收敛）
+  POST   /web-tool/api/keys                                            创建 key（完整 key 仅此一次；支持 expires_at/allowed_ips）
   GET    /web-tool/api/keys                                            key 列表
-  PATCH  /web-tool/api/keys/:id                                        改名/禁用/改配额
+  PATCH  /web-tool/api/keys/:id                                        改名/禁用/改配额/过期时间/IP 白名单
+  POST   /web-tool/api/keys/:id/rotate                                 轮换 key（旧 key 即时失效,计数保留, S4）
   DELETE /web-tool/api/keys/:id                                        删除 key
-  GET    /web-tool/api/stats/overview                                  总览
+  GET    /web-tool/api/stats/overview                                  总览（B-01 有效调用口径 + additive 字段）
   GET    /web-tool/api/stats/timeseries?days=14                        日粒度时序
-  GET    /web-tool/api/usage?limit=&offset=&key_id=                    用量日志
+  GET    /web-tool/api/usage?limit=&offset=&key_id=&from=&to=          用量日志（S4 增 from/to）
+  GET    /web-tool/api/usage/export?format=csv|json&key_id=&from=&to=  用量导出下载（S4）
+  GET    /web-tool/api/reconcile?date=YYYY-MM-DD                       扣费-流水对账（S4）
   GET    /web-tool/api/engines                                         引擎状态机（含冷却）
   POST   /web-tool/api/engines/:name/cooldown/reset                    强制恢复
   POST   /web-tool/api/engines/:name/cooldown/force                    强制冷却 {"minutes":N}
+  GET    /web-tool/api/sessions                                        管理员会话列表（S4）
+  DELETE /web-tool/api/sessions/:id                                    撤销会话（撤销当前会话=退出, S4）
+  GET    /web-tool/api/audit?limit=&offset=                            安全审计轨迹（S4）
+  GET    /web-tool/api/admin/backup                                    下载数据一致性快照（S4）
   POST   /web-tool/api/playground/check                                控制台在线调试（不计费）
 
-健康与观测（免鉴权）
+健康与观测
   GET  /web-tool/health  /web-tool/ready  /web-tool/stats
   GET  /web-tool/stats/cache  /web-tool/stats/proxy  /web-tool/stats/cb
+  GET  /web-tool/metrics                        OpenMetrics 指标（security.metrics_token Bearer 或仅 loopback, S4）
+
+CLI（停服态, S4）
+  web2api admin-backup   --out <file>     备份 bbolt 快照
+  web2api admin-restore  --in <file>      校验并恢复快照
+  web2api admin-reset                     停服重置管理员密码
 ```

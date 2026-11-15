@@ -107,12 +107,7 @@ func serve(cmd *cobra.Command, args []string) error {
 	corsCfg.AllowHeaders = config.CORS.AllowHeaders
 	corsCfg.MaxAge = config.CORS.MaxAge
 
-	warnIfExposedWithoutAuth(config.Server.Host, corsCfg.AllowOrigins)
-	// 契约 B: shout about the shipped default password on any non-loopback
-	// bind — it is the only thing standing between the panel and the internet.
-	if config.Platform.Enabled && config.Platform.AdminPassword == "admin123" && !isLoopbackHost(config.Server.Host) {
-		logrus.Warn("SECURITY: 平台管理员密码仍为默认 admin123 且服务绑定在非 loopback 地址,请立即通过 config.platform.admin_password 或面板「系统设置」修改")
-	}
+	logSecurityPosture(corsCfg.AllowOrigins)
 
 	captchaSolverEnabled, captchaSolverAPIKey, err := resolveCaptchaSolverConfig()
 	if err != nil {
@@ -208,6 +203,10 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 			return nil, fmt.Errorf("platform init: %w", err)
 		}
 		plat.SetSecurity(config.Security)
+		plat.SetVersion(version)
+		plat.SetAuditRotation(config.App.LogMaxMB, config.App.LogBackups)
+		// B-06: /health.storage 探针字段(bbolt|json;平台关闭时省略)。
+		serv.SetStorageKind(plat.StoreKind())
 		dataPlaneAuth.Store(plat)
 		// RegisterAdmin/RegisterPublic mount literal /api/* and /v1/* paths on
 		// the given router, so the router must be rooted at BasePath (passing
@@ -472,22 +471,22 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	"form-action 'self'"
 
 // securityHeadersHandler sets the site-wide security response headers on every
-// response (审计 A-19). CSP runs in enforcement mode everywhere except the
-// admin console, whose inline-script surface is not yet fully audited — there
-// the identical value goes out as Content-Security-Policy-Report-Only so
-// violations are observable without breaking the panel. httpOnly Cookie
-// 迁移(管理员 JWT 目前在 localStorage)为评估项,本期不动代码,由 CSP 先兜底。
+// response (审计 A-19). S4-B-12: the console CSP graduates from Report-Only to
+// enforcement — the theme pre-boot script was externalized to
+// assets/theme-boot.js (S3), so the console no longer ships inline scripts.
+// S4-B-14: when security.trust_proxy_headers=true and the request arrived via
+// https (X-Forwarded-Proto), Strict-Transport-Security is issued — only for
+// TLS-terminating reverse-proxy deployments, never for plain HTTP.
 func securityHeadersHandler() fiber.Handler {
-	consolePrefix := core.BasePath + "/console"
+	trustProxy := config.Security.TrustProxyHeaders
 	return func(c *fiber.Ctx) error {
 		c.Set(fiber.HeaderXContentTypeOptions, "nosniff")
 		c.Set(fiber.HeaderReferrerPolicy, "strict-origin-when-cross-origin")
 		c.Set(fiber.HeaderXFrameOptions, "DENY")
-		if strings.HasPrefix(c.Path(), consolePrefix) {
-			c.Set("Content-Security-Policy-Report-Only", contentSecurityPolicy)
-		} else {
-			c.Set("Content-Security-Policy", contentSecurityPolicy)
+		if trustProxy && strings.EqualFold(strings.TrimSpace(c.Get("X-Forwarded-Proto")), "https") {
+			c.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
+		c.Set("Content-Security-Policy", contentSecurityPolicy)
 		return c.Next()
 	}
 }
@@ -504,8 +503,10 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 	opts := core.ServerOptions{
 		CacheTTL:               time.Duration(config.Cache.TTLSeconds) * time.Second,
 		CacheMaxSize:           config.Cache.MaxSize,
+		IndexCheckCacheTTL:     time.Duration(config.Cache.IndexCheckTTLSeconds) * time.Second,
 		EnableCORS:             config.CORS.Enabled,
 		CORS:                   corsCfg,
+		MetricsToken:           config.Security.MetricsToken,
 		AllowEndpointFallback:  config.Resilience.AllowEndpointFallback,
 		EnableDebugEndpoints:   config.App.DebugEndpoints,
 		FingerprintArtifactDir: core.DefaultFingerprintArtifactDir,
@@ -535,19 +536,46 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 
 const gracefulShutdownTimeout = 30 * time.Second
 
-// warnIfExposedWithoutAuth shouts when the API will be reachable beyond
-// loopback while CORS lets any origin in and there is no auth layer — the API
-// can drive browser renders per request, so this combination turns the service
-// into a browser-reachable compute amplifier.
-func warnIfExposedWithoutAuth(host, allowOrigins string) {
-	if isLoopbackHost(host) {
-		return
+// logSecurityPosture prints the startup SECURITY posture (S4-B-03 出厂安全
+// 姿态): one INFO line summarizing the effective posture, plus a per-condition
+// SECURITY banner — 非 loopback 绑定 / 数据面无鉴权 / 允许自带代理 URL 任一即列.
+// Code defaults stay compatible with existing deployments; the shipped
+// config template carries the safe defaults (B-03), so a fresh deploy that
+// keeps the template is clean out of the box.
+func logSecurityPosture(allowOrigins string) {
+	corsDisplay := strings.TrimSpace(allowOrigins)
+	if corsDisplay == "" {
+		corsDisplay = "*"
 	}
-	if strings.TrimSpace(allowOrigins) != "*" {
-		return
+	logrus.WithFields(logrus.Fields{
+		"host":                          config.Server.Host,
+		"port":                          config.Server.Port,
+		"data_plane_auth":               config.Security.DataPlaneAuth,
+		"cors_allow_origins":            corsDisplay,
+		"allow_request_proxy_url":       config.Proxies.AllowRequestProxyURL,
+		"trust_proxy_headers":           config.Security.TrustProxyHeaders,
+		"api_rate_per_minute":           config.Security.APIRatePerMinute,
+		"unauth_rate_per_minute":        config.Security.UnauthRatePerMinute,
+		"admin_rate_per_minute":         config.Security.AdminRatePerMinute,
+		"admin_rate_per_ip":             config.Security.AdminRatePerIP,
+	}).Info("SECURITY POSTURE: " + fmt.Sprintf("http://%s:%d%s (数据面鉴权=%v, CORS=%s, 自带代理=%v)",
+		config.Server.Host, config.Server.Port, core.BasePath,
+		config.Security.DataPlaneAuth, corsDisplay, config.Proxies.AllowRequestProxyURL))
+
+	if !isLoopbackHost(config.Server.Host) {
+		logrus.Warn("SECURITY: 服务绑定在非 loopback 地址(" + config.Server.Host + ") — API 可被网络内任意主机访问;单机部署请改绑 127.0.0.1,或在前置反代上限制来源")
 	}
-	logrus.Warn("SECURITY: server host is not loopback while CORS allows all origins and the API has no auth layer. " +
-		"Any website can drive this service from a visitor's browser. Bind to 127.0.0.1, restrict cors.allow_origins, or put an authenticating reverse proxy in front.")
+	if !config.Security.DataPlaneAuth {
+		logrus.Warn("SECURITY: 数据面鉴权未开启(security.data_plane_auth=false)—— /{engine}/search 与 /stats/* 对任何来源匿名可用,浏览器可达的算力放大器;生产环境请开启数据面鉴权")
+	}
+	if config.Proxies.AllowRequestProxyURL {
+		logrus.Warn("SECURITY: 允许调用方自带代理 URL(proxies.allow_request_proxy_url=true)—— 调用方可驱使本机浏览器经任意代理发起请求;非必要请关闭")
+	}
+	// 契约 B: shout about the shipped default password on any non-loopback
+	// bind — it is the only thing standing between the panel and the internet.
+	if config.Platform.Enabled && config.Platform.AdminPassword == "admin123" && !isLoopbackHost(config.Server.Host) {
+		logrus.Warn("SECURITY: 平台管理员密码仍为默认 admin123 且服务绑定在非 loopback 地址,请立即通过 config.platform.admin_password 或面板「系统设置」修改")
+	}
 }
 
 func isLoopbackHost(host string) bool {
@@ -563,12 +591,14 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// listenWithGracefulShutdown runs the serve loop and drains traffic on the
+// first stop signal. T-01(Windows 退出码): 排水成功后显式 os.Exit(0)——Windows
+// 控制台以 CTRL_C/CTRL_BREAK 投递停止信号时,进程此前以 0xC000013A
+// (STATUS_CONTROL_C_EXIT)收尾而非 0;signal.Notify 只保证排水流程执行,控制台
+// 默认处理仍可能把退出码带偏。另注:syscall.SIGTERM 的注册仅在 Unix 可投递,
+// Windows 停机请用控制台事件(Ctrl+C / taskkill 无 /F 触发 CTRL_BREAK)或服务
+// 包装器(见 docs/CONFIGURATION.md 运维注记)。
 func listenWithGracefulShutdown(serv *core.Server, onShutdown func() error) (err error) {
-	if onShutdown != nil {
-		defer func() {
-			err = errors.Join(err, onShutdown())
-		}()
-	}
 	listenErrCh := make(chan error, 1)
 	go func() {
 		listenErrCh <- serv.Listen()
@@ -580,6 +610,11 @@ func listenWithGracefulShutdown(serv *core.Server, onShutdown func() error) (err
 
 	select {
 	case err := <-listenErrCh:
+		// Listen itself failed (port busy etc.): release resources and surface
+		// the listen error — exit code stays non-zero via the caller.
+		if onShutdown != nil {
+			err = errors.Join(err, onShutdown())
+		}
 		return err
 	case sig := <-sigCh:
 		logrus.WithField("signal", sig.String()).Info("Shutdown signal received, draining traffic")
@@ -596,7 +631,18 @@ func listenWithGracefulShutdown(serv *core.Server, onShutdown func() error) (err
 		shutdownErr = errors.Join(shutdownErr, listenErr)
 	}
 
-	return shutdownErr
+	if onShutdown != nil {
+		shutdownErr = errors.Join(shutdownErr, onShutdown())
+	}
+
+	if shutdownErr != nil {
+		return shutdownErr
+	}
+
+	// 排水、日志/存储关闭全部完成后统一退出码为 0(Windows: 显式退出绕开
+	// 控制台事件默认处理的 STATUS_CONTROL_C_EXIT 收尾)。
+	os.Exit(0)
+	return nil
 }
 
 func waitForListenExit(listenErrCh <-chan error) error {

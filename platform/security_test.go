@@ -654,3 +654,124 @@ func TestMCPToolUnitsParsing(t *testing.T) {
 		t.Fatal("test fixture drift")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// T-02 / T-03: MCP 计费与 /v1 同口径(成功单元计费 + EngineStats + outcome)
+// ---------------------------------------------------------------------------
+
+// mcpToolTextEnvelope wraps a tool payload as the MCP tools/call response shape
+// ({result:{content:[{type:"text",text:"<JSON字符串>"}]}}).
+func mcpToolTextEnvelope(t *testing.T, payload map[string]any) []byte {
+	t.Helper()
+	text, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 1,
+		"result": map[string]any{
+			"content": []map[string]any{{"type": "text", "text": string(text)}},
+			"isError": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	return body
+}
+
+// TestAuthAnyMCPChargesEngineOKUnits (T-02/T-03): a check_indexed MCP call whose
+// tool text carries the per-engine envelope is charged per OK unit and journals
+// engine_stats + outcome exactly like the /v1 plane.
+func TestAuthAnyMCPChargesEngineOKUnits(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	token := login(t, env.app)
+	_, key := createKey(t, env, token, "mcp-ok", 0)
+
+	app := fiber.New()
+	app.Post("/web-tool/mcp", env.p.AuthAny(), func(c *fiber.Ctx) error {
+		payload := map[string]any{
+			"results": []map[string]any{
+				{"url": "https://a.example.com/", "engines": map[string]any{
+					"baidu": map[string]any{"indexed": true, "match": "none", "matched_result_url": "", "total_results": 3, "took_ms": 12},
+					"sogou": map[string]any{"error": map[string]any{"code": 503, "message": "engine_cooldown"}},
+				}},
+			},
+		}
+		return c.Send(mcpToolTextEnvelope(t, payload))
+	})
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_indexed","arguments":{"urls":["https://a.example.com/"],"engines":["baidu","sogou"]}}}`
+	status, _, _ := doJSONErr(t, app, http.MethodPost, "/web-tool/mcp", json.RawMessage(body), keyHeaders(key))
+	if status != http.StatusOK {
+		t.Fatalf("mcp check_indexed: status=%d", status)
+	}
+	// 成功单元计费: baidu 1,sogou error 单元不计费(请求全额应为 2)。
+	if used := quotaUsedToday(t, env.app, key); used != 1 {
+		t.Fatalf("charged %v units, want 1 (engine OK units)", used)
+	}
+
+	// outcome 与 units 走 /api/usage 列表视图(engine_stats 不在该视图契约里)。
+	status, bodyOut, _ := doJSONErr(t, env.app, http.MethodGet, "/api/usage?limit=5", nil, adminHeaders(token))
+	if status != http.StatusOK {
+		t.Fatalf("usage: status=%d", status)
+	}
+	items := bodyOut["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("usage items: %v", bodyOut)
+	}
+	rec := items[0].(map[string]any)
+	if rec["outcome"] != "billed" {
+		t.Fatalf("MCP usage record outcome = %v, want billed (T-03)", rec["outcome"])
+	}
+	if rec["units"] != float64(1) {
+		t.Fatalf("MCP usage record units = %v, want 1", rec["units"])
+	}
+
+	// engine_stats 落账与否经 reconcile 验证: journaled=1(charged=1, 无 mismatch)。
+	status, rc, _ := doJSONErr(t, env.app, http.MethodGet, "/api/reconcile", nil, adminHeaders(token))
+	if status != http.StatusOK {
+		t.Fatalf("reconcile: %d %v", status, rc)
+	}
+	if rc["charged_units"] != float64(1) || rc["journaled_units"] != float64(1) || rc["mismatch_count"] != float64(0) {
+		t.Fatalf("reconcile must see MCP engine_stats: %v", rc)
+	}
+	if rc["unverified_count"] != float64(0) {
+		t.Fatalf("reconcile unverified: %v", rc)
+	}
+}
+
+// TestReconcileIgnoresRecordsWithoutEngineStats (T-02): 无引擎明细的记录
+// (MCP web_search 等)按落账口径计入、不判 mismatch;有明细的记录正常对账。
+func TestReconcileIgnoresRecordsWithoutEngineStats(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	token := login(t, env.app)
+	keyID, _ := createKey(t, env, token, "reconcile-mcp", 0)
+
+	// 无引擎明细(MCP web_search 类): charged 1, engine_stats nil。
+	if err := env.p.ChargeUsage(keyID, 1, "/web-tool/mcp", http.StatusOK, 10); err != nil {
+		t.Fatalf("ChargeUsage: %v", err)
+	}
+	// 有引擎明细: charged 2 == engine OK 2。
+	stats := map[string]EngineStat{
+		"baidu": {Calls: 1, OK: 1},
+		"bing":  {Calls: 1, OK: 1},
+	}
+	if err := env.p.chargeUsage(keyID, 2, "/web-tool/mcp", http.StatusOK, 10, stats); err != nil {
+		t.Fatalf("chargeUsage: %v", err)
+	}
+
+	status, body, _ := doJSONErr(t, env.app, http.MethodGet, "/api/reconcile", nil, adminHeaders(token))
+	if status != http.StatusOK {
+		t.Fatalf("reconcile: %d %v", status, body)
+	}
+	if body["mismatch_count"] != float64(0) {
+		t.Fatalf("reconcile mismatch: %v", body)
+	}
+	if body["charged_units"] != float64(3) || body["journaled_units"] != float64(3) {
+		t.Fatalf("reconcile totals: %v", body)
+	}
+	if body["unverified_count"] != float64(1) {
+		t.Fatalf("reconcile unverified: %v", body)
+	}
+}

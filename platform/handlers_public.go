@@ -27,12 +27,35 @@ type quotaResponse struct {
 // indexCheck is the index module's handler (func(c *fiber.Ctx) error); it runs
 // behind APIKeyGuard and can read the platform_units/platform_urls/
 // platform_engines locals injected by the guard.
+//
+// T-04: 未注册的 HTTP 方法在每个数据面路径上显式回答 405 method_not_allowed
+// (与 MCP 面 GET /mcp 的先例一致),不再落入静态 404 兜底返回
+// {"error":"not_found"}。OPTIONS 留空给 CORS 预检,不在此注册。
 func (p *Platform) RegisterPublic(app fiber.Router, indexCheck fiber.Handler) {
 	guard := p.APIKeyGuard()
 	app.Post("/v1/index/check", guard, indexCheck)
 	app.Get("/v1/index/check", guard, indexCheck)
 	app.Get("/v1/quota", guard, p.handleQuota)
 	app.Get("/v1/engines", guard, p.handleEngines)
+
+	// 数据面路径上未注册方法的显式 405(契约口径: 405 优先于 404 兜底)。
+	methodNotAllowed := func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusMethodNotAllowed, "Method Not Allowed")
+	}
+	registerMethodNotAllowed := func(path string, exclude ...string) {
+		excluded := make(map[string]bool, len(exclude))
+		for _, m := range exclude {
+			excluded[m] = true
+		}
+		for _, m := range []string{fiber.MethodPost, fiber.MethodPut, fiber.MethodDelete, fiber.MethodPatch} {
+			if !excluded[m] {
+				app.Add(m, path, methodNotAllowed)
+			}
+		}
+	}
+	registerMethodNotAllowed("/v1/index/check", fiber.MethodPost)
+	registerMethodNotAllowed("/v1/quota", fiber.MethodGet)
+	registerMethodNotAllowed("/v1/engines", fiber.MethodGet)
 }
 
 // handleQuota answers GET /v1/quota for the authenticated key.

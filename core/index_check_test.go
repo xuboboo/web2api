@@ -408,10 +408,11 @@ func TestRunIndexCheckUnitsRecoversEnginePanic(t *testing.T) {
 	if outcome.err.Code != "engine_internal" {
 		t.Fatalf("error code=%q, want engine_internal", outcome.err.Code)
 	}
-	// RecoverEnginePanicWithContext reports the engine name; the panic stack
-	// stays in the server log only.
-	if !strings.Contains(outcome.err.Message, "sogou") {
-		t.Fatalf("expected engine name in message, got %q", outcome.err.Message)
+	// S4-B-08: the unit message is the fixed taxonomy text — the recovered
+	// panic detail (incl. engine internals and stack) stays in the server log
+	// only.
+	if outcome.err.Message != "engine internal error" {
+		t.Fatalf("expected fixed message per B-08, got %q", outcome.err.Message)
 	}
 }
 

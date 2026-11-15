@@ -792,6 +792,213 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformError" }
 
+  /api/auth/logout:
+    post:
+      tags: [admin]
+      operationId: adminLogout
+      summary: 退出登录(S4) — 撤销当前会话并清除 httpOnly cookie
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 已撤销当前会话
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+
+  /api/auth/refresh:
+    post:
+      tags: [admin]
+      operationId: adminAuthRefresh
+      summary: 会话滑动续期(S4) — 同会话签发新 token 并滑动过期时间
+      description: 返回体与登录一致(token/expires_in);新 token 绑定同一会话、携带新 jti。Set-Cookie 同步刷新。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 续期成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  expires_in: { type: integer, example: 86400 }
+
+  /api/runtime:
+    get:
+      tags: [admin]
+      operationId: adminRuntime
+      summary: 运行时指标(S4,自公开 /health 的 system 块收敛至此,JWT)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: goroutine/内存/Go 版本/运行时长/应用版本
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  go_version: { type: string, example: go1.26.0 }
+                  goroutines: { type: integer, example: 42 }
+                  memory_mb: { type: integer, example: 187 }
+                  uptime_seconds: { type: integer, example: 86400 }
+                  version: { type: string, example: "0.8.19" }
+
+  /api/keys/{id}/rotate:
+    post:
+      tags: [admin]
+      operationId: rotateApiKey
+      summary: 轮换密钥(S4) — 保留 id/名称/配额/计数,一次性返回新密钥;旧密钥即时失效
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 轮换成功(响应形状与创建密钥一致:key 字段仅此一次)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyCreated" }
+        "404": { description: 密钥不存在 }
+
+  /api/sessions:
+    get:
+      tags: [admin]
+      operationId: listAdminSessions
+      summary: 管理员会话列表(S4) — IP/最后活跃/当前会话标记,活跃在前
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 活跃会话(未撤销未过期)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        ip: { type: string }
+                        user_agent: { type: string }
+                        created_at: { type: string, format: date-time }
+                        last_active_at: { type: string, format: date-time }
+                        expires_at: { type: string, format: date-time }
+                        current: { type: boolean, description: 请求者本人的会话 }
+
+  /api/sessions/{id}:
+    delete:
+      tags: [admin]
+      operationId: revokeAdminSession
+      summary: 撤销指定会话(S4);撤销当前会话等同退出登录
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: 已撤销 }
+        "404": { description: 会话不存在 }
+
+  /api/audit:
+    get:
+      tags: [admin]
+      operationId: queryAuditTrail
+      summary: 安全审计轨迹(S4) — <data_dir>/audit.log 的 JSON Lines 查询(新→旧)
+      description: 记录登录成功/失败/锁定、密钥增删改轮换、改密、冷却 reset/force、会话撤销/续期/登出、用量导出与备份导出。
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: 审计条目
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts: { type: string, format: date-time }
+                        actor: { type: string }
+                        ip: { type: string }
+                        action: { type: string, example: key.rotate }
+                        target: { type: string }
+                        result: { type: string }
+                        request_id: { type: string }
+
+  /api/usage/export:
+    get:
+      tags: [admin]
+      operationId: exportUsage
+      summary: 用量导出下载(S4) — csv|json 附件
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: format, in: query, schema: { type: string, enum: [csv, json], default: csv } }
+        - { name: key_id, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, description: "YYYY-MM-DD 或 RFC3339" } }
+        - { name: to, in: query, schema: { type: string, description: "YYYY-MM-DD(含当日) 或 RFC3339" } }
+      responses:
+        "200":
+          description: 附件流 attachment 响应
+          content:
+            text/csv: {}
+            application/json: {}
+
+  /api/reconcile:
+    get:
+      tags: [admin]
+      operationId: reconcileUsage
+      summary: 扣费-流水对账(S4) — charged units vs 信封引擎 OK 合计
+      description: B-01 修复后两者应一致;历史记录(修复前)允许 mismatch,samples 列出前 10 条。
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: date, in: query, schema: { type: string, example: "2026-11-16" } }
+      responses:
+        "200":
+          description: 对账结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: { type: string }
+                  charged_units: { type: integer }
+                  journaled_units: { type: integer }
+                  mismatch_count: { type: integer }
+                  samples: { type: array, items: { type: object } }
+
+  /api/admin/backup:
+    get:
+      tags: [admin]
+      operationId: downloadBackup
+      summary: 下载数据一致性快照(S4) — bbolt 热备(WriteTo)或 JSON 回退文档,attachment
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 快照文件(web2api.db / web2api.json)
+          content:
+            application/octet-stream: {}
+
   /api/engines:
     get:
       tags: [admin]

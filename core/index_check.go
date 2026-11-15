@@ -158,6 +158,9 @@ type IndexCheckMeta struct {
 	// EnginesCooldown lists the engines currently in an IP cooldown at
 	// response time (契约 A): omitted when no engine is cooling.
 	EnginesCooldown []EngineCooldownEntry `json:"engines_cooldown,omitempty"`
+	// Cache is set to "hit" when the response came from the index-check
+	// response cache (S4-GAP 性能项, additive; omitted on live engine runs).
+	Cache string `json:"cache,omitempty"`
 }
 
 // IndexCheckResponse is the /v1/index/check response body.
@@ -493,7 +496,7 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 				gate, gateErr := rs.GateEngine(ctx, engine.Name())
 				switch {
 				case gateErr != nil:
-					outcome = indexCheckErrorOutcome(gateErr)
+					outcome = indexCheckErrorOutcome(ctx, gateErr)
 				case gate.Blocked():
 					// 契约 A batch semantics: cooling engines answer per-unit
 					// engine_cooldown errors; the other engines still judge.
@@ -509,7 +512,7 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 						gate.FinishProbe(probeErr)
 					}
 					if err != nil {
-						outcome = indexCheckErrorOutcome(err)
+						outcome = indexCheckErrorOutcome(ctx, err)
 					} else {
 						success := EvaluateIndexSERP(ctx, out[u.urlIdx].URL, serp, IndexResolveOptions{Query: runtimeQ})
 						outcome = IndexCheckEngineOutcome{success: &success}
@@ -542,12 +545,18 @@ func (s *IndexCheckSuccess) setTookIfSuccess(tookMs int64) {
 }
 
 // indexCheckErrorOutcome maps an engine failure to the per-unit error payload
-// using the same error taxonomy as the search endpoints.
-func indexCheckErrorOutcome(err error) IndexCheckEngineOutcome {
+// using the same error taxonomy as the search endpoints. B-08 治理: message
+// comes from the fixed taxonomy text (never the raw error string, which may
+// carry internal paths or upstream URL fragments); the original error goes to
+// the server logs only.
+func indexCheckErrorOutcome(ctx context.Context, err error) IndexCheckEngineOutcome {
 	spec := mapSearchError(err)
+	WithRequest(ctx).WithError(err).
+		WithField("code", spec.code).
+		Warn("Index check unit failed")
 	return IndexCheckEngineOutcome{err: &IndexCheckEngineError{
 		Code:    spec.code,
-		Message: sanitizeErrorDetail(err.Error(), Query{}),
+		Message: spec.message,
 	}}
 }
 

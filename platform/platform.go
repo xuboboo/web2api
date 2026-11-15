@@ -3,12 +3,16 @@ package platform
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -26,9 +30,14 @@ type Platform struct {
 
 	// secret is the 32-byte JWT signing key persisted at <data_dir>/secret.key.
 	secret []byte
-	// adminHash is the bcrypt hash of the admin password (kept in the settings
-	// bucket; an API-changed password overrides the config default).
-	adminHash []byte
+	// adminHashP is the bcrypt hash of the admin password (kept in the settings
+	// bucket; an API-changed password overrides the config default). S4-B-11:
+	// accessed atomically so concurrent login/password-change cannot race.
+	adminHashP atomic.Pointer[[]byte]
+
+	// appVersion is injected by the serve command for GET /api/me|/api/runtime
+	// (S4-B-07: 真实版本只在鉴权后的端点暴露).
+	appVersion atomic.Pointer[string]
 
 	// engineStatus supplies the engine list + circuit-breaker state snapshot
 	// rendered by /v1/engines and /api/engines ({"engines": <value>}).
@@ -44,10 +53,39 @@ type Platform struct {
 	sec          SecurityConfig
 	adminLimiter *rate.Limiter
 
+	// S4 rate-limit tables (B-02 per-key/unauth, B-05 per-IP admin).
+	ratelimits platformRateLimiters
+
+	// S4-GAP 会话系统: memory cache over the sessions bucket.
+	sessionMu sync.Mutex
+	sessions  *sessionCache
+
+	// S4-GAP 审计日志: JSON Lines writer at <data_dir>/audit.log.
+	auditMu sync.Mutex
+	audit   *AuditLog
+
 	// login brute-force lockout state (契约 B), keyed by username+IP.
 	loginMu    sync.Mutex
 	loginFails map[loginAttemptKey]*loginFailState
+
+	// started is the process-local platform start time (GET /api/runtime).
+	started time.Time
 }
+
+// dummyAdminHash is the bcrypt hash every unknown-username login attempt is
+// also compared against (S4-B-04 登录时延一致): both paths run one bcrypt
+// comparison, so response timing no longer enumerates the admin username. The
+// backing password is random per process — nothing can match it.
+var dummyAdminHash = func() []byte {
+	buf := make([]byte, 24)
+	_, _ = rand.Read(buf)
+	hash, err := bcrypt.GenerateFromPassword(buf, bcrypt.DefaultCost)
+	if err != nil {
+		// bcrypt never fails for inputs < 72 bytes; keep a static fallback.
+		hash, _ = bcrypt.GenerateFromPassword([]byte("web2api-dummy-password-fallback"), bcrypt.DefaultCost)
+	}
+	return hash
+}()
 
 // New opens storage under cfg.DataDir, loads or creates the JWT signing secret
 // (<data_dir>/secret.key, random 32 bytes, hex-encoded), prepares the bcrypt
@@ -66,14 +104,21 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 	p.sec = DefaultSecurityConfig()
 	p.loginFails = map[loginAttemptKey]*loginFailState{}
 	p.adminLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(p.sec.AdminRatePerMinute)), p.sec.AdminRatePerMinute)
+	p.ratelimits = newPlatformRateLimiters()
+	p.sessions = newSessionCache()
 
-	// Primary storage: bbolt (pure Go, no CGO). Fallback per contract: the
-	// equivalent JSON file store with the same interface (see store_json.go).
+	// Primary storage: bbolt (pure Go, no CGO). S4-B-06 fail-closed: a locked
+	// database (second process on the same data_dir) is a startup FAILURE, not
+	// a silent JSON fallback — a split-brain instance would double-book quota
+	// and usage. The JSON fallback only covers non-lock open failures.
 	boltPath := filepath.Join(cfg.DataDir, "web2api.db")
 	boltStore, err := newBoltStore(boltPath)
 	if err == nil {
 		p.store = boltStore
 		p.storeKind = "bbolt"
+	} else if isBoltLockError(err) {
+		_ = p.closeAudit()
+		return nil, fmt.Errorf("platform: bbolt 数据目录被其他进程占用(%s),拒绝启动以避免双实例分裂记账: %w", boltPath, err)
 	} else {
 		logrus.WithError(err).Warn("platform: bbolt 打开失败,回退到 JSON 文件存储(fallback,接口不变)")
 		jsonStore, jsonErr := newJSONStore(filepath.Join(cfg.DataDir, "web2api.json"))
@@ -93,9 +138,32 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 		_ = p.store.Close()
 		return nil, err
 	}
+	// S4-GAP 审计日志: JSON Lines writer (rotation bounds configurable via
+	// SetAuditRotation; defaults 10MB × 5).
+	p.auditMu.Lock()
+	p.audit = newAuditLog(cfg.DataDir, defaultAuditMaxBytes, defaultAuditBackups)
+	p.auditMu.Unlock()
 	// Startup usage-journal pruning (滚动清理上限,契约: 防止用量日志无上限增长).
 	p.pruneUsage()
+	p.started = time.Now()
 	return p, nil
+}
+
+// isBoltLockError classifies bbolt open failures caused by a held file lock
+// (bbolt uses a flock-style lock; the Timeout option yields ErrTimeout, and
+// some platforms surface "flock"/"lock" wording for the same condition).
+func isBoltLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, bolt.ErrTimeout) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "flock") ||
+		strings.Contains(msg, "file lock") ||
+		strings.Contains(msg, "could not lock")
 }
 
 // initSecret loads <data_dir>/secret.key (hex of the random 32-byte JWT
@@ -139,12 +207,12 @@ func (p *Platform) initAdminPassword() error {
 	stored, err := p.store.GetSetting(settingAdminHash)
 	if err == nil && len(stored) > 0 {
 		if custom, cerr := p.store.GetSetting(settingAdminPasswordCustom); cerr == nil && len(custom) > 0 {
-			p.adminHash = stored
+			p.setAdminHash(stored)
 			logrus.Info("platform: 使用面板修改后的管理员密码(settings 桶),config 中的默认密码已覆盖")
 			return nil
 		}
 		if bcrypt.CompareHashAndPassword(stored, []byte(p.cfg.AdminPassword)) == nil {
-			p.adminHash = stored
+			p.setAdminHash(stored)
 			return nil
 		}
 	}
@@ -155,8 +223,54 @@ func (p *Platform) initAdminPassword() error {
 	if err := p.store.PutSetting(settingAdminHash, hash); err != nil {
 		return fmt.Errorf("platform: persist admin password hash: %w", err)
 	}
-	p.adminHash = hash
+	p.setAdminHash(hash)
 	return nil
+}
+
+// adminHash returns the current bcrypt hash atomically (S4-B-11: login and
+// password-change run concurrently; no data race).
+func (p *Platform) adminHash() []byte {
+	if h := p.adminHashP.Load(); h != nil {
+		return *h
+	}
+	return nil
+}
+
+// setAdminHash stores the bcrypt hash atomically (S4-B-11).
+func (p *Platform) setAdminHash(hash []byte) {
+	cp := append([]byte(nil), hash...)
+	p.adminHashP.Store(&cp)
+}
+
+// SetVersion injects the CLI version for the authenticated runtime endpoints
+// (S4-B-07: 真实版本只出现在鉴权之后; empty hides it).
+func (p *Platform) SetVersion(v string) {
+	p.appVersion.Store(&v)
+}
+
+// Version returns the injected app version ("" when unset).
+func (p *Platform) Version() string {
+	if v := p.appVersion.Load(); v != nil {
+		return *v
+	}
+	return ""
+}
+
+// auditLog returns the audit writer (nil-safe).
+func (p *Platform) auditLog() *AuditLog {
+	p.auditMu.Lock()
+	defer p.auditMu.Unlock()
+	return p.audit
+}
+
+// closeAudit releases the audit file handle.
+func (p *Platform) closeAudit() error {
+	p.auditMu.Lock()
+	defer p.auditMu.Unlock()
+	if p.audit == nil {
+		return nil
+	}
+	return p.audit.Close()
 }
 
 // tokenVersion reads the admin JWT token_version (契约 B). Password changes
@@ -187,17 +301,30 @@ func (p *Platform) bumpTokenVersion() int {
 	return version
 }
 
-// issueToken signs an admin JWT bound to the current token version.
+// issueToken signs an admin JWT bound to the current token version (legacy
+// shape, no session binding — kept for the password-change response).
 func (p *Platform) issueToken(username string) (string, error) {
 	return signJWT(p.secret, username, time.Now().Add(p.jwtTTL()), p.tokenVersion())
 }
 
-// Close releases the storage handle.
+// issueSessionToken signs an admin JWT bound to the current token version and
+// the given admin session (S4-GAP 会话系统; fresh jti per issuance).
+func (p *Platform) issueSessionToken(username, sessionID string) (string, error) {
+	return signJWTSession(p.secret, username, time.Now().Add(p.jwtTTL()), p.tokenVersion(), sessionID, newSessionID())
+}
+
+// Close releases the storage handle and the audit writer.
 func (p *Platform) Close() error {
-	if p.store == nil {
-		return nil
+	var errs []error
+	if p.store != nil {
+		if err := p.store.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return p.store.Close()
+	if err := p.closeAudit(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // StoreKind reports the active storage backend: "bbolt" or "json" (fallback).

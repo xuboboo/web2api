@@ -1731,12 +1731,18 @@ func TestServerOptions_WiresCustomCORSConfig(t *testing.T) {
 	}
 
 	srv := NewServerWithOptions("127.0.0.1", 7081, opts, engine)
-	resp := request(t, srv, "/health")
+	// S4-B-13: origin lists echo a matching request Origin; no Origin header
+	// (server-side callers) receives no ACAO.
+	resp := requestWithHeader(t, srv, "/health", "Origin", "https://client.local")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://client.local" {
 		t.Fatalf("unexpected allow-origin: %q", got)
+	}
+	respNoOrigin := request(t, srv, "/health")
+	if got := respNoOrigin.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no ACAO without an Origin header (B-13), got %q", got)
 	}
 }
 

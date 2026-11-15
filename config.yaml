@@ -8,7 +8,7 @@
 # 逐键完整说明见 docs/CONFIGURATION.md。
 
 server:
-  host: 0.0.0.0 # API host to bind(容器需 0.0.0.0;单机自用建议 127.0.0.1)
+  host: 0.0.0.0 # API host to bind(容器需 0.0.0.0;单机自用强烈建议 127.0.0.1 —— 绑 0.0.0.0 时启动日志会列出 SECURITY 横幅)
   port: 7000 # API port to bind
   debug: false # Enable debug logs and force browser UI mode
   verbose: false # Enable debug-level request logs
@@ -19,6 +19,8 @@ app:
   log_format: "text" # json|text
   log_level: "" # error|warn|info|debug|trace; empty = warn for CLI, info for serve
   save_log: true # Also write logs to ./logs.txt in serve mode; false = stderr only
+  log_max_mb: 10 # S4-GAP 日志轮转: logs.txt 单文件上限(MB),超过滚动为 logs.txt.1/.2…(0=不轮转)
+  log_backups: 5 # S4-GAP 日志轮转: 保留的历史日志份数(audit.log 同机制)
   timeout: 15 # Browser/search timeout in seconds, per attempt; the request deadline is derived from this x retries
   browser_path: "" # Custom browser binary path (chrome/chromium/edge..)
   profiles: "" # Overriding built-in browser profiles
@@ -31,7 +33,7 @@ app:
   idle_ttl: 5m # close a Chrome that has not served traffic for this long
 
 proxies:
-  allow_request_proxy_url: true
+  allow_request_proxy_url: false # B-03 出厂安全姿态(默认翻转): 调用方自带代理 URL 会放大算力滥用面,非必要保持关闭;如需自带代理请显式打开并限制来源
   # Force a single proxy for all engines.
   # Same behavior as passing --proxy on the CLI.
   #global: http://127.0.0.1:8080
@@ -52,6 +54,7 @@ proxies:
 cache:
   ttl_seconds: 120 # Dedicated endpoint cache TTL in seconds (0 disables cache)
   max_size: 1000 # Maximum cached dedicated responses before oldest-entry eviction
+  index_check_ttl_seconds: 0 # S4-GAP 性能项: index/check 批量响应缓存 TTL(秒);0=关(默认,保持每次真实打引擎)。命中响应 meta.cache="hit"(additive),带错误/冷却单元的响应不缓存
 
 resilience:
   max_retries: 1 # Retry attempts per engine request (0 disables retries)
@@ -114,10 +117,19 @@ captcha:
 # ---------------------------------------------------------------------------
 security:
   admin_rate_per_minute: 60 # /api/* 全局限速,超限 429 {"error":"rate_limited"} + Retry-After
-  data_plane_auth: false # true 时 /{engine}/search 与 /stats/* 需 X-API-Key(默认关,行为与现状一致)
+  admin_rate_per_ip: 30 # S4-B-05: /api/* 按 IP 分桶限速,单 IP 失控脚本不再吃光全局预算(0=关)
+  api_rate_per_minute: 120 # S4-B-02: 公网 /v1/* 与 MCP 每 key 限速,防单 key 吃光引擎预算(0=关)
+  unauth_rate_per_minute: 30 # S4-B-02: /v1/* 与 MCP 无有效凭据请求按 IP 前置限速,防 key 爆破(0=关)
+  data_plane_auth: true # B-03 出厂安全姿态(默认翻转): true 时 /{engine}/search 与 /stats/* 需 X-API-Key;既有部署如依赖匿名访问需显式改回 false
+  trust_proxy_headers: false # S4-B-14: 仅 TLS 反代场景开启 — 开启且 X-Forwarded-Proto=https 时下发 HSTS
+  mcp_allowed_origins: [] # S4-B-10: MCP Origin 白名单,除请求同源外额外放行的来源(如 "https://panel.example.com");空=仅同源,空 Origin(curl/Agent)始终放行
+  metrics_token: "" # S4 指标端点 /web-tool/metrics 的 Bearer 令牌;空=仅本机(loopback)可抓取
   login_lockout:
     fails: 5 # 同一 用户名+IP 连续登录失败阈值
     minutes: 15 # 锁定时长(期间登录一律 429 {"error":"too_many_attempts"} + Retry-After)
+  password_policy: # S4-B-11: 管理员改密校验(自然语言报错)
+    min_length: 8 # 最小长度(默认 8,兼容既有契约)
+    min_classes: 0 # 字符类数(小写/大写/数字/符号)要求;0=不要求;内置常用密码黑名单始终生效
 
 # ---------------------------------------------------------------------------
 # 收录查询平台(platform)
@@ -130,8 +142,9 @@ security:
 #   Agent平面 http://127.0.0.1:7000/web-tool/mcp(+ /web-tool/openapi.yaml、/web-tool/llms.txt)
 #   管理API   http://127.0.0.1:7000/web-tool/api/...
 # enabled=false 时不挂载 /api/* 与 /v1/*,官网与控制台静态页与健康端点仍可用。
-# 计费口径:1 URL × 1 引擎 = 1 unit;HTTP 200 完成即全额扣费(200 信封内引擎级
-# 失败单元不退费);401/400/429 配额预检/503 冷却不扣费。详见 docs/API.md §9。
+# 计费口径:1 URL × 1 引擎 = 1 unit;HTTP 200 完成后按响应信封逐引擎核对、
+# 仅成功单元计费(引擎级失败/冷却/熔断单元不计费,信封解析失败时全额计费);
+# 401/400/429 配额预检/503 冷却不扣费。详见 docs/API.md §9。
 # ---------------------------------------------------------------------------
 platform:
   enabled: true # 是否启用平台 API(密钥/配额/用量/管理端点)

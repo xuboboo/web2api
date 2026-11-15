@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -252,10 +253,96 @@ func quoteIfNeeded(s string) string {
 }
 
 // logFile is the open ./logs.txt handle, if any, so it can be closed.
-var logFile *os.File
+var logFile io.WriteCloser
 
-// saveLog=false keeps logs on stderr only, without creating ./logs.txt.
-func InitLogger(isVerbose, isDebug, isQuiet, saveLog bool, format string) {
+// rotatingFileWriter is a size-triggered rolling log writer (S4-GAP 日志轮转):
+// when a write would push the file past maxBytes, the current file is renamed
+// to <path>.1 (shifting .1→.2 … .N→deleted) and a fresh file is opened.
+// Standard library only — no third-party dependency (单二进制约束). gzip 压缩
+// 归档为可选项,当前实现只做 rename 滚动,保持归档可用 gzip -d 直接读取。
+type rotatingFileWriter struct {
+	mu       sync.Mutex
+	path     string
+	file     *os.File
+	size     int64
+	maxBytes int64
+	backups  int
+}
+
+// newRotatingFileWriter opens path for appending with size-based rotation.
+// maxBytes <= 0 disables rotation (legacy infinite-append behavior); backups
+// bounds how many rolled files are kept (default 5).
+func newRotatingFileWriter(path string, maxBytes int64, backups int) (*rotatingFileWriter, error) {
+	if backups <= 0 {
+		backups = 5
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+	size := int64(0)
+	if info, statErr := f.Stat(); statErr == nil {
+		size = info.Size()
+	}
+	return &rotatingFileWriter{path: path, file: f, size: size, maxBytes: maxBytes, backups: backups}, nil
+}
+
+func (w *rotatingFileWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.maxBytes > 0 && w.size > 0 && w.size+int64(len(p)) > w.maxBytes {
+		if err := w.rotateLocked(); err != nil {
+			// Rotation failure must not lose the log line: fall through and
+			// keep appending to the current file.
+			fmt.Fprintf(os.Stderr, "log rotation failed for %s: %v\n", w.path, err)
+		}
+	}
+	n, err := w.file.Write(p)
+	w.size += int64(n)
+	return n, err
+}
+
+// rotateLocked shifts <path>.i → <path>.i+1 (dropping the oldest), then starts
+// a fresh file. Caller holds the mutex.
+func (w *rotatingFileWriter) rotateLocked() error {
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+	w.file = nil
+	// Shift existing rolls: drop the oldest, move the rest up by one.
+	oldest := fmt.Sprintf("%s.%d", w.path, w.backups)
+	_ = os.Remove(oldest)
+	for i := w.backups - 1; i >= 1; i-- {
+		_ = os.Rename(fmt.Sprintf("%s.%d", w.path, i), fmt.Sprintf("%s.%d", w.path, i+1))
+	}
+	if err := os.Rename(w.path, w.path+".1"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(w.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	w.file = f
+	w.size = 0
+	return nil
+}
+
+func (w *rotatingFileWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
+
+// InitLogger configures the global logrus sink. When logMaxMB > 0 the
+// ./logs.txt file output is wrapped in a size-triggered rotating writer
+// (app.log_max_mb / app.log_backups, S4-GAP 日志轮转); 0 keeps the legacy
+// infinite-append file.
+func InitLogger(isVerbose, isDebug, isQuiet, saveLog bool, format string, logMaxMB, logBackups int) {
 	switch format {
 	case LogFormatText:
 		logrus.SetFormatter(&bracketFormatter{TimestampFormat: "2006-01-02 15:04:05"})
@@ -275,13 +362,24 @@ func InitLogger(isVerbose, isDebug, isQuiet, saveLog bool, format string) {
 		logrus.SetOutput(os.Stderr)
 		logrus.SetReportCaller(false)
 	default:
-		f, err := os.OpenFile("./logs.txt", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to open logs file ./logs.txt: %v\n", err)
-			logrus.SetOutput(io.MultiWriter(os.Stderr))
+		if logMaxMB > 0 {
+			w, err := newRotatingFileWriter("./logs.txt", int64(logMaxMB)*1024*1024, logBackups)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to open logs file ./logs.txt: %v\n", err)
+				logrus.SetOutput(io.MultiWriter(os.Stderr))
+			} else {
+				logFile = w
+				logrus.SetOutput(io.MultiWriter(w, os.Stderr))
+			}
 		} else {
-			logFile = f
-			logrus.SetOutput(io.MultiWriter(f, os.Stderr))
+			f, err := os.OpenFile("./logs.txt", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to open logs file ./logs.txt: %v\n", err)
+				logrus.SetOutput(io.MultiWriter(os.Stderr))
+			} else {
+				logFile = f
+				logrus.SetOutput(io.MultiWriter(f, os.Stderr))
+			}
 		}
 		logrus.SetReportCaller(false)
 	}

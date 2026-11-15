@@ -17,11 +17,13 @@ package platform
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 	"golang.org/x/time/rate"
 )
 
@@ -30,19 +32,50 @@ import (
 //
 //	security:
 //	  admin_rate_per_minute: 60
+//	  admin_rate_per_ip: 30
+//	  api_rate_per_minute: 120
+//	  unauth_rate_per_minute: 30
 //	  data_plane_auth: false
+//	  trust_proxy_headers: false
+//	  mcp_allowed_origins: []
+//	  metrics_token: ""
 //	  login_lockout:
 //	    fails: 5
 //	    minutes: 15
+//	  password_policy:
+//	    min_length: 8
+//	    min_classes: 0
 type SecurityConfig struct {
 	// AdminRatePerMinute is the global /api/* rate limit (0 → default 60).
 	AdminRatePerMinute int `mapstructure:"admin_rate_per_minute"`
+	// AdminRatePerIP is the per-IP /api/* rate limit (S4-B-05; 0 = off).
+	// Negative → contract default (30).
+	AdminRatePerIP int `mapstructure:"admin_rate_per_ip"`
+	// APIRatePerMinute is the per-key rate limit for the billed /v1 and MCP
+	// planes (S4-B-02; 0 = off, negative → default 120).
+	APIRatePerMinute int `mapstructure:"api_rate_per_minute"`
+	// UnauthRatePerMinute limits /v1 and MCP requests that carry no valid
+	// credential, per client IP (S4-B-02 防爆破/反抓放大; 0 = off, negative →
+	// default 30).
+	UnauthRatePerMinute int `mapstructure:"unauth_rate_per_minute"`
 	// DataPlaneAuth, when true, requires X-API-Key on the data plane
 	// (dedicated /{engine}/search and /stats/*). Default false keeps the
 	// historical behavior.
 	DataPlaneAuth bool `mapstructure:"data_plane_auth"`
+	// TrustProxyHeaders (S4-B-14): when true and X-Forwarded-Proto=https, the
+	// serve command issues Strict-Transport-Security. Only for TLS-terminating
+	// reverse-proxy deployments.
+	TrustProxyHeaders bool `mapstructure:"trust_proxy_headers"`
+	// MCPAllowedOrigins (S4-B-10) extends the MCP Origin allowlist beyond the
+	// request's own origin. Empty = same-origin only (empty Origin / curl 放行).
+	MCPAllowedOrigins []string `mapstructure:"mcp_allowed_origins"`
+	// MetricsToken guards GET /web-tool/metrics (S4-GAP 运维指标). Empty =
+	// loopback-only scraping.
+	MetricsToken string `mapstructure:"metrics_token"`
 	// LoginLockout configures the admin login brute-force lockout.
 	LoginLockout LoginLockoutConfig `mapstructure:"login_lockout"`
+	// PasswordPolicy (S4-B-11) governs the admin password change.
+	PasswordPolicy PasswordPolicyConfig `mapstructure:"password_policy"`
 }
 
 // LoginLockoutConfig maps security.login_lockout.
@@ -53,27 +86,62 @@ type LoginLockoutConfig struct {
 	Minutes int `mapstructure:"minutes"`
 }
 
+// PasswordPolicyConfig maps security.password_policy (S4-B-11). Defaults keep
+// the existing contract: min_length 8, no complexity requirement.
+type PasswordPolicyConfig struct {
+	// MinLength is the minimum admin password length (0 → 8).
+	MinLength int `mapstructure:"min_length"`
+	// MinClasses is how many character classes (lower/upper/digit/symbol)
+	// the password must span (0 = no requirement).
+	MinClasses int `mapstructure:"min_classes"`
+}
+
 // DefaultSecurityConfig returns the contract defaults.
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
-		AdminRatePerMinute: 60,
-		DataPlaneAuth:      false,
-		LoginLockout:       LoginLockoutConfig{Fails: 5, Minutes: 15},
+		AdminRatePerMinute:  60,
+		AdminRatePerIP:      30,
+		APIRatePerMinute:    120,
+		UnauthRatePerMinute: 30,
+		DataPlaneAuth:       false,
+		LoginLockout:        LoginLockoutConfig{Fails: 5, Minutes: 15},
+		PasswordPolicy:      PasswordPolicyConfig{MinLength: 8, MinClasses: 0},
 	}
 }
 
 // normalized fills zero/invalid fields with the contract defaults so a
-// partially written security node still yields working protections.
+// partially written security node still yields working protections. The new
+// S4 limits treat an explicit 0 as "off" and a negative value as "unset"
+// (→ contract default) — viper supplies the defaults for genuinely missing
+// keys, so 0 stays a deliberate opt-out.
 func (c SecurityConfig) normalized() SecurityConfig {
 	def := DefaultSecurityConfig()
 	if c.AdminRatePerMinute <= 0 {
 		c.AdminRatePerMinute = def.AdminRatePerMinute
+	}
+	if c.AdminRatePerIP < 0 {
+		c.AdminRatePerIP = def.AdminRatePerIP
+	}
+	if c.APIRatePerMinute < 0 {
+		c.APIRatePerMinute = def.APIRatePerMinute
+	}
+	if c.UnauthRatePerMinute < 0 {
+		c.UnauthRatePerMinute = def.UnauthRatePerMinute
 	}
 	if c.LoginLockout.Fails <= 0 {
 		c.LoginLockout.Fails = def.LoginLockout.Fails
 	}
 	if c.LoginLockout.Minutes <= 0 {
 		c.LoginLockout.Minutes = def.LoginLockout.Minutes
+	}
+	if c.PasswordPolicy.MinLength <= 0 {
+		c.PasswordPolicy.MinLength = def.PasswordPolicy.MinLength
+	}
+	if c.PasswordPolicy.MinClasses < 0 {
+		c.PasswordPolicy.MinClasses = def.PasswordPolicy.MinClasses
+	}
+	if c.PasswordPolicy.MinClasses > 4 {
+		c.PasswordPolicy.MinClasses = 4
 	}
 	return c
 }
@@ -95,6 +163,61 @@ func (p *Platform) securityValue() SecurityConfig {
 		return DefaultSecurityConfig()
 	}
 	return p.sec
+}
+
+// ---------------------------------------------------------------------------
+// Password policy (S4-B-11)
+// ---------------------------------------------------------------------------
+
+// commonAdminPasswords is the built-in deny list for password changes (S4-B-11
+// 常用密码黑名单; natural-language rejection on match).
+var commonAdminPasswords = map[string]bool{
+	"password": true, "password1": true, "password123": true,
+	"123456": true, "12345678": true, "123456789": true, "1234567890": true,
+	"admin123": true, "admin@123": true, "admin1234": true, "admin": true,
+	"qwerty": true, "qwerty123": true, "abc123": true, "abc123456": true,
+	"111111": true, "000000": true, "88888888": true, "666666": true,
+	"letmein": true, "iloveyou": true, "welcome": true, "welcome1": true,
+	"monkey": true, "dragon": true, "sunshine": true, "master": true,
+	"root": true, "toor": true, "passw0rd": true, "p@ssw0rd": true,
+	"web2api": true, "web2api123": true, "a123456": true, "a12345678": true,
+}
+
+// validatePassword applies security.password_policy and returns a
+// natural-language rejection (Chinese, no config keys — 面板文案红线) or "".
+func (p *Platform) validatePassword(newPassword string) string {
+	sec := p.securityValue()
+	if n := len([]rune(newPassword)); n < sec.PasswordPolicy.MinLength {
+		return fmt.Sprintf("密码长度至少需要 %d 个字符", sec.PasswordPolicy.MinLength)
+	}
+	if sec.PasswordPolicy.MinClasses > 0 {
+		classes := 0
+		hasLower, hasUpper, hasDigit, hasSymbol := false, false, false, false
+		for _, ch := range newPassword {
+			switch {
+			case ch >= 'a' && ch <= 'z':
+				hasLower = true
+			case ch >= 'A' && ch <= 'Z':
+				hasUpper = true
+			case ch >= '0' && ch <= '9':
+				hasDigit = true
+			default:
+				hasSymbol = true
+			}
+		}
+		for _, b := range []bool{hasLower, hasUpper, hasDigit, hasSymbol} {
+			if b {
+				classes++
+			}
+		}
+		if classes < sec.PasswordPolicy.MinClasses {
+			return "密码需要混合大小写字母、数字与符号中的更多种类"
+		}
+	}
+	if commonAdminPasswords[strings.ToLower(newPassword)] {
+		return "密码过于常见,请更换为不易猜测的密码"
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -185,20 +308,29 @@ func (p *Platform) pruneLoginFailsLocked(now time.Time) {
 // Admin API global rate limit
 // ---------------------------------------------------------------------------
 
-// adminRateGuard returns the /api/* rate-limit middleware (契约 B: 默认
-// 60 req/min,超限 429 + Retry-After). Disabled when the limit is <= 0.
+// adminRateGuard returns the /api/* rate-limit middleware. S4-B-05: per-IP
+// buckets (security.admin_rate_per_ip, 默认 30/min) so a single runaway
+// client cannot starve the real admin out of the global budget
+// (security.admin_rate_per_minute stays as the backstop). 超限 429 +
+// Retry-After; both tiers disabled when configured 0.
 func (p *Platform) adminRateGuard() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sec := p.securityValue()
+		if sec.AdminRatePerIP > 0 && !p.allowAdminIPRate(c.IP()) {
+			core.Metrics().IncRateLimited()
+			return errRateLimited(c, retryAfterSecondsForRate(sec.AdminRatePerIP))
+		}
 		if sec.AdminRatePerMinute <= 0 || p.adminLimiter == nil {
 			return c.Next()
 		}
 		reservation := p.adminLimiter.Reserve()
 		if !reservation.OK() {
+			core.Metrics().IncRateLimited()
 			return errRateLimited(c, sec.AdminRatePerMinute*60)
 		}
 		if delay := reservation.DelayFrom(time.Now()); delay > 0 {
 			reservation.Cancel()
+			core.Metrics().IncRateLimited()
 			return errRateLimited(c, int((delay+time.Second-time.Nanosecond)/time.Second))
 		}
 		return c.Next()
@@ -222,13 +354,14 @@ const (
 // AuthAny guards the MCP/agent plane (契约 C): Authorization Bearer JWT →
 // admin identity, never billed; X-API-Key → validated key with quota
 // pre-check, billed via ChargeUsage once the call completed with HTTP 200.
-// Anything else answers 401 {"error":"unauthorized"}.
+// Anything else answers 401 {"error":"unauthorized"} — with the S4-B-02
+// unauth per-IP limiter in front of that rejection (防 key 爆破与反抓放大).
 func (p *Platform) AuthAny() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// 1) Admin JWT (not billed). An invalid bearer falls through to the
 		//    API-key branch so a client sending both headers keeps working.
 		if token := bearerToken(c.Get(fiber.HeaderAuthorization)); token != "" {
-			if claims, err := verifyJWT(p.secret, token); err == nil && claims.TV == p.tokenVersion() {
+			if claims, ok := p.verifyAdminToken(token); ok {
 				c.Locals(localAuthType, "jwt")
 				c.Locals(localUsername, claims.Sub)
 				return c.Next()
@@ -242,10 +375,14 @@ func (p *Platform) AuthAny() fiber.Handler {
 			raw = bearerToken(c.Get(fiber.HeaderAuthorization))
 		}
 		if raw != "" {
-			key, err := p.store.GetKeyByHash(sha256Hex(raw))
-			if err == nil && key != nil && key.Status == KeyStatusActive {
+			if key, denyStatus, ok := p.authenticateAPIKey(c); ok {
+				if !p.allowKeyRate(key.ID) {
+					core.Metrics().IncRateLimited()
+					return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().APIRatePerMinute))
+				}
 				units := p.mcpChargeUnits(c)
 				if units > 0 && key.DailyQuota > 0 && usedTodayUnits(key, time.Now())+int64(units) > key.DailyQuota {
+					core.Metrics().IncQuotaBlocked()
 					return errQuotaExceeded(c)
 				}
 				c.Locals(localAuthType, "api_key")
@@ -258,14 +395,32 @@ func (p *Platform) AuthAny() fiber.Handler {
 					if endpoint == "" || endpoint == "/" {
 						endpoint = c.Path()
 					}
-					if err := p.ChargeUsage(key.ID, units, endpoint, status, time.Since(started).Milliseconds()); err != nil {
-						logCharged(c, key.ID, units, err)
+					// T-02 与 writeUsage 同口径: 响应体(result.content[].text)携带逐
+					// 引擎明细时按成功单元计费并落 EngineStats(/api/reconcile 可逐
+					// 单元对账);明细不可解析(web_search、工具级错误信封)时保持
+					// 既有行为——按请求单元全额计费。
+					stats := parseEngineStatsFromMCPBody(c.Response().Body())
+					charged := units
+					if stats != nil {
+						charged = 0
+						for _, s := range stats {
+							charged += int(s.OK)
+						}
+					}
+					if err := p.chargeUsage(key.ID, charged, endpoint, status, time.Since(started).Milliseconds(), stats); err != nil {
+						logCharged(c, key.ID, charged, err)
 					}
 				}
 				return handlerErr
+			} else if denyStatus == fiber.StatusForbidden {
+				return errForbidden(c)
 			}
 		}
 
+		if !p.allowUnauthRate(c.IP()) {
+			core.Metrics().IncRateLimited()
+			return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().UnauthRatePerMinute))
+		}
 		return errUnauthorized(c)
 	}
 }
@@ -352,16 +507,26 @@ func resolveChargeEngines(raw []string) []string {
 
 // ChargeUsage records one billed call (落账) and consumes the units from the
 // key's counters (扣配额) when status is HTTP 200. endpoint is the route
-// pattern (or raw path) used in the usage journal.
+// pattern (or raw path) used in the usage journal. T-03: outcome 由真实状态
+// 码推导(与 /v1 路径 writeUsage 一致);T-02: engineStats 非空时随记录落账,
+// 供 /api/reconcile 逐单元对账(不传时按无引擎明细口径落账)。
 func (p *Platform) ChargeUsage(keyID string, units int, endpoint string, status int, tookMs int64) error {
+	return p.chargeUsage(keyID, units, endpoint, status, tookMs, nil)
+}
+
+// chargeUsage is ChargeUsage with the per-engine stats the caller derived from
+// the response body (MCP plane, T-02 同口径).
+func (p *Platform) chargeUsage(keyID string, units int, endpoint string, status int, tookMs int64, engineStats map[string]EngineStat) error {
 	now := time.Now()
 	rec := &UsageRecord{
-		Time:     now,
-		KeyID:    keyID,
-		Endpoint: endpoint,
-		Units:    units,
-		Status:   status,
-		TookMS:   tookMs,
+		Time:        now,
+		KeyID:       keyID,
+		Endpoint:    endpoint,
+		Units:       units,
+		Status:      status,
+		TookMS:      tookMs,
+		EngineStats: engineStats,
+		Outcome:     outcomeForStatus(status),
 	}
 	if key, err := p.store.GetKeyByID(keyID); err == nil && key != nil {
 		rec.KeyName = key.Name

@@ -3,9 +3,11 @@ package platform
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/sirupsen/logrus"
 )
 
 // Error envelopes fixed by the product contract:
@@ -96,10 +98,34 @@ func errNotFound(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not_found"})
 }
 
+// errForbidden answers 403 {"error":"forbidden"} (S4-GAP 密钥增强:
+// allowed_ips 不匹配的密钥; MCP origin 白名单沿用 mcp 层自己的 403 形状).
+func errForbidden(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+}
+
+// errBadRequestMsg answers the admin-side 400 envelope with a natural-language
+// message (S4-B-11 密码策略等校验错误的展示口径; message 不含配置键).
+func errBadRequestMsg(c *fiber.Ctx, reason, message string) error {
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		"error":   "bad_request",
+		"code":    reason,
+		"reason":  reason,
+		"message": message,
+	})
+}
+
+// errInternal answers the admin-side 500 envelope (S4-B-09 去敏): the storage
+// layer error string may carry file paths, so the response only returns
+// {"error":"server_error","request_id":N} — the raw error goes to the server
+// log with the same request id for correlation.
 func errInternal(c *fiber.Ctx, err error) error {
+	requestID := strings.TrimSpace(c.Get("X-Request-ID"))
+	logrus.WithError(err).WithField("request_id", requestID).
+		Error("platform: internal error (sanitized)")
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-		"error":   "server_error",
-		"message": err.Error(),
+		"error":      "server_error",
+		"request_id": requestID,
 	})
 }
 

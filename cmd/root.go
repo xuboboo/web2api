@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -82,7 +83,11 @@ type AppConfig struct {
 	LogFormat      string        `mapstructure:"log_format"`
 	LogLevel       string        `mapstructure:"log_level"`
 	SaveLog        bool          `mapstructure:"save_log"`
-	MaxProcesses   int           `mapstructure:"max_processes"`
+	// LogMaxMB / LogBackups bound the serve-mode ./logs.txt with size-triggered
+	// rolling (S4-GAP 日志轮转). 0 disables rotation (legacy infinite append).
+	LogMaxMB   int           `mapstructure:"log_max_mb"`
+	LogBackups int           `mapstructure:"log_backups"`
+	MaxProcesses int         `mapstructure:"max_processes"`
 	IdleTTL        time.Duration `mapstructure:"idle_ttl"`
 }
 
@@ -102,6 +107,9 @@ type BingConfig struct {
 type CacheConfig struct {
 	TTLSeconds int `mapstructure:"ttl_seconds"`
 	MaxSize    int `mapstructure:"max_size"`
+	// IndexCheckTTLSeconds caches index/check batch responses for this long
+	// (S4-GAP 性能项 a). 0 = off (每次真实打引擎, 现语义保持).
+	IndexCheckTTLSeconds int `mapstructure:"index_check_ttl_seconds"`
 }
 
 type ResilienceConfig struct {
@@ -190,7 +198,7 @@ var RootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		core.InitLogger(config.Server.IsVerbose, config.Server.IsDebug, quiet, config.App.SaveLog, config.App.LogFormat)
+		core.InitLogger(config.Server.IsVerbose, config.Server.IsDebug, quiet, config.App.SaveLog, config.App.LogFormat, config.App.LogMaxMB, config.App.LogBackups)
 		if override {
 			logrus.SetLevel(level)
 		}
@@ -365,6 +373,12 @@ func initializeConfig(cmd *cobra.Command) error {
 		return err
 	}
 
+	// S4-GAP 运维: startup config validation — unknown keys silently fall to
+	// defaults, so list them loudly; WEB2API_STRICT_CONFIG=1 makes it fatal.
+	if err := validateUnknownConfigKeys(v); err != nil {
+		return err
+	}
+
 	// Dump Viper values to config struct
 	if err := validateEngineProxyTags(v); err != nil {
 		return err
@@ -408,6 +422,102 @@ func validateEngineProxyTags(v *viper.Viper) error {
 	return nil
 }
 
+// knownConfigKeys enumerates every config key this build understands
+// (S4-GAP 运维: 启动配置校验). Anything outside the set is drift — it falls
+// to the built-in default silently, which is exactly the class of typo the
+// startup report exists to catch. app.block_resorces stays in the set: the
+// dedicated deprecation path above already warns for it.
+var knownConfigKeys = map[string]bool{
+	"server.host": true, "server.port": true, "server.config_path": true,
+	"server.debug": true, "server.verbose": true, "server.quiet": true,
+	"server.raw_requests": true, "server.insecure": true,
+
+	"app.timeout": true, "app.browser_path": true, "app.profiles": true,
+	// cobra injects --help/--version flags that bindFlags maps into app::*;
+	// they are not config drift.
+	"app.help": true, "app.version": true,
+	// admin-backup / admin-restore / admin-reset CLI flags (not file-config
+	// keys; bindFlags maps them into app.* the same way).
+	"app.out": true, "app.in": true, "app.backup-current": true,
+	"app.data-dir": true, "app.password": true, "app.username": true,
+	"app.head": true, "app.leave_head": true, "app.leakless": true,
+	"app.block_resources": true, "app.block_resorces": true, "app.block_trackers": true,
+	"app.debug_endpoints": true, "app.log_format": true, "app.log_level": true,
+	"app.save_log": true, "app.log_max_mb": true, "app.log_backups": true,
+	"app.max_processes": true, "app.idle_ttl": true,
+
+	"proxies.global": true, "proxies.entries": true,
+	"proxies.allow_request_proxy_url": true,
+	"proxies.health.failure_threshold": true,
+	"proxies.lanes.enabled": true, "proxies.lanes.max_lanes": true,
+	"proxies.lanes.drop_cookies_on_challenge": true,
+
+	"cache.ttl_seconds": true, "cache.max_size": true,
+	"cache.index_check_ttl_seconds": true,
+
+	"resilience.max_retries": true, "resilience.allow_endpoint_fallback": true,
+	"circuit_breaker.failures": true, "circuit_breaker.recovery_seconds": true,
+	"circuit_breaker.successes": true,
+
+	"cors.enabled": true, "cors.allow_origins": true, "cors.allow_methods": true,
+	"cors.allow_headers": true, "cors.max_age": true,
+
+	"captcha.solver_enabled": true, "2captcha.apikey": true,
+
+	"platform.enabled": true, "platform.data_dir": true,
+	"platform.admin_username": true, "platform.admin_password": true,
+	"platform.jwt_expire_hours": true, "platform.usage_retention_days": true,
+
+	"stability.engine_cooldown.steps_minutes": true,
+	"stability.engine_cooldown.reset_after_minutes": true,
+
+	"security.admin_rate_per_minute": true, "security.admin_rate_per_ip": true,
+	"security.api_rate_per_minute": true, "security.unauth_rate_per_minute": true,
+	"security.data_plane_auth": true, "security.trust_proxy_headers": true,
+	"security.mcp_allowed_origins": true, "security.metrics_token": true,
+	"security.login_lockout.fails": true, "security.login_lockout.minutes": true,
+	"security.password_policy.min_length": true, "security.password_policy.min_classes": true,
+
+	"bing.search_box": true,
+}
+
+func init() {
+	// Engine option keys (core.SearchEngineOptions) + the disabled switch are
+	// valid under every engine node.
+	for _, engine := range []string{"baidu", "bing", "sogou", "so360"} {
+		for _, opt := range []string{
+			"rate_requests", "rate_seconds", "rate_burst", "selector_timeout",
+			"captcha", "profile", "proxy", "disabled",
+		} {
+			knownConfigKeys[engine+"."+opt] = true
+		}
+	}
+}
+
+// validateUnknownConfigKeys warns about (or, with WEB2API_STRICT_CONFIG=1,
+// rejects) config keys this build does not know — they otherwise fall to
+// built-in defaults with no feedback.
+func validateUnknownConfigKeys(v *viper.Viper) error {
+	var unknown []string
+	for _, key := range v.AllKeys() {
+		if knownConfigKeys[key] {
+			continue
+		}
+		unknown = append(unknown, key)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	summary := fmt.Sprintf("未知配置键(已按内置默认值处理): %s — 请核对拼写,完整键表见 docs/CONFIGURATION.md", strings.Join(unknown, ", "))
+	strict := strings.TrimSpace(os.Getenv("WEB2API_STRICT_CONFIG"))
+	if strict == "1" || strings.EqualFold(strict, "true") {
+		return fmt.Errorf("WEB2API_STRICT_CONFIG: %s", summary)
+	}
+	logrus.Warn(summary)
+	return nil
+}
+
 func validateRemovedConfigPaths(v *viper.Viper) error {
 	legacyKeys := map[string]string{
 		"app.proxy":                    "use proxies.global or proxies.entries with per-engine proxy tags instead",
@@ -448,6 +558,9 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("app.log_format", "")
 	v.SetDefault("app.log_level", "")
 	v.SetDefault("app.save_log", true)
+	// S4-GAP 日志轮转: serve-mode ./logs.txt size rolling (0 = off).
+	v.SetDefault("app.log_max_mb", 10)
+	v.SetDefault("app.log_backups", 5)
 
 	v.SetDefault("app.timeout", 30)
 	v.SetDefault("app.browser_path", "")
@@ -471,6 +584,8 @@ func setConfigDefaults(v *viper.Viper) {
 
 	v.SetDefault("cache.ttl_seconds", 300)
 	v.SetDefault("cache.max_size", 1000)
+	// S4-GAP 性能项(a): index/check 响应缓存,默认 0 = off(保持每次真实打引擎).
+	v.SetDefault("cache.index_check_ttl_seconds", 0)
 	// Keep stage2 defaults stable even when config file is absent.
 	v.SetDefault("resilience.max_retries", 3)
 	v.SetDefault("resilience.allow_endpoint_fallback", false)
@@ -493,11 +608,19 @@ func setConfigDefaults(v *viper.Viper) {
 	// Stability (契约 A: 引擎冷却状态机) defaults mirror core.DefaultStabilityConfig.
 	v.SetDefault("stability.engine_cooldown.steps_minutes", []int{10, 30, 120})
 	v.SetDefault("stability.engine_cooldown.reset_after_minutes", 240)
-	// Security (契约 B) defaults mirror platform.DefaultSecurityConfig.
+	// Security (契约 B + S4) defaults mirror platform.DefaultSecurityConfig.
 	v.SetDefault("security.admin_rate_per_minute", 60)
+	v.SetDefault("security.admin_rate_per_ip", 30)
+	v.SetDefault("security.api_rate_per_minute", 120)
+	v.SetDefault("security.unauth_rate_per_minute", 30)
 	v.SetDefault("security.data_plane_auth", false)
+	v.SetDefault("security.trust_proxy_headers", false)
+	v.SetDefault("security.mcp_allowed_origins", []string{})
+	v.SetDefault("security.metrics_token", "")
 	v.SetDefault("security.login_lockout.fails", 5)
 	v.SetDefault("security.login_lockout.minutes", 15)
+	v.SetDefault("security.password_policy.min_length", 8)
+	v.SetDefault("security.password_policy.min_classes", 0)
 	for _, s := range engineSpecs() {
 		// A default makes WEB2API_<ENGINE>_DISABLED bindable without a config entry.
 		v.SetDefault(s.name+".disabled", false)

@@ -29,6 +29,12 @@ type jwtClaims struct {
 	// version invalidates every previously issued token. Tokens issued before
 	// the field existed decode to TV=0, which matches the initial version.
 	TV int `json:"tv,omitempty"`
+	// SID (S4-GAP 会话系统) is the bound admin session id; jwtGuard verifies
+	// it is still active. Tokens without a sid stay valid until their own TTL
+	// (兼容 pre-S4 tokens).
+	SID string `json:"sid,omitempty"`
+	// JTI is the per-token id (fresh on every issuance incl. refresh).
+	JTI string `json:"jti,omitempty"`
 }
 
 func base64URLJSON(v any) (string, error) {
@@ -42,11 +48,20 @@ func base64URLJSON(v any) (string, error) {
 // signJWT issues an HS256 token for sub, expiring at exp, bound to the given
 // token_version.
 func signJWT(secret []byte, sub string, exp time.Time, tokenVersion int) (string, error) {
+	return signJWTSession(secret, sub, exp, tokenVersion, "", "")
+}
+
+// signJWTSession issues an HS256 token bound to the given token_version,
+// session id and per-token id (S4-GAP 会话系统).
+func signJWTSession(secret []byte, sub string, exp time.Time, tokenVersion int, sid, jti string) (string, error) {
 	header, err := base64URLJSON(map[string]string{"alg": "HS256", "typ": "JWT"})
 	if err != nil {
 		return "", err
 	}
-	claims, err := base64URLJSON(jwtClaims{Sub: sub, IAT: time.Now().Unix(), EXP: exp.Unix(), TV: tokenVersion})
+	claims, err := base64URLJSON(jwtClaims{
+		Sub: sub, IAT: time.Now().Unix(), EXP: exp.Unix(),
+		TV: tokenVersion, SID: sid, JTI: jti,
+	})
 	if err != nil {
 		return "", err
 	}

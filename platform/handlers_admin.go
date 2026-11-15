@@ -2,18 +2,21 @@ package platform
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // apiKeyView is the admin-facing key object (never contains the full key).
+// S4-GAP 密钥增强 adds expires_at / allowed_ips (additive; nil/empty keeps
+// the pre-S4 shape for clients that do not know the fields).
 type apiKeyView struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
@@ -24,6 +27,8 @@ type apiKeyView struct {
 	UsedTotal  int64      `json:"used_total"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	AllowedIPs []string   `json:"allowed_ips"`
 }
 
 // keyCreatedView additionally carries the one-time full key.
@@ -33,6 +38,10 @@ type keyCreatedView struct {
 }
 
 func newKeyView(k *APIKey, now time.Time) apiKeyView {
+	allowedIPs := k.AllowedIPs
+	if allowedIPs == nil {
+		allowedIPs = []string{}
+	}
 	return apiKeyView{
 		ID:         k.ID,
 		Name:       k.Name,
@@ -43,6 +52,8 @@ func newKeyView(k *APIKey, now time.Time) apiKeyView {
 		UsedTotal:  k.UsedTotal,
 		CreatedAt:  k.CreatedAt,
 		LastUsedAt: k.LastUsedAt,
+		ExpiresAt:  k.ExpiresAt,
+		AllowedIPs: allowedIPs,
 	}
 }
 
@@ -73,26 +84,45 @@ type EngineControl interface {
 //     (not billed; the response structure is identical to /v1/index/check);
 //   - engineControl wires GET /api/engines cooldown fields and the
 //     POST /api/engines/:name/cooldown/{reset,force} management endpoints;
-//   - every /api/* route sits behind the global admin rate limiter
-//     (security.admin_rate_per_minute, default 60 req/min → 429+Retry-After);
+//   - every /api/* route sits behind the admin rate limiter (global budget
+//     security.admin_rate_per_minute + S4-B-05 per-IP buckets → 429+Retry-After);
 //   - POST /api/auth/password changes the admin password.
+//
+// S4 additions (只增不改):
+//   - POST /api/auth/logout, POST /api/auth/refresh (会话系统);
+//   - GET /api/runtime (B-07 版本指纹收敛的运行时信息落点);
+//   - GET /api/sessions, DELETE /api/sessions/:id (会话管理);
+//   - POST /api/keys/:id/rotate (密钥轮换);
+//   - GET /api/audit (审计轨迹查询);
+//   - GET /api/usage/export (用量导出), GET /api/reconcile (对账);
+//   - GET /api/admin/backup (bbolt 一致性快照下载).
 func (p *Platform) RegisterAdmin(app fiber.Router, indexCheck fiber.Handler, engineControl EngineControl) {
 	p.engineControl = engineControl
 	limiter := p.adminRateGuard()
 
 	app.Post("/api/auth/login", limiter, p.handleLogin)
 	app.Post("/api/auth/password", limiter, p.jwtGuard(), p.handlePasswordChange)
+	app.Post("/api/auth/logout", limiter, p.jwtGuard(), p.handleLogout)
+	app.Post("/api/auth/refresh", limiter, p.jwtGuard(), p.handleAuthRefresh)
 	app.Get("/api/me", limiter, p.jwtGuard(), p.handleMe)
+	app.Get("/api/runtime", limiter, p.jwtGuard(), p.handleRuntime)
 	app.Post("/api/keys", limiter, p.jwtGuard(), p.handleCreateKey)
 	app.Get("/api/keys", limiter, p.jwtGuard(), p.handleListKeys)
 	app.Patch("/api/keys/:id", limiter, p.jwtGuard(), p.handleUpdateKey)
+	app.Post("/api/keys/:id/rotate", limiter, p.jwtGuard(), p.handleRotateKey)
 	app.Delete("/api/keys/:id", limiter, p.jwtGuard(), p.handleDeleteKey)
 	app.Get("/api/stats/overview", limiter, p.jwtGuard(), p.handleStatsOverview)
 	app.Get("/api/stats/timeseries", limiter, p.jwtGuard(), p.handleStatsTimeseries)
 	app.Get("/api/usage", limiter, p.jwtGuard(), p.handleUsage)
+	app.Get("/api/usage/export", limiter, p.jwtGuard(), p.handleUsageExport)
+	app.Get("/api/reconcile", limiter, p.jwtGuard(), p.handleReconcile)
 	app.Get("/api/engines", limiter, p.jwtGuard(), p.handleAdminEngines)
 	app.Post("/api/engines/:name/cooldown/reset", limiter, p.jwtGuard(), p.handleCooldownReset)
 	app.Post("/api/engines/:name/cooldown/force", limiter, p.jwtGuard(), p.handleCooldownForce)
+	app.Get("/api/sessions", limiter, p.jwtGuard(), p.handleListSessions)
+	app.Delete("/api/sessions/:id", limiter, p.jwtGuard(), p.handleRevokeSession)
+	app.Get("/api/audit", limiter, p.jwtGuard(), p.handleAudit)
+	app.Get("/api/admin/backup", limiter, p.jwtGuard(), p.handleBackupDownload)
 	if indexCheck != nil {
 		app.Post("/api/playground/check", limiter, p.jwtGuard(), indexCheck)
 	}
@@ -102,6 +132,13 @@ func (p *Platform) RegisterAdmin(app fiber.Router, indexCheck fiber.Handler, eng
 // {"token","expires_in","user":{"username"}}; any credential mismatch is 401
 // {"error":"unauthorized"}; a locked username+IP pair answers 429
 // {"error":"too_many_attempts"} + Retry-After even with correct credentials.
+//
+// S4 additions: B-04 登录时延一致 — an unknown username also runs one bcrypt
+// comparison against a package-level dummy hash, so response timing no longer
+// enumerates the admin username. S4-GAP 会话系统 — the response token is bound
+// to a stored session and an httpOnly SameSite=Strict cookie is set alongside
+// (Bearer 契约不变, body 仍返回 token). S4-GAP 审计 — success/failure/lockout
+// land in the audit trail.
 func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	var req struct {
 		Username string `json:"username"`
@@ -117,18 +154,33 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 			"username": req.Username, "ip": c.IP(),
 			"locked_until": lockedUntil.Format(time.RFC3339),
 		}).Warn("platform: 登录锁定中,拒绝登录尝试")
+		p.auditFrom(c, "", AuditActionLoginLockout, req.Username, "locked")
 		return errTooManyAttempts(c, remaining)
 	}
-	if req.Username != p.cfg.AdminUsername ||
-		bcrypt.CompareHashAndPassword(p.adminHash, []byte(req.Password)) != nil {
+	usernameOK := req.Username == p.cfg.AdminUsername
+	if !usernameOK {
+		// S4-B-04: equalize the timing by running the same bcrypt work.
+		_ = bcrypt.CompareHashAndPassword(dummyAdminHash, []byte(req.Password))
+	}
+	if !usernameOK || bcrypt.CompareHashAndPassword(p.adminHash(), []byte(req.Password)) != nil {
 		p.recordLoginFailure(req.Username, c.IP(), now)
+		core.Metrics().IncLoginFailure()
+		p.auditFrom(c, req.Username, AuditActionLoginFailed, req.Username, "401")
 		return errUnauthorized(c)
 	}
 	p.clearLoginFailures(req.Username, c.IP())
-	token, err := p.issueToken(req.Username)
+	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
+	if err != nil {
+		return errInternal(c, err)
+	}
+	token, err := p.issueSessionToken(req.Username, session.ID)
 	if err != nil {
 		return errUnauthorized(c)
 	}
+	p.setSessionCookie(c, token, p.jwtTTL())
+	p.auditFrom(c, req.Username, AuditActionLoginSuccess, req.Username, "ok")
+	// 登录成功日志缺口补齐(S4-GAP): the failure/lockout paths already logged.
+	logrus.WithFields(logrus.Fields{"ip": c.IP()}).Info("platform: 管理员登录成功")
 	return c.JSON(fiber.Map{
 		"token":      token,
 		"expires_in": int64(p.jwtTTL() / time.Second),
@@ -136,12 +188,37 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	})
 }
 
+// setSessionCookie writes the httpOnly admin session cookie (S4-B-12):
+// HttpOnly; SameSite=Strict; Path=/web-tool; Max-Age=expires_in; Secure when
+// the request arrived over https per X-Forwarded-Proto (反代 TLS 场景).
+func (p *Platform) setSessionCookie(c *fiber.Ctx, token string, ttl time.Duration) {
+	secure := strings.EqualFold(strings.TrimSpace(c.Get("X-Forwarded-Proto")), "https")
+	parts := []string{
+		adminSessionCookie + "=" + token,
+		"Path=" + core.BasePath,
+		"HttpOnly",
+		"SameSite=Strict",
+		"Max-Age=" + itoa(int(ttl/time.Second)),
+	}
+	if secure {
+		parts = append(parts, "Secure")
+	}
+	c.Set(fiber.HeaderSetCookie, strings.Join(parts, "; "))
+}
+
+// clearSessionCookie expires the admin session cookie.
+func clearSessionCookie(c *fiber.Ctx) {
+	c.Set(fiber.HeaderSetCookie, adminSessionCookie+"=; Path="+core.BasePath+"; HttpOnly; SameSite=Strict; Max-Age=0")
+}
+
 // handlePasswordChange answers POST /api/auth/password
-// {"old_password","new_password"} (新密码≥8位): the new bcrypt hash is stored
-// in the settings bucket and overrides the config default; token_version is
-// bumped so every previously issued token is invalidated immediately. The
-// response carries a fresh token at the new version so the operator stays
-// logged in.
+// {"old_password","new_password"}: the new bcrypt hash is stored in the
+// settings bucket and overrides the config default; token_version is bumped so
+// every previously issued token is invalidated immediately, and every stored
+// admin session is revoked (S4-GAP 会话). The response carries a fresh token —
+// bound to a new session — so the operator stays logged in. S4-B-11: the new
+// password is validated against security.password_policy with a
+// natural-language rejection.
 func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	var req struct {
 		OldPassword string `json:"old_password"`
@@ -150,12 +227,13 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
-	if bcrypt.CompareHashAndPassword(p.adminHash, []byte(req.OldPassword)) != nil {
+	if bcrypt.CompareHashAndPassword(p.adminHash(), []byte(req.OldPassword)) != nil {
+		core.Metrics().IncLoginFailure()
 		return errUnauthorized(c)
 	}
 	newPassword := strings.TrimSpace(req.NewPassword)
-	if utf8.RuneCountInString(newPassword) < 8 {
-		return errBadRequest(c, "INVALID_PARAM")
+	if msg := p.validatePassword(newPassword); msg != "" {
+		return errBadRequestMsg(c, "INVALID_PARAM", msg)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -167,13 +245,22 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if err := p.store.PutSetting(settingAdminPasswordCustom, []byte("1")); err != nil {
 		return errInternal(c, err)
 	}
-	p.adminHash = hash
+	p.setAdminHash(hash)
+	// S4-GAP 会话: 全部旧会话(含当前)随 token_version 一并失效,再发新会话。
+	revoked, _ := p.revokeAllSessions()
 	version := p.bumpTokenVersion()
-	token, err := p.issueToken(p.cfg.AdminUsername)
+	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
 	if err != nil {
 		return errInternal(c, err)
 	}
-	logrus.Info("platform: 管理员密码已修改,全部旧 token 已失效")
+	token, err := p.issueSessionToken(p.cfg.AdminUsername, session.ID)
+	if err != nil {
+		return errInternal(c, err)
+	}
+	p.setSessionCookie(c, token, p.jwtTTL())
+	p.auditFrom(c, p.cfg.AdminUsername, AuditActionPasswordChange, p.cfg.AdminUsername,
+		fmt.Sprintf("ok,revoked_sessions=%d", revoked))
+	logrus.Info("platform: 管理员密码已修改,全部旧 token 与会话已失效")
 	return c.JSON(fiber.Map{
 		"ok":            true,
 		"token":         token,
@@ -204,6 +291,7 @@ func (p *Platform) handleCooldownReset(c *fiber.Ctx) error {
 	if err := p.engineControl.ResetCooldown(name); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	p.auditFrom(c, "", AuditActionCooldownReset, name, "ok")
 	return c.JSON(fiber.Map{"ok": true, "engine": name})
 }
 
@@ -223,10 +311,12 @@ func (p *Platform) handleCooldownForce(c *fiber.Ctx) error {
 	if err := p.engineControl.ForceCooldown(name, req.Minutes); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	p.auditFrom(c, "", AuditActionCooldownForce, name, fmt.Sprintf("minutes=%d", req.Minutes))
 	return c.JSON(fiber.Map{"ok": true, "engine": name, "minutes": req.Minutes})
 }
 
-// handleMe answers GET /api/me.
+// handleMe answers GET /api/me. S4-B-07: the real app version is exposed here
+// (authenticated endpoint) since it left the public /health.
 func (p *Platform) handleMe(c *fiber.Ctx) error {
 	keys, err := p.store.ListKeys()
 	if err != nil {
@@ -236,20 +326,29 @@ func (p *Platform) handleMe(c *fiber.Ctx) error {
 	if err != nil {
 		return errInternal(c, err)
 	}
-	return c.JSON(fiber.Map{
+	resp := fiber.Map{
 		"username":    p.cfg.AdminUsername,
 		"keys_count":  len(keys),
 		"today_calls": agg.TodayCalls,
 		"total_calls": agg.TotalCalls,
-	})
+	}
+	if v := p.Version(); v != "" {
+		resp["version"] = v
+	}
+	return c.JSON(resp)
 }
 
-// handleCreateKey answers POST /api/keys {"name","daily_quota"?}. The full
-// key (sk-w2a-<32 hex>) is returned exactly once; storage keeps only its hash.
+// handleCreateKey answers POST /api/keys {"name","daily_quota"?,
+// "expires_at"?,"allowed_ips"?}. The full key (sk-w2a-<32 hex>) is returned
+// exactly once; storage keeps only its hash. expires_at accepts RFC3339 or
+// the literal null (omit = never expires); allowed_ips accepts bare IPs and
+// CIDR ranges (empty = unrestricted).
 func (p *Platform) handleCreateKey(c *fiber.Ctx) error {
 	var req struct {
-		Name       string `json:"name"`
-		DailyQuota *int64 `json:"daily_quota"`
+		Name       string   `json:"name"`
+		DailyQuota *int64   `json:"daily_quota"`
+		ExpiresAt  *string  `json:"expires_at"`
+		AllowedIPs []string `json:"allowed_ips"`
 	}
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
@@ -265,6 +364,18 @@ func (p *Platform) handleCreateKey(c *fiber.Ctx) error {
 		}
 		quota = *req.DailyQuota
 	}
+	var expiresAt *time.Time
+	if req.ExpiresAt != nil && strings.TrimSpace(*req.ExpiresAt) != "" {
+		parsed, err := parseTimeParam(*req.ExpiresAt)
+		if err != nil {
+			return errBadRequestMsg(c, "INVALID_PARAM", "过期时间格式无效,应为 RFC3339(如 2026-12-31T23:59:59+08:00)")
+		}
+		expiresAt = &parsed
+	}
+	allowedIPs, errIP := normalizeAllowedIPs(req.AllowedIPs)
+	if errIP != nil {
+		return errBadRequestMsg(c, "INVALID_PARAM", "IP 白名单格式无效: "+errIP.Error())
+	}
 	now := time.Now()
 	full, hash := generateAPIKeyMaterial()
 	key := &APIKey{
@@ -276,10 +387,13 @@ func (p *Platform) handleCreateKey(c *fiber.Ctx) error {
 		DailyQuota: quota,
 		CreatedAt:  now,
 		TodayDate:  localDate(now),
+		ExpiresAt:  expiresAt,
+		AllowedIPs: allowedIPs,
 	}
 	if err := p.store.PutKey(key); err != nil {
 		return errInternal(c, err)
 	}
+	p.auditFrom(c, "", AuditActionKeyCreate, key.Name, "ok")
 	view := newKeyView(key, now)
 	return c.JSON(keyCreatedView{apiKeyView: view, Key: full})
 }
@@ -298,7 +412,10 @@ func (p *Platform) handleListKeys(c *fiber.Ctx) error {
 	return c.JSON(views)
 }
 
-// handleUpdateKey answers PATCH /api/keys/:id {"name"?,"status"?,"daily_quota"?}.
+// handleUpdateKey answers PATCH /api/keys/:id
+// {"name"?,"status"?,"daily_quota"?, "expires_at"?, "allowed_ips"?}. S4-GAP
+// 密钥增强: expires_at accepts RFC3339 or null/"" (clears); allowed_ips
+// accepts bare IPs / CIDR ranges, empty list clears the restriction.
 func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 	id := c.Params("id")
 	key, err := p.store.GetKeyByID(id)
@@ -309,52 +426,97 @@ func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 		return errNotFound(c)
 	}
 	var req struct {
-		Name       *string `json:"name"`
-		Status     *string `json:"status"`
-		DailyQuota *int64  `json:"daily_quota"`
+		Name       *string  `json:"name"`
+		Status     *string  `json:"status"`
+		DailyQuota *int64   `json:"daily_quota"`
+		// ExpiresAt is raw so an explicit JSON null (clears the expiry) is
+		// distinguishable from an absent field.
+		ExpiresAt  json.RawMessage `json:"expires_at"`
+		AllowedIPs []string        `json:"allowed_ips"`
 	}
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	changed := []string{}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
 			return errBadRequest(c, "INVALID_PARAM")
 		}
 		key.Name = name
+		changed = append(changed, "name")
 	}
 	if req.Status != nil {
 		if *req.Status != KeyStatusActive && *req.Status != KeyStatusDisabled {
 			return errBadRequest(c, "INVALID_PARAM")
 		}
 		key.Status = *req.Status
+		changed = append(changed, "status")
 	}
 	if req.DailyQuota != nil {
 		if *req.DailyQuota < 0 {
 			return errBadRequest(c, "INVALID_PARAM")
 		}
 		key.DailyQuota = *req.DailyQuota
+		changed = append(changed, "daily_quota")
+	}
+	if req.ExpiresAt != nil {
+		raw := strings.TrimSpace(string(req.ExpiresAt))
+		if raw == "" || raw == "null" {
+			key.ExpiresAt = nil // 显式 null / 空串 = 清除过期时间
+		} else {
+			var rawTime string
+			if err := json.Unmarshal(req.ExpiresAt, &rawTime); err != nil {
+				return errBadRequestMsg(c, "INVALID_PARAM", "过期时间格式无效,应为 RFC3339(如 2026-12-31T23:59:59+08:00)")
+			}
+			parsed, perr := parseTimeParam(rawTime)
+			if perr != nil {
+				return errBadRequestMsg(c, "INVALID_PARAM", "过期时间格式无效,应为 RFC3339(如 2026-12-31T23:59:59+08:00)")
+			}
+			key.ExpiresAt = &parsed
+		}
+		changed = append(changed, "expires_at")
+	}
+	if req.AllowedIPs != nil {
+		normalized, errIP := normalizeAllowedIPs(req.AllowedIPs)
+		if errIP != nil {
+			return errBadRequestMsg(c, "INVALID_PARAM", "IP 白名单格式无效: "+errIP.Error())
+		}
+		key.AllowedIPs = normalized
+		changed = append(changed, "allowed_ips")
 	}
 	if err := p.store.PutKey(key); err != nil {
 		return errInternal(c, err)
 	}
+	p.auditFrom(c, "", AuditActionKeyUpdate, key.Name, strings.Join(changed, ","))
 	return c.JSON(newKeyView(key, time.Now()))
 }
 
 // handleDeleteKey answers DELETE /api/keys/:id → {"ok":true}.
 func (p *Platform) handleDeleteKey(c *fiber.Ctx) error {
-	existed, err := p.store.DeleteKey(c.Params("id"))
+	id := c.Params("id")
+	key, _ := p.store.GetKeyByID(id)
+	name := ""
+	if key != nil {
+		name = key.Name
+	}
+	existed, err := p.store.DeleteKey(id)
 	if err != nil {
 		return errInternal(c, err)
 	}
 	if !existed {
 		return errNotFound(c)
 	}
+	p.auditFrom(c, "", AuditActionKeyDelete, name, "ok")
 	return c.JSON(fiber.Map{"ok": true})
 }
 
 // handleStatsOverview answers GET /api/stats/overview. Aggregation is pushed
 // down to the store so the response time does not degrade with journal size.
+// B-01/P-01 口径: today_calls/total_calls/success_rate_24h count REACHED
+// calls (参数错误、配额与限速拒绝、冷却快速失败不计入); the additive fields
+// today_calls_all / rejected_today_24h expose the full denominator (additive,
+// 旧字段语义在 docs/API.md 记录).
 func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 	agg, err := p.store.UsageAggregate()
 	if err != nil {
@@ -365,7 +527,7 @@ func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 		return errInternal(c, err)
 	}
 
-	// 近 24h 无调用时返回 null(前端渲染为「—」),避免空态误显示 100%。
+	// 近 24h 无(有效)调用时返回 null(前端渲染为「—」),避免空态误显示 100%。
 	var successRate interface{}
 	if agg.Calls24h > 0 {
 		successRate = math.Round(float64(agg.OK24h)/float64(agg.Calls24h)*10000) / 100
@@ -385,17 +547,22 @@ func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 		"bing":  {},
 	}
 	for engine, s := range agg.ByEngine {
+		if engine == "" {
+			continue
+		}
 		byEngine[engine] = s
 	}
 
 	return c.JSON(fiber.Map{
-		"today_calls":      agg.TodayCalls,
-		"today_units":      agg.TodayUnits,
-		"total_calls":      agg.TotalCalls,
-		"total_units":      agg.TotalUnits,
-		"active_keys":      activeKeys,
-		"success_rate_24h": successRate,
-		"by_engine":        byEngine,
+		"today_calls":         agg.TodayCalls,
+		"today_units":         agg.TodayUnits,
+		"total_calls":         agg.TotalCalls,
+		"total_units":         agg.TotalUnits,
+		"active_keys":         activeKeys,
+		"success_rate_24h":    successRate,
+		"by_engine":           byEngine,
+		"today_calls_all":     agg.TodayCallsAll,
+		"rejected_today_24h":  agg.Rejected24h,
 	})
 }
 
@@ -421,6 +588,8 @@ func (p *Platform) handleStatsTimeseries(c *fiber.Ctx) error {
 }
 
 // usageItemView matches the contract fields for GET /api/usage items.
+// S4-B-01 adds the outcome verdict (billed/engine_failed/rejected) additively;
+// pre-S4 records carry "" (treated as reached by consumers).
 type usageItemView struct {
 	Time     time.Time `json:"time"`
 	KeyID    string    `json:"key_id"`
@@ -431,11 +600,14 @@ type usageItemView struct {
 	Units    int       `json:"units"`
 	Status   int       `json:"status"`
 	TookMS   int64     `json:"took_ms"`
+	Outcome  string    `json:"outcome"`
 }
 
-// handleUsage answers GET /api/usage?limit=50&offset=0&key_id= — newest first,
-// with the filtered total for pagination. Pagination/filtering is pushed down
-// to the store so a large journal cannot slow the admin log down.
+// handleUsage answers GET /api/usage?limit=50&offset=0&key_id=&from=&to= —
+// newest first, with the filtered total for pagination. Pagination/filtering
+// is pushed down to the store so a large journal cannot slow the admin log
+// down. S4-GAP 密钥增强: from/to bound the page by record time (accepts
+// YYYY-MM-DD or RFC3339; to is inclusive for a date).
 func (p *Platform) handleUsage(c *fiber.Ctx) error {
 	limit := 50
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
@@ -454,7 +626,22 @@ func (p *Platform) handleUsage(c *fiber.Ctx) error {
 	}
 	keyID := strings.TrimSpace(c.Query("key_id"))
 
-	records, total, err := p.store.ListUsagePage(UsagePageFilter{KeyID: keyID, Offset: offset, Limit: limit})
+	from, err := parseOptionalTimeQuery(c.Query("from"), false)
+	if err != nil {
+		return errBadRequestMsg(c, "INVALID_PARAM", "from 时间格式无效,应为 YYYY-MM-DD 或 RFC3339")
+	}
+	to, err := parseOptionalTimeQuery(c.Query("to"), true)
+	if err != nil {
+		return errBadRequestMsg(c, "INVALID_PARAM", "to 时间格式无效,应为 YYYY-MM-DD 或 RFC3339")
+	}
+
+	records, total, err := p.store.ListUsagePage(UsagePageFilter{
+		KeyID:  keyID,
+		From:   from,
+		To:     to,
+		Offset: offset,
+		Limit:  limit,
+	})
 	if err != nil {
 		return errInternal(c, err)
 	}
@@ -475,6 +662,7 @@ func (p *Platform) handleUsage(c *fiber.Ctx) error {
 			Units:    r.Units,
 			Status:   r.Status,
 			TookMS:   r.TookMS,
+			Outcome:  r.Outcome,
 		})
 	}
 

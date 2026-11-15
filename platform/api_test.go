@@ -91,6 +91,14 @@ func mustNewPlatform(t *testing.T, dir string, engineStatus func() any) *Platfor
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// S4 限速默认值(per-IP admin / per-key API / unauth)会让高频测试在
+	// 突发上限处收到 429,与被测行为无关——默认关闭,专项测试自己打开
+	// (TestAdminPerIPRateLimit / TestPerKeyRateLimit / TestUnauthRateLimit)。
+	p.SetSecurity(SecurityConfig{
+		AdminRatePerIP:      0,
+		APIRatePerMinute:    0,
+		UnauthRatePerMinute: 0,
+	})
 	t.Cleanup(func() { _ = p.Close() })
 	return p
 }
@@ -502,9 +510,10 @@ func TestUsageAndStats(t *testing.T) {
 		t.Fatalf("usage items: %v", body)
 	}
 	first, _ := items[0].(map[string]any)
-	// Newest first: the 400 request is the most recent. It recorded the
-	// requested units (1 url × default 4 engines) but consumed none.
-	if first["status"] != float64(400) || first["units"] != float64(4) || first["key_id"] != id {
+	// Newest first: the 400 request is the most recent. B-01 如实记账: the
+	// rejection records the REAL status (400, not the pre-S4 phantom 500) and
+	// zero units — no ghost billing for requests that never reached engines.
+	if first["status"] != float64(400) || first["units"] != float64(0) || first["key_id"] != id {
 		t.Fatalf("usage newest item: %v", first)
 	}
 	for _, field := range []string{"time", "key_id", "key_name", "endpoint", "engines", "urls", "units", "status", "took_ms"} {
@@ -536,21 +545,25 @@ func TestUsageAndStats(t *testing.T) {
 		t.Fatalf("usage pagination items: %v", body)
 	}
 
-	// Overview. 计费口径(按成功单元扣费): the two 200 checks charge 1 unit each
-	// (baidu OK; the errored bing unit is not charged); the 400 request
-	// recorded its requested units (1 url × default 4 engines = 4) but
-	// consumed none → 1+1+4 = 6.
+	// Overview. B-01/P-01 有效调用口径: the two 200 checks charge 1 unit each
+	// (baidu OK; the errored bing unit is not charged); the 400 rejection
+	// records 0 units and does NOT count into today/total calls or the
+	// success rate → 2 reached calls, 2 units.
 	status, body = doJSON(t, env.app, http.MethodGet, "/api/stats/overview", nil, adminHeaders(token))
 	if status != 200 {
 		t.Fatalf("overview: status=%d", status)
 	}
-	if body["today_calls"] != float64(3) || body["total_calls"] != float64(3) ||
-		body["total_units"] != float64(6) || body["today_units"] != float64(6) ||
+	if body["today_calls"] != float64(2) || body["total_calls"] != float64(2) ||
+		body["total_units"] != float64(2) || body["today_units"] != float64(2) ||
 		body["active_keys"] != float64(1) {
 		t.Fatalf("overview totals: %v", body)
 	}
-	// 2 of 3 calls in the last 24h were 200 → 66.67.
-	if body["success_rate_24h"] != 66.67 {
+	// Additive fields (P-01): all journaled calls today + rejections in 24h.
+	if body["today_calls_all"] != float64(3) || body["rejected_today_24h"] != float64(1) {
+		t.Fatalf("overview additive fields: %v", body)
+	}
+	// Both REACHED calls (the two 200s) succeeded → 100.
+	if body["success_rate_24h"] != 100.0 {
 		t.Fatalf("overview success rate: %v", body)
 	}
 	byEngine, _ := body["by_engine"].(map[string]any)
@@ -579,7 +592,9 @@ func TestUsageAndStats(t *testing.T) {
 		t.Fatalf("timeseries len: %d err=%v", len(series), err)
 	}
 	today := series[len(series)-1]
-	if today["date"] != localDate(time.Now()) || today["calls"] != float64(3) || today["units"] != float64(6) || today["ok"] != float64(2) {
+	// B-01/P-01 口径: timeseries calls count reached calls only (2), the
+	// 400 rejection contributes zero units.
+	if today["date"] != localDate(time.Now()) || today["calls"] != float64(2) || today["units"] != float64(2) || today["ok"] != float64(2) {
 		t.Fatalf("timeseries today: %v", today)
 	}
 	if series[0]["calls"] != float64(0) {

@@ -1,16 +1,20 @@
 /* ============================================================
  * Web2API 网站收录查询开放平台 · 管理控制台
  * 原生 ES2018 JavaScript,零依赖、零构建。
+ * 设计语言:docs/design/STYLE-v4.md(取代 STYLE-v2.md)。
  *
  * 结构:
  *   1. 常量与内联图标(API_BASE 与 core.BasePath 对齐;PAGE_META 页头块)
  *   2. DOM 工具 / 格式化工具 / 骨架屏
  *   3. Toast / 剪贴板 / 按钮三态
- *   3b. 双主题(html.dark + localStorage w2a_theme)
+ *   3b. 三态主题(html.dark + localStorage w2a_theme:light/dark/system,
+ *       预置逻辑在 assets/theme-boot.js,此处负责菜单与运行时切换)
  *   3c. 全局快捷键(/ 或 ⌘K 聚焦搜索,带输入守卫)
+ *   3d. 侧栏折叠(256px ↔ icon 列,localStorage w2a_sidebar_collapsed)
  *   4. 登录态与 fetch 统一封装(统一 /web-tool 前缀,401 自动回登录页)
  *   5. 弹窗 / 确认框
- *   6. Hash 路由与视图切换(页头块渲染进内容区;未知路由渲染 404 视图;页间过渡)
+ *   6. Hash 路由与视图切换(页头块渲染进内容区;未知路由渲染 404 视图;
+ *      渲染完成后滚动复位)
  *   7. 页面:总览 / 引擎状态 / API 密钥 / 使用日志
  *   8. 页面:在线调试 / Agent 集成 / API 文档 / 系统设置
  *   9. 启动
@@ -23,7 +27,7 @@
   var LS_TOKEN = 'w2a_token';
   var LS_TOKEN_EXP = 'w2a_token_exp';
   var LS_USERNAME = 'w2a_username';
-  var LS_THEME = 'w2a_theme'; // V2 新增:'light' | 'dark'(缺省 light)
+  var LS_THEME = 'w2a_theme'; // V4 三态:'light' | 'dark' | 'system'(缺省 light)
 
   /* 所有管理 API 与公网 API 都挂在固定前缀 /web-tool 之下(与 core.BasePath
    * 常量一致;契约固定、不可配置)。api() 统一拼前缀,调用点保持 '/api/...'
@@ -72,6 +76,8 @@
   };
   var pendingHash = null;
   var pageTimers = [];
+  /* T-07: boot 是否已完成首屏渲染(用于 /api/me 回来后避免整页二次渲染) */
+  var bootRendered = false;
 
   /* ================= 2. DOM 工具 / 格式化工具 / 骨架屏 ================= */
 
@@ -233,20 +239,49 @@
   function toast(msg, type) {
     var box = $('#toast-box');
     if (!box) return;
+    var text = String(msg);
+    /* T-06:同文案去重合并——重复触发时给已有 toast 计数(×N)并重新计时,
+     * 不再堆叠多条一模一样的提示(如 401 风暴下的「登录已过期」)。 */
+    for (var i = 0; i < box.children.length; i++) {
+      var existing = box.children[i];
+      var msgEl = existing ? existing.querySelector('.toast-msg') : null;
+      if (msgEl && msgEl.getAttribute('data-text') === text) {
+        var count = (Number(existing.getAttribute('data-count')) || 1) + 1;
+        existing.setAttribute('data-count', String(count));
+        msgEl.textContent = count > 1 ? text + '(×' + count + ')' : text;
+        existing.classList.remove('toast-out');
+        if (existing._toastTimer) clearTimeout(existing._toastTimer);
+        existing._toastTimer = toastAutoDismiss(existing);
+        return;
+      }
+    }
     while (box.children.length >= 4) {
       if (box.firstChild) box.removeChild(box.firstChild);
     }
     var icon = type === 'success' ? ICONS.toastOk : (type === 'error' ? ICONS.toastErr : ICONS.toastInfo);
     var t = el('div', { class: 'toast toast-' + (type || 'info') });
     t.appendChild(el('span', { html: icon }));
-    t.appendChild(el('span', { class: 'toast-msg', text: String(msg) }));
+    t.appendChild(el('span', { class: 'toast-msg', 'data-text': text, text: text }));
+    /* V4 §9.12:右上 20×20 关闭钮 */
+    t.appendChild(el('button', {
+      class: 'toast-close', type: 'button', 'aria-label': '关闭提示', text: '×',
+      onclick: function () {
+        t.classList.add('toast-out');
+        setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
+      }
+    }));
     box.appendChild(t);
-    setTimeout(function () {
-      t.classList.add('toast-out');
+    /* V4 §9.12:4s 自动消失 */
+    t._toastTimer = toastAutoDismiss(t);
+  }
+
+  function toastAutoDismiss(node) {
+    return setTimeout(function () {
+      node.classList.add('toast-out');
       setTimeout(function () {
-        if (t.parentNode) t.parentNode.removeChild(t);
+        if (node.parentNode) node.parentNode.removeChild(node);
       }, 220);
-    }, 3200);
+    }, 4000);
   }
 
   function copyText(text) {
@@ -294,41 +329,141 @@
     }
   }
 
-  /* ================= 3b. 双主题(html.dark + localStorage w2a_theme) ================= */
+  /* ================= 3b. 三态主题(html.dark + localStorage w2a_theme) =================
+   * V4 §2:用户入口=右上角图标钮 → 三态菜单「浅色 / 深色 / 系统」,当前项右侧 ✓。
+   * 预置(paint 前同步)由 assets/theme-boot.js 完成;此处负责菜单、运行时
+   * 切换与 system 模式下的跟随。缺省 light(与 V4「浅色默认」一致)。 */
 
-  function currentTheme() {
-    return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  var THEME_MQ = (typeof window.matchMedia === 'function') ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  var THEME_MODES = [['light', '浅色'], ['dark', '深色'], ['system', '系统']];
+  var themeMenuEl = null;
+  var themeMenuTrigger = null;
+
+  function storedThemeMode() {
+    try {
+      var v = localStorage.getItem(LS_THEME);
+      return (v === 'dark' || v === 'light' || v === 'system') ? v : 'light';
+    } catch (e) {
+      return 'light';
+    }
   }
 
-  function applyTheme(theme) {
-    var dark = theme === 'dark';
+  function systemPrefersDark() {
+    return !!(THEME_MQ && THEME_MQ.matches);
+  }
+
+  function themeResolvesDark(mode) {
+    return mode === 'dark' || (mode === 'system' && systemPrefersDark());
+  }
+
+  function applyTheme(mode) {
+    var dark = themeResolvesDark(mode);
     document.documentElement.classList.toggle('dark', dark);
     var meta = document.querySelector('meta[name="color-scheme"]');
     if (meta) meta.setAttribute('content', dark ? 'dark' : 'light');
-    // 两个切换钮(登录页 + 顶栏)同步无障碍状态
-    ['btn-theme', 'btn-login-theme'].forEach(function (id) {
-      var b = document.getElementById(id);
-      if (b) b.setAttribute('aria-pressed', dark ? 'true' : 'false');
-    });
+    syncThemeMenus(mode);
   }
 
   function initTheme() {
-    var stored = '';
-    try { stored = localStorage.getItem(LS_THEME) || ''; } catch (e) { /* 忽略 */ }
-    // head 内联脚本已按存储值预置 class;此处统一兜底并同步按钮状态
-    applyTheme(stored === 'dark' ? 'dark' : 'light');
+    // head 预置脚本已按存储值预置 class;此处统一兜底并同步菜单勾选态
+    applyTheme(storedThemeMode());
+    if (THEME_MQ) {
+      var onChange = function () {
+        if (storedThemeMode() === 'system') applyTheme('system');
+      };
+      if (typeof THEME_MQ.addEventListener === 'function') THEME_MQ.addEventListener('change', onChange);
+      else if (typeof THEME_MQ.addListener === 'function') THEME_MQ.addListener(onChange);
+    }
   }
 
-  function toggleTheme() {
-    var next = currentTheme() === 'dark' ? 'light' : 'dark';
-    try { localStorage.setItem(LS_THEME, next); } catch (e) { /* 忽略 */ }
-    applyTheme(next);
+  function setThemeMode(mode) {
+    if (mode !== 'light' && mode !== 'dark' && mode !== 'system') mode = 'light';
+    try { localStorage.setItem(LS_THEME, mode); } catch (e) { /* 忽略 */ }
+    applyTheme(mode);
+  }
+
+  function syncThemeMenus(mode) {
+    var items = document.querySelectorAll('.theme-menu .menu-item[data-mode]');
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle('on', items[i].getAttribute('data-mode') === mode);
+    }
+  }
+
+  function closeThemeMenu() {
+    if (themeMenuEl && themeMenuEl.parentNode) themeMenuEl.parentNode.removeChild(themeMenuEl);
+    if (themeMenuTrigger) themeMenuTrigger.setAttribute('aria-expanded', 'false');
+    themeMenuEl = null;
+    themeMenuTrigger = null;
+    document.removeEventListener('mousedown', onMenuOutside, true);
+    document.removeEventListener('keydown', onMenuKeydown, true);
+  }
+
+  function onMenuOutside(e) {
+    if (!themeMenuEl) return;
+    if (themeMenuEl.contains(e.target) || (themeMenuTrigger && themeMenuTrigger.contains(e.target))) return;
+    closeThemeMenu();
+  }
+
+  function onMenuKeydown(e) {
+    if (!themeMenuEl) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeThemeMenu();
+      if (themeMenuTrigger) themeMenuTrigger.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      var items = themeMenuEl.querySelectorAll('.menu-item');
+      if (!items.length) return;
+      var idx = Array.prototype.indexOf.call(items, document.activeElement);
+      var next = e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+      items[next === -1 ? 0 : next].focus();
+    }
+  }
+
+  /* 三态菜单 popover:fixed 定位锚定触发钮右下角;150ms zoom-in 入场(§9.10) */
+  function openThemeMenu(trigger) {
+    closeThemeMenu();
+    var mode = storedThemeMode();
+    var menu = el('div', { class: 'theme-menu', role: 'menu', 'aria-label': '主题' });
+    THEME_MODES.forEach(function (pair) {
+      menu.appendChild(el('button', {
+        class: 'menu-item' + (pair[0] === mode ? ' on' : ''),
+        type: 'button', role: 'menuitemradio',
+        'data-mode': pair[0],
+        'aria-checked': pair[0] === mode ? 'true' : 'false',
+        onclick: function () {
+          setThemeMode(pair[0]);
+          closeThemeMenu();
+          if (trigger) trigger.focus();
+        }
+      },
+        el('span', { text: pair[1] }),
+        el('span', { class: 'menu-check', 'aria-hidden': 'true', text: '✓' })));
+    });
+    document.body.appendChild(menu);
+    var rect = trigger.getBoundingClientRect();
+    var mw = menu.offsetWidth;
+    var left = Math.min(Math.max(8, rect.right - mw), window.innerWidth - mw - 8);
+    var top = rect.bottom + 6;
+    if (top + menu.offsetHeight > window.innerHeight - 8) top = Math.max(8, rect.top - menu.offsetHeight - 6);
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    themeMenuEl = menu;
+    themeMenuTrigger = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('mousedown', onMenuOutside, true);
+    document.addEventListener('keydown', onMenuKeydown, true);
+    var first = menu.querySelector('.menu-item.on') || menu.querySelector('.menu-item');
+    if (first) first.focus();
   }
 
   function bindThemeButtons() {
     ['btn-theme', 'btn-login-theme'].forEach(function (id) {
       var b = document.getElementById(id);
-      if (b) b.addEventListener('click', toggleTheme);
+      if (b) b.addEventListener('click', function () {
+        if (themeMenuEl && themeMenuTrigger === b) closeThemeMenu();
+        else openThemeMenu(b);
+      });
     });
   }
 
@@ -368,40 +503,70 @@
     });
   }
 
-  /* ================= 4. 登录态与 fetch 统一封装 ================= */
+  /* ================= 3d. 侧栏折叠(256px ↔ icon 列,V4 §9.8 推断项) =================
+   * 桌面端顶栏左侧折叠钮;状态持久化到 localStorage。折叠态仅图标,
+   * 项上挂 title 作悬停提示。移动端(≤960px)侧栏为底部横条,按钮隐藏。 */
+  var LS_SIDEBAR = 'w2a_sidebar_collapsed';
+
+  function updateNavTitles(collapsed) {
+    var items = document.querySelectorAll('.nav-item');
+    for (var i = 0; i < items.length; i++) {
+      var a = items[i];
+      if (collapsed) a.setAttribute('title', (a.textContent || '').trim());
+      else a.removeAttribute('title');
+    }
+  }
+
+  function bindSidebarToggle() {
+    var btn = document.getElementById('btn-sidebar');
+    var appEl = document.getElementById('app');
+    if (!btn || !appEl) return;
+    var collapsed = false;
+    try { collapsed = localStorage.getItem(LS_SIDEBAR) === '1'; } catch (e) { /* 忽略 */ }
+    appEl.classList.toggle('sidebar-collapsed', collapsed);
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    updateNavTitles(collapsed);
+    btn.addEventListener('click', function () {
+      collapsed = !collapsed;
+      appEl.classList.toggle('sidebar-collapsed', collapsed);
+      try { localStorage.setItem(LS_SIDEBAR, collapsed ? '1' : '0'); } catch (e) { /* 忽略 */ }
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      updateNavTitles(collapsed);
+    });
+  }
+
+  /* ================= 4. 登录态与 fetch 统一封装 =================
+   * B-12 迁移: 管理员 JWT 不再写入 localStorage(XSS 可窃取),登录后持久化
+   * 由后端下发的 httpOnly 会话 cookie 承担(服务端 POST /api/auth/login 同时
+   * Set-Cookie)。token 仅存本页内存;老版本遗留的 localStorage token 做
+   * 一次性迁移(读入内存后立即清除),之后与 cookie 双轨并存。 */
+
+  var memToken = '';
+  var memTokenExp = 0;
 
   function getToken() {
-    try {
-      return localStorage.getItem(LS_TOKEN) || '';
-    } catch (e) {
-      return '';
-    }
+    return memToken;
   }
 
   function tokenExpired() {
-    try {
-      var exp = Number(localStorage.getItem(LS_TOKEN_EXP) || 0);
-      return exp > 0 && Date.now() >= exp;
-    } catch (e) {
-      return false;
-    }
+    return memTokenExp > 0 && Date.now() >= memTokenExp;
   }
 
   function setAuth(token, expiresIn, username) {
+    memToken = token || '';
+    var ms = Number(expiresIn);
+    memTokenExp = (!isNaN(ms) && ms > 0) ? Date.now() + ms * 1000 - 60000 : 0; // 预留 60s 偏差
     try {
-      localStorage.setItem(LS_TOKEN, token);
-      var ms = Number(expiresIn);
-      if (!isNaN(ms) && ms > 0) {
-        localStorage.setItem(LS_TOKEN_EXP, String(Date.now() + ms * 1000 - 60000)); // 预留 60s 偏差
-      } else {
-        localStorage.removeItem(LS_TOKEN_EXP);
-      }
+      localStorage.removeItem(LS_TOKEN);
+      localStorage.removeItem(LS_TOKEN_EXP);
       if (username) localStorage.setItem(LS_USERNAME, username);
-    } catch (e) { /* localStorage 不可用时忽略,仅内存态 */ }
+    } catch (e) { /* 忽略 */ }
     state.username = username || '';
   }
 
   function clearAuth() {
+    memToken = '';
+    memTokenExp = 0;
     try {
       localStorage.removeItem(LS_TOKEN);
       localStorage.removeItem(LS_TOKEN_EXP);
@@ -410,23 +575,43 @@
     state.username = '';
   }
 
+  /* 一次性迁移: 老登录态的 token 只进内存,localStorage 立即清空。 */
+  (function migrateLegacyToken() {
+    try {
+      var legacy = localStorage.getItem(LS_TOKEN);
+      if (legacy) {
+        memToken = legacy;
+        var exp = Number(localStorage.getItem(LS_TOKEN_EXP) || 0);
+        memTokenExp = exp > 0 ? exp : 0;
+        localStorage.removeItem(LS_TOKEN);
+        localStorage.removeItem(LS_TOKEN_EXP);
+      }
+    } catch (e) { /* 忽略 */ }
+  })();
+
+  /* 登录态判定改为服务端权威: cookie 对前端不可读,登录与否以 /api/me 结果
+   * 为准(见 boot)。内存 token 仅用于提前渲染与 Bearer 双轨。 */
   function isLoggedIn() {
-    return !!getToken() && !tokenExpired();
+    return !!memToken && !tokenExpired();
   }
 
-  /* 机器可读错误 → 面向管理员的中文提示 */
+  /* 机器可读错误 → 面向管理员的中文提示。
+   * B-09 适配:管理面 500 改为 {"error":"server_error","request_id":N}(不带
+   * message,原始错误只进服务端日志),此处不再拼接 message,仅展示请求 ID。 */
   function extractErrMsg(data, status) {
     if (data && typeof data === 'object') {
-      if (typeof data.message === 'string' && data.message && data.error === 'server_error') {
-        return '服务端错误:' + data.message;
-      }
       if (typeof data.error === 'string' && data.error) {
         if (data.error === 'unauthorized') return '未授权或登录已过期';
+        if (data.error === 'forbidden') return '该请求被拒绝访问';
         if (data.error === 'quota_exceeded') return '调用配额已用尽';
+        if (data.error === 'rate_limited') return '请求过于频繁,请稍后再试';
+        if (data.error === 'method_not_allowed') return '该接口不支持此 HTTP 方法';
         if (data.error === 'too_many_attempts') return '登录尝试次数过多,已临时锁定,请稍后再试';
         if (data.error === 'engine_cooldown') return '引擎冷却中,请稍后重试';
         if (data.error === 'not_found') return '接口或资源不存在(若刚部署,请确认平台 API 已启用)';
-        if (data.error === 'server_error') return '服务端内部错误';
+        if (data.error === 'server_error') {
+          return '服务端内部错误' + (data.request_id ? '(请求 ID ' + data.request_id + ')' : '');
+        }
         if (data.error === 'bad_request') {
           return '参数错误' + (data.reason ? '(' + data.reason + ')' : '');
         }
@@ -455,7 +640,18 @@
     return fetch(API_BASE + path, {
       method: method,
       headers: headers,
+      credentials: 'same-origin', // B-12: httpOnly 会话 cookie 与 Bearer 双轨
       body: (body !== undefined && body !== null) ? JSON.stringify(body) : undefined
+    }).catch(function (fetchErr) {
+      /* D-03: 网络层失败(fetch reject, 典型: 服务端 IdleTimeout 关闭 keep-alive
+       * 连接后的 TypeError: Failed to fetch)不会经过下方 extractErrMsg——它只在
+       * 拿到 HTTP 响应时执行。这里统一映射为中文提示, 英文原文不进全中文界面;
+       * err.status=0 与 HTTP 状态码区分, err.network 供调用方识别网络类失败。 */
+      var e = new Error('网络异常或服务已重启,请稍后重试');
+      e.status = 0;
+      e.network = true;
+      if (fetchErr && fetchErr.name) e.causeName = fetchErr.name;
+      throw e;
     }).then(function (res) {
       var retryAfter = Number(res.headers.get('Retry-After'));
       return res.text().then(function (text) {
@@ -478,10 +674,18 @@
     });
   }
 
+  var lastUnauthorizedToastAt = 0;
+
   function onUnauthorized() {
     clearAuth();
     showLogin();
-    toast('登录已过期,请重新登录', 'error');
+    /* T-06:会话失效后并发请求触发 401 风暴时,全局拦截只弹一次提示;
+     * 时间窗内重复的 401 不再逐条 toast(toast 合并计数为兜底)。 */
+    var now = Date.now();
+    if (now - lastUnauthorizedToastAt > 4000) {
+      lastUnauthorizedToastAt = now;
+      toast('登录已过期,请重新登录', 'error');
+    }
     if (location.hash !== '#/login') location.hash = '#/login';
   }
 
@@ -666,6 +870,7 @@
       root.innerHTML = '';
       renderNotFound(root, hash);
       animatePage(root);
+      window.scrollTo(0, 0); // P-06:切页滚动复位(移动端不再落在页底)
       return;
     }
     showApp();
@@ -683,6 +888,7 @@
     else if (hash === '#/settings') pageSettings(root);
     else pageDocs(root);
     animatePage(root);
+    window.scrollTo(0, 0); // P-06:切页滚动复位(移动端不再落在页底)
   }
 
   /* 页间切换过渡:fade + 8px 位移(180ms),重排触发以确保每次路由都重放 */
@@ -765,7 +971,7 @@
       recentCard.innerHTML = '';
       recentCard.appendChild(el('div', { class: 'card-head' },
         el('h2', { class: 'card-title' }, '最近日志',
-          el('span', { class: 'card-head-sub', text: 'GET /web-tool/api/usage?limit=5' })),
+          el('span', { class: 'card-head-sub', text: '最近 5 次调用记录' })),
         el('a', { class: 'link-more', href: '#/usage', text: '查看全部 >' })));
       var body = el('div', { class: 'card-body flush' });
       recentCard.appendChild(body);
@@ -787,7 +993,7 @@
           tbody.appendChild(el('tr', null,
             el('td', { class: 'td-mono', text: fmtDateTime(it.time) }),
             el('td', { class: 'td-strong', text: it.key_name || ('#' + it.key_id) }),
-            el('td', null, el('span', { class: 'chip', text: it.endpoint || '-' })),
+            el('td', null, el('span', { class: 'chip', text: it.endpoint || '—' })),
             el('td', null, statusPill(it.status))));
         });
         body.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
@@ -819,14 +1025,33 @@
     return [];
   }
 
-  /* 统计带:一个 hairline 容器内 4 格竖线分隔(§4.4),非独立卡 */
+  /* 统计带:一个 hairline 容器内 4 格竖线分隔(V4 §9.6),非独立卡。
+   * P-01:KPI 口径=「有效调用」(到达引擎、进入业务逻辑的请求);
+   * 参数错误(400)、配额与限速拒绝(429)、冷却拒绝(503)不计入调用与成功率。
+   * 依赖后端 additive 字段 today_calls_all / rejected_today_24h(B-01);
+   * 字段缺失时回退现口径(标签维持原表述,不加脚注,避免误导)。 */
+  function statsHasRejectedFields(stats) {
+    return stats && typeof stats.today_calls_all === 'number' && typeof stats.rejected_today_24h === 'number';
+  }
+
   function buildStatBand(stats) {
-    var defs = [
-      { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
-      { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
-      { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
-      { label: '24h 成功率', value: fmtPercent(stats.success_rate_24h), sub: '近 24 小时请求成功率' }
-    ];
+    var hasNew = statsHasRejectedFields(stats);
+    var defs;
+    if (hasNew) {
+      defs = [
+        { label: '今日有效调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
+        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
+        { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
+        { label: '有效成功率(24h)', value: fmtPercent(stats.success_rate_24h), sub: '全部请求 ' + fmtNumber(stats.today_calls_all) + ' · 拒绝 ' + fmtNumber(stats.rejected_today_24h) }
+      ];
+    } else {
+      defs = [
+        { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
+        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
+        { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
+        { label: '24h 成功率', value: fmtPercent(stats.success_rate_24h), sub: '近 24 小时请求成功率' }
+      ];
+    }
     var band = el('div', { class: 'stat-band' });
     defs.forEach(function (d) {
       band.appendChild(el('div', { class: 'stat-cell' },
@@ -834,6 +1059,9 @@
         el('div', { class: 'stat-label', text: d.label }),
         el('div', { class: 'stat-sub', text: d.sub })));
     });
+    if (hasNew) {
+      band.appendChild(el('div', { class: 'stat-foot', text: '参数错误、配额与限速拒绝的请求不计入调用与成功率。' }));
+    }
     return band;
   }
 
@@ -841,7 +1069,7 @@
     var body = el('div', { class: 'card-body' });
     var card = el('div', { class: 'card' },
       el('div', { class: 'card-head' },
-        el('h2', { class: 'card-title' }, '近 14 日调用', el('span', { class: 'card-head-sub', text: 'GET /web-tool/api/stats/timeseries' }))),
+        el('h2', { class: 'card-title' }, '近 14 日调用', el('span', { class: 'card-head-sub', text: '全部调用按天统计' }))),
       body);
     if (!series.length) {
       body.appendChild(emptyNode('暂无调用数据', '发起一次 /v1/index/check 调用后,这里会展示近 14 日的柱状图。'));
@@ -1020,11 +1248,33 @@
     return { pill: 'pill-green', label: '运行中' };
   }
 
+  /* 迷你分段健康进度条(V4 §9.6/§10.3):约 16 块 h8;
+   * 健康(2xx 占比)= success,异常 = destructive;无数据时全灰空槽。 */
+  function segHealthBar(calls, ok) {
+    var SEGS = 16;
+    var bar = el('div', { class: 'segbar', role: 'img' });
+    var ratio = null;
+    if (typeof calls === 'number' && calls > 0 && typeof ok === 'number' && ok >= 0) {
+      ratio = Math.max(0, Math.min(1, ok / calls));
+      bar.setAttribute('aria-label', '健康度 ' + Math.round(ratio * 100) + '%');
+    } else {
+      bar.setAttribute('aria-label', '暂无健康度数据');
+    }
+    for (var i = 0; i < SEGS; i++) {
+      var cls = '';
+      if (ratio !== null) {
+        cls = (i < Math.round(ratio * SEGS)) ? 'ok' : 'bad';
+      }
+      bar.appendChild(el('i', { class: cls }));
+    }
+    return bar;
+  }
+
   function buildEngineCard(engines) {
     var body = el('div', { class: 'card-body' });
     var card = el('div', { class: 'card' },
       el('div', { class: 'card-head' },
-        el('h2', { class: 'card-title' }, '引擎状态', el('span', { class: 'card-head-sub', text: 'GET /web-tool/api/engines' }))),
+        el('h2', { class: 'card-title' }, '引擎状态', el('span', { class: 'card-head-sub', text: '四引擎运行与冷却实时状态' }))),
       body);
     if (!engines.length) {
       body.appendChild(emptyNode('暂无引擎状态', '服务端未返回引擎数据。'));
@@ -1034,6 +1284,7 @@
     engines.forEach(function (eng) {
       var info = engineStateInfo(eng);
       var meta = el('div', { class: 'engine-meta' });
+      meta.appendChild(segHealthBar(eng.calls, eng.ok));
       meta.appendChild(el('span', { class: 'pill ' + info.pill, text: info.label }));
       if (eng.state === 'cooldown' && eng.until) {
         meta.appendChild(el('span', { class: 'muted td-mono', text: '至 ' + fmtDateTime(eng.until) }));
@@ -1098,7 +1349,7 @@
 
     root.appendChild(el('p', {
       class: 'page-note',
-      text: '连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求,成功恢复、失败进下一档。每 10 秒自动刷新。'
+      text: '连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截则归零。到期后放行一个探测请求,成功恢复、失败进下一档。每 10 秒自动刷新。'
     }));
 
     var wrap = el('div', null);
@@ -1124,10 +1375,10 @@
         if (groupState !== 'all' && list.length) {
           wrap.appendChild(el('div', { class: 'card' },
             emptyNode('该分组暂无引擎',
-              '当前分组「' + (ENGINE_LABEL[groupState] || groupState) + '」没有返回引擎数据,可切换分组或确认引擎已在 config.yaml 中启用。')));
+              '当前分组「' + (ENGINE_LABEL[groupState] || groupState) + '」没有返回引擎数据,可切换分组或确认引擎已在配置中启用。')));
         } else {
           wrap.appendChild(el('div', { class: 'card' },
-            emptyNode('暂无引擎状态', '服务端未返回引擎数据。请确认引擎已在 config.yaml 中启用。')));
+            emptyNode('暂无引擎状态', '服务端未返回引擎数据。请确认引擎已在配置中启用。')));
         }
         return;
       }
@@ -1290,7 +1541,7 @@
       } else {
         body = el('div', null,
           el('div', { class: 'cd-value done', text: eng.enabled === false ? '停用' : '正常' }),
-          el('div', { class: 'cd-label', text: eng.enabled === false ? '该引擎已在 config.yaml 中停用' : '运行正常,请求正常放行' }));
+          el('div', { class: 'cd-label', text: eng.enabled === false ? '该引擎已在配置中停用' : '运行正常,请求正常放行' }));
       }
 
       var btns = buildEngineButtons(eng);
@@ -1328,6 +1579,11 @@
         err.textContent = msg;
         err.classList.remove('hidden');
       }
+      function hideErr() {
+        err.classList.add('hidden');
+      }
+      /* P-05:输入即清除既有错误(与登录页范式一致) */
+      minutesInput.addEventListener('input', hideErr);
 
       submitBtn.addEventListener('click', function () {
         var n = Number(minutesInput.value);
@@ -1402,7 +1658,7 @@
       });
     }
 
-    /* 前端过滤:GET /api/keys 为全量返回,搜索只过滤已加载列表(不改请求) */
+    /* 搜索为前端过滤:GET /api/keys 为全量返回,只在已加载列表内筛选 */
     function filteredKeys() {
       var q = searchInput.value.trim().toLowerCase();
       if (!q) return keys;
@@ -1434,7 +1690,7 @@
       card.appendChild(buildKeysTable(list, loadAll));
       if (!fresh && list.length !== keys.length) {
         var info = el('div', { class: 'pagination', style: 'border-top:none;padding-top:0;' },
-          el('span', { class: 'page-info', text: '匹配 ' + list.length + ' / 共 ' + keys.length + ' 条(前端过滤,不改请求)' }));
+          el('span', { class: 'page-info', text: '在当前结果中筛选 ' + list.length + ' / 共 ' + keys.length + ' 条' }));
         card.appendChild(info);
       }
     }
@@ -1485,12 +1741,42 @@
           });
       });
 
+      // 编辑(P-03:名称 / 日配额,复用既有 PATCH /api/keys/{id})
+      var editBtn = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '编辑' });
+      editBtn.addEventListener('click', function () {
+        openEditKeyModal(k, reload);
+      });
+
+      // 轮换(P-03;POST /api/keys/{id}/rotate 为新端点,旧密钥即时失效)
+      var rotateBtn = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '轮换' });
+      rotateBtn.addEventListener('click', function () {
+        confirmDialog({
+          title: '轮换密钥',
+          message: '确定轮换密钥「' + (k.name || '未命名') + '(' + (k.prefix || '—') + ')」吗?将生成新密钥并立即替换,旧密钥即时失效,已接入的调用方需同步更新。名称、配额与用量计数保留。',
+          confirmText: '轮换'
+        }).then(function (yes) {
+          if (!yes) return;
+          setBtnLoading(rotateBtn, true);
+          api('POST', '/api/keys/' + encodeURIComponent(String(k.id)) + '/rotate')
+            .then(function (created) {
+              toast('密钥已轮换,请立即保存新密钥', 'success');
+              if (typeof reload === 'function') reload();
+              openKeySuccessModal(created || {});
+            })
+            .catch(function (e) {
+              if (e.status === 404) toast('轮换接口需要服务端支持,当前实例尚未提供', 'error');
+              else toast(e.message, 'error');
+            })
+            .then(function () { setBtnLoading(rotateBtn, false); });
+        });
+      });
+
       // 删除(确认框)
       var del = el('button', { class: 'btn btn-text-danger', type: 'button', text: '删除' });
       del.addEventListener('click', function () {
         confirmDialog({
           title: '删除密钥',
-          message: '确定删除密钥「' + (k.name || '未命名') + '(' + (k.prefix || '-') + ')」吗?删除后使用该密钥的调用将立即失效,且不可恢复。',
+          message: '确定删除密钥「' + (k.name || '未命名') + '(' + (k.prefix || '—') + ')」吗?删除后使用该密钥的调用将立即失效,且不可恢复。',
           confirmText: '删除'
         }).then(function (yes) {
           if (!yes) return;
@@ -1507,31 +1793,33 @@
         });
       });
 
-      // 今日用量 + 配额进度细条(daily_quota=0 不限,不渲染进度)
+      // 今日用量 + 配额进度条(P-16:数值常显小字;daily_quota=0 不限,不渲染进度)
       var usedNum = Number(k.used_today) || 0;
       var quotaNum = Number(k.daily_quota) || 0;
       var usedCell;
       if (quotaNum > 0) {
         var pct = Math.min(100, Math.round(usedNum / quotaNum * 100));
-        var barCls = 'qbar' + (pct >= 100 ? ' full' : (pct >= 80 ? ' hot' : ''));
+        var barCls = 'qbar' + (pct >= 100 ? ' full' : (pct >= 80 ? ' hot' : (pct > 0 ? ' low' : '')));
         usedCell = el('td', { class: 'td-num' },
-          el('div', { text: fmtNumber(k.used_today) }),
-          el('div', { class: barCls, title: '今日 ' + fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' units(' + pct + '%)' },
-            el('i', { style: 'width:' + pct + '%' })));
+          el('div', { class: 'qbar-wrap' },
+            el('span', { class: 'qbar-num', text: fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' · ' + pct + '%' }),
+            el('div', { class: barCls, title: '今日 ' + fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' units(' + pct + '%)' },
+              el('i', { style: 'width:' + pct + '%' }))));
       } else {
         usedCell = el('td', { class: 'td-num', text: fmtNumber(k.used_today) });
       }
 
       tbody.appendChild(el('tr', null,
         el('td', { class: 'td-strong', text: k.name || '未命名' }),
-        el('td', null, el('span', { class: 'chip', text: k.prefix || '-' })),
-        el('td', null, el('span', { class: 'pill ' + (isActive ? 'pill-green' : 'pill-gray'), text: isActive ? '启用' : '停用' })),
+        el('td', null, el('span', { class: 'chip', text: k.prefix || '—' })),
+        el('td', null, el('span', { class: 'pill ' + (isActive ? 'pill-green' : 'pill-gray'), text: isActive ? '启用' : '停用' }),
+          keyExtraChips(k).map(function (c) { return el('span', { class: 'td-chip-gap' }, c); })),
         usedCell,
         el('td', { class: 'td-num', text: fmtNumber(k.used_total) }),
         el('td', { class: 'td-num', text: fmtQuota(k.daily_quota) }),
         el('td', { class: 'td-mono', text: fmtDateTime(k.created_at) }),
         el('td', { class: 'td-mono', text: (k.last_used_at === null || k.last_used_at === undefined || k.last_used_at === '') ? '从未使用' : fmtDateTime(k.last_used_at) }),
-        el('td', null, el('div', { class: 'row-actions' }, sw, del))));
+        el('td', null, el('div', { class: 'row-actions' }, sw, editBtn, rotateBtn, del))));
     });
 
     // keys 页无分页:GET /api/keys 全量返回;行多时容器内纵向滚动,不伪造分页控件
@@ -1543,10 +1831,52 @@
     return fmtNumber(Number(v));
   }
 
+  /* S4-GAP 密钥增强辅助: 本地时间 ↔ datetime-local 输入值,RFC3339 提交。 */
+  function toLocalInputValue(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + 'T' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+
+  function fromLocalInputValue(v) {
+    if (!v) return null; // 空 = 清除过期时间
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return undefined; // 无效值由调用方提示
+    return d.toISOString();
+  }
+
+  function parseAllowedIPs(raw) {
+    var parts = String(raw || '').split(/[\s,;]+/).filter(function (x) { return x !== ''; });
+    return parts.length ? parts : null;
+  }
+
+  /* 密钥过期/IP 白名单小徽标(表格状态列,S4-GAP)。 */
+  function keyExtraChips(k) {
+    var chips = [];
+    var exp = k && k.expires_at ? new Date(k.expires_at) : null;
+    if (exp && !isNaN(exp.getTime())) {
+      var expired = exp.getTime() <= Date.now();
+      chips.push(el('span', {
+        class: 'chip ' + (expired ? 'chip-red' : 'chip'),
+        title: expired ? '该密钥已过期(调用一律 401)' : '过期时间:' + fmtDateTime(k.expires_at),
+        text: (expired ? '已过期 ' : '至 ') + fmtDateTime(k.expires_at)
+      }));
+    }
+    var ips = (k && Array.isArray(k.allowed_ips)) ? k.allowed_ips.length : 0;
+    if (ips > 0) {
+      chips.push(el('span', { class: 'chip', title: 'IP 白名单:' + k.allowed_ips.join(', '), text: ips + ' IP 限制' }));
+    }
+    return chips;
+  }
+
   /* 创建密钥弹窗 */
   function openCreateKeyModal(onCreated) {
     var nameInput = el('input', { class: 'input', type: 'text', maxlength: '64', placeholder: '例如:生产服务 / 测试环境' });
     var quotaInput = el('input', { class: 'input', type: 'number', min: '0', step: '1', placeholder: '0 表示不限' });
+    var expiryInput = el('input', { class: 'input', type: 'datetime-local' });
+    var ipsInput = el('input', { class: 'input', type: 'text', placeholder: '留空不限制;多个用逗号分隔' });
     var err = el('div', { class: 'form-err hidden', role: 'alert' });
     var body = el('div', { class: 'modal-body' },
       el('div', { class: 'field' },
@@ -1556,6 +1886,14 @@
         el('label', { class: 'field-label', text: '日配额(units / 天)' }),
         quotaInput,
         el('div', { class: 'form-hint', text: '1 URL × 1 引擎 = 1 unit;留空或 0 表示不限量。' })),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '过期时间(可选)' }),
+        expiryInput,
+        el('div', { class: 'form-hint', text: '留空表示长期有效;到期后调用一律返回 401。' })),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: 'IP 白名单(可选)' }),
+        ipsInput,
+        el('div', { class: 'form-hint', text: '仅允许列表内 IP 调用(单个 IP 或 CIDR 网段);留空不限。' })),
       err);
     var submitBtn = el('button', { class: 'btn btn-primary', type: 'button', text: '创建' });
     var cancelBtn = el('button', {
@@ -1569,6 +1907,12 @@
       err.textContent = msg;
       err.classList.remove('hidden');
     }
+    function hideErr() {
+      err.classList.add('hidden');
+    }
+
+    /* P-05:同表单内输入变化即清除既有错误(与登录页范式一致) */
+    [nameInput, quotaInput, expiryInput, ipsInput].forEach(function (inp) { inp.addEventListener('input', hideErr); });
 
     submitBtn.addEventListener('click', function () {
       var name = nameInput.value.trim();
@@ -1580,7 +1924,12 @@
         if (isNaN(n) || n < 0) { showErr('日配额必须是不小于 0 的数字'); return; }
         payload.daily_quota = Math.floor(n);
       }
-      err.classList.add('hidden');
+      var iso = fromLocalInputValue(expiryInput.value);
+      if (iso === undefined) { showErr('过期时间无效'); return; }
+      if (iso) payload.expires_at = iso;
+      var ips = parseAllowedIPs(ipsInput.value);
+      if (ips) payload.allowed_ips = ips;
+      hideErr();
       setBtnLoading(submitBtn, true, '创建中…');
       cancelBtn.disabled = true;
       api('POST', '/api/keys', payload)
@@ -1595,6 +1944,89 @@
         .then(function () {
           setBtnLoading(submitBtn, false);
           cancelBtn.disabled = false;
+        });
+    });
+
+    nameInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitBtn.click();
+      }
+    });
+    setTimeout(function () { nameInput.focus(); }, 0);
+  }
+
+  /* 编辑密钥弹窗(P-03 名称/日配额 + S4-GAP 过期时间/IP 白名单,复用 PATCH /api/keys/{id}) */
+  function openEditKeyModal(k, onSaved) {
+    k = k || {};
+    var nameInput = el('input', { class: 'input', type: 'text', maxlength: '64', value: String(k.name || '') });
+    var quotaInput = el('input', { class: 'input', type: 'number', min: '0', step: '1', placeholder: '0 表示不限', value: (k.daily_quota === null || k.daily_quota === undefined || Number(k.daily_quota) === 0) ? '' : String(k.daily_quota) });
+    var expiryInput = el('input', { class: 'input', type: 'datetime-local', value: toLocalInputValue(k.expires_at) });
+    var ipsInput = el('input', { class: 'input', type: 'text', placeholder: '留空不限制;多个用逗号分隔', value: (Array.isArray(k.allowed_ips) ? k.allowed_ips.join(', ') : '') });
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
+    var body = el('div', { class: 'modal-body' },
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '名称' }),
+        nameInput),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '日配额(units / 天)' }),
+        quotaInput,
+        el('div', { class: 'form-hint', text: '1 URL × 1 引擎 = 1 unit;留空或 0 表示不限量。' })),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '过期时间' }),
+        expiryInput,
+        el('div', { class: 'form-hint', text: '清空并保存表示取消过期(长期有效);到期后调用一律返回 401。' })),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: 'IP 白名单' }),
+        ipsInput,
+        el('div', { class: 'form-hint', text: '单个 IP 或 CIDR 网段,逗号分隔;清空并保存表示不限制。' })),
+      err);
+    var submitBtn = el('button', { class: 'btn btn-primary', type: 'button', text: '保存' });
+    var cancelBtn = el('button', {
+      class: 'btn btn-secondary', type: 'button', text: '取消',
+      onclick: function () { handle.close(); }
+    });
+    var foot = el('div', { class: 'modal-foot' }, cancelBtn, submitBtn);
+    var handle = openModal({ title: '编辑密钥「' + (k.name || '未命名') + '」', body: body, footer: foot, dismissable: false });
+
+    function showErr(msg) {
+      err.textContent = msg;
+      err.classList.remove('hidden');
+    }
+    function hideErr() {
+      err.classList.add('hidden');
+    }
+
+    /* P-05:输入即清错 */
+    [nameInput, quotaInput, expiryInput, ipsInput].forEach(function (inp) { inp.addEventListener('input', hideErr); });
+
+    submitBtn.addEventListener('click', function () {
+      var name = nameInput.value.trim();
+      if (!name) { showErr('请输入密钥名称'); return; }
+      var payload = { name: name };
+      var q = quotaInput.value.trim();
+      if (q !== '') {
+        var n = Number(q);
+        if (isNaN(n) || n < 0) { showErr('日配额必须是不小于 0 的数字'); return; }
+        payload.daily_quota = Math.floor(n);
+      }
+      var iso = fromLocalInputValue(expiryInput.value);
+      if (iso === undefined) { showErr('过期时间无效'); return; }
+      payload.expires_at = iso; // ISO 字符串或 null(显式清除)
+      payload.allowed_ips = parseAllowedIPs(ipsInput.value) || []; // 空数组 = 清除限制
+      hideErr();
+      setBtnLoading(submitBtn, true, '保存中…');
+      api('PATCH', '/api/keys/' + encodeURIComponent(String(k.id)), payload)
+        .then(function () {
+          handle.close();
+          toast('密钥已更新', 'success');
+          if (typeof onSaved === 'function') onSaved();
+        })
+        .catch(function (e) {
+          showErr(e.message);
+        })
+        .then(function () {
+          setBtnLoading(submitBtn, false);
         });
     });
 
@@ -1683,7 +2115,8 @@
       b.addEventListener('click', function () {
         localFilter.range = pair[0];
         Object.keys(rangeTabs).forEach(function (k) { rangeTabs[k].classList.toggle('on', k === pair[0]); });
-        renderTable();
+        st.offset = 0;
+        loadList(); // S4: 时间范围走服务端 from 参数,需重新拉取
       });
       rangeTabs[pair[0]] = b;
       rangeBox.appendChild(b);
@@ -1698,7 +2131,7 @@
         rangeBox),
       el('div', { class: 'toolbar-actions' }, refreshBtn));
     root.appendChild(toolbar);
-    root.appendChild(el('p', { class: 'page-note', text: '级别与时间筛选作用于当前页已加载的数据(接口仅支持密钥筛选与分页);每次 /v1/index/check 与 MCP 工具调用都会记录一条使用日志。' }));
+    root.appendChild(el('p', { class: 'page-note', text: '时间范围在服务端过滤(翻页总数随之准确);级别筛选作用于当前页记录。' }));
 
     var card = el('div', { class: 'card' });
     root.appendChild(card);
@@ -1706,19 +2139,33 @@
     var lastItems = [];
     var lastTotal = 0;
 
+    /* S4: GET /api/usage 支持 from/to 服务端时间过滤(时间 tabs 改服务端参数,
+     * 分页总数随之准确);级别 chips 仍作用于当前页数据。 */
     function currentUrl() {
       var q = '?limit=' + st.limit + '&offset=' + st.offset;
       if (st.keyId !== '') q += '&key_id=' + encodeURIComponent(st.keyId);
+      var range = localFilter.range;
+      if (range === 'today') {
+        var now = new Date();
+        var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+        q += '&from=' + encodeURIComponent(now.getFullYear() + '-' + p2(now.getMonth() + 1) + '-' + p2(now.getDate()));
+      } else if (range === '7d' || range === '30d') {
+        var days = range === '7d' ? 7 : 30;
+        var from = new Date(Date.now() - days * 86400000);
+        var p2b = function (n) { return (n < 10 ? '0' : '') + n; };
+        q += '&from=' + encodeURIComponent(from.getFullYear() + '-' + p2b(from.getMonth() + 1) + '-' + p2b(from.getDate()));
+      }
       return '/api/usage' + q;
     }
 
+    /* 时间过滤已上移服务端(from=);此处保留级别过滤与防御性时间过滤。 */
     function inRange(timeStr) {
       if (localFilter.range === 'all') return true;
       var d = parseWhen(timeStr);
       if (!d) return false;
       var now = new Date();
       if (localFilter.range === 'today') {
-        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        return d.getTime() >= new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
       }
       var days = localFilter.range === '7d' ? 7 : 30;
       return d.getTime() >= now.getTime() - days * 86400000;
@@ -1767,7 +2214,7 @@
         card.appendChild(el('div', { class: 'empty' },
           el('div', { class: 'empty-dot' },
             el('div', { class: 'empty-title', text: '当前筛选条件下无记录' }),
-            el('div', { class: 'empty-desc', text: '级别与时间筛选仅作用于当前页数据,可切换筛选或翻页查看。' }))));
+            el('div', { class: 'empty-desc', text: '可切换级别或时间范围后重试,或清除密钥筛选再查看。' }))));
         return;
       }
       card.appendChild(buildUsageTable(sortItems(visible, sortState), sortState, function (key) {
@@ -1875,7 +2322,7 @@
       var tr = el('tr', { class: 'row-click', title: '点击展开请求详情' },
         el('td', { class: 'td-mono', text: fmtDateTime(it.time) }),
         el('td', { class: 'td-strong', text: it.key_name || ('#' + it.key_id) }),
-        el('td', null, el('span', { class: 'chip', text: it.endpoint || '-' })),
+        el('td', null, el('span', { class: 'chip', text: it.endpoint || '—' })),
         el('td', { text: fmtEngines(it.engines) }),
         el('td', { class: 'td-num', text: fmtNumber(it.urls) }),
         el('td', { class: 'td-num', text: fmtNumber(it.units) }),
@@ -2027,7 +2474,10 @@
       urlCount.parentElement.classList.toggle('over', over);
       countHint.textContent = lines.length + ' URL × ' + ec + ' 引擎 = ' + (lines.length * ec) + ' unit';
     }
-    urlsTa.addEventListener('input', updateCount);
+    urlsTa.addEventListener('input', function () {
+      updateCount();
+      hideFormErr(); // P-05:输入即清除既有错误(与登录页范式一致)
+    });
 
     var checksBox = el('div', { class: 'pg-checks' });
     ENGINE_ORDER.forEach(function (name) {
@@ -2035,6 +2485,21 @@
       cb.checked = true;
       checksBox.appendChild(el('label', { class: 'pg-check' }, cb, el('span', { text: ENGINE_LABEL[name] })));
     });
+    /* P-04:选中态=实心 brand 底 + 勾选标记(样式表);行尾补全选/清空文字钮 */
+    var checkActions = el('div', { class: 'pg-check-actions' },
+      el('button', {
+        class: 'btn btn-text', type: 'button', text: '全选',
+        onclick: function () { setAllEngines(true); }
+      }),
+      el('button', {
+        class: 'btn btn-text', type: 'button', text: '清空',
+        onclick: function () { setAllEngines(false); }
+      }));
+    function setAllEngines(checked) {
+      checksBox.querySelectorAll('input[type="checkbox"]').forEach(function (cb) { cb.checked = checked; });
+      updateCount();
+    }
+    checksBox.appendChild(checkActions);
     checksBox.addEventListener('change', updateCount);
     updateCount();
 
@@ -2320,7 +2785,7 @@
       el('div', { class: 'card-body' },
         p('Web2API 内置 <strong>MCP(Model Context Protocol)Streamable HTTP</strong> 端点,AI Agent(Claude Desktop / Claude Code / Dify / Coze / n8n / LangChain 等)可作为一等公民直接调用收录查询与搜索能力,无需自行封装 HTTP。'),
         p('端点:<code>' + MCP_URL + '</code>(JSON-RPC 2.0;协议版本 <code>2025-06-18</code>;支持 <code>initialize / notifications/initialized / tools/list / tools/call / ping</code>,服务端返回的 <code>Mcp-Session-Id</code> 响应头需在后续请求中原样带回)。'),
-        el('div', { class: 'auth-warn', html: ICONS.warn + '<span><b>鉴权必须显式配置:</b>所有请求需携带 <code>X-API-Key</code> 请求头(计费,1 次 web_search = 1 unit;check_indexed = URL 数 × 引擎数 units)或 <code>Authorization: Bearer &lt;管理员 JWT&gt;</code>(管理员不计费)。<b>缺省密钥的调用一律返回 401 {"error":"unauthorized"}</b>。请先在「API 密钥」页创建密钥。</span>' }),
+        el('div', { class: 'auth-warn', html: ICONS.warn + '<span><b>鉴权必须显式配置:</b>所有请求需携带 <code>X-API-Key</code> 请求头(计费,1 次 web_search = 1 unit;check_indexed = URL 数 × 引擎数 units)或 <code>Authorization: Bearer &lt;管理员 JWT&gt;</code>(管理员不计费)。<b>未携带密钥的调用一律返回 401 {"error":"unauthorized"}</b>。请先在「API 密钥」页创建密钥。</span>' }),
         el('div', { class: 'agent-links' },
           el('a', { href: OPENAPI_URL, target: '_blank', rel: 'noopener noreferrer', html: ICONS.external + '<span>openapi.yaml(OpenAPI 3.1 全端点)</span>' }),
           el('a', { href: LLMS_URL, target: '_blank', rel: 'noopener noreferrer', html: ICONS.external + '<span>llms.txt(Agent 友好简介)</span>' })),
@@ -2827,7 +3292,17 @@ async def run():
           ['GET /api/engines', '—', '—', '每引擎状态:{ state: ok|cooldown|circuit_open, until, reason, consecutive_blocks, last_error_at }'],
           ['POST /api/playground/check', 'JSON', '—', '面板在线调试 { urls[1..20], engines? };响应结构与 /v1/index/check 完全一致;JWT 鉴权,不计费'],
           ['POST /api/engines/{name}/cooldown/reset', '—', '—', '强制恢复引擎:清除冷却与连续拦截计数'],
-          ['POST /api/engines/{name}/cooldown/force', 'JSON', '—', '强制冷却引擎 { minutes: 1–720 }(维护窗口用)']
+          ['POST /api/engines/{name}/cooldown/force', 'JSON', '—', '强制冷却引擎 { minutes: 1–720 }(维护窗口用)'],
+          ['POST /api/keys/{id}/rotate', '—', '—', '轮换密钥:保留名称 / 配额 / 计数,一次性返回新密钥;旧密钥即时失效'],
+          ['GET /api/sessions', '—', '—', '管理员会话列表(IP / 最后活跃 / 当前会话标记)'],
+          ['DELETE /api/sessions/{id}', '—', '—', '撤销指定会话;撤销当前会话等同退出登录'],
+          ['POST /api/auth/refresh', '—', '—', '滑动续期当前会话'],
+          ['POST /api/auth/logout', '—', '—', '退出登录:清除会话凭证'],
+          ['GET /api/audit', 'Query', '—', '安全审计轨迹 ?limit&offset,返回 {total, items[]}(动作 / 对象 / 时间 / IP)'],
+          ['GET /api/usage/export', 'Query', '—', '用量导出 ?format=csv|json&key_id&from&to'],
+          ['GET /api/reconcile', 'Query', '—', '记账对账 ?date=YYYY-MM-DD,返回扣费与流水差异数'],
+          ['GET /api/admin/backup', '—', '—', '下载 bbolt 一致性快照(attachment)'],
+          ['GET /api/runtime', '—', '—', '运行时指标(内存 / goroutine / Go 版本)']
         ].map(function (r) {
           // 管理端点表复用参数表的 4 列结构:端点/类型/必填→—/说明
           return r;
@@ -2841,9 +3316,9 @@ async def run():
       title: '限流与引擎冷却',
       children: [
         ulHtml([
-          '<strong>管理 API 限速</strong>:默认 60 次/分钟,超限返回 <code>429</code> 并携带 <code>Retry-After</code> 响应头(配置:<code>security.admin_rate_per_minute</code>)。',
-          '<strong>登录防爆破</strong>:同一「用户名 + IP」连续 5 次密码失败锁定 15 分钟,期间登录一律 <code>429 {"error":"too_many_attempts"}</code> + <code>Retry-After</code>(配置:<code>security.login_lockout.{fails,minutes}</code>)。',
-          '<strong>引擎冷却状态机</strong>(每引擎独立):触发 = 引擎返回 blocked(403)/ 429 / captcha。连续第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截则计数归零(配置:<code>stability.engine_cooldown.{steps_minutes:[10,30,120], reset_after_minutes:240}</code>)。',
+          '<strong>管理 API 限速</strong>:默认 60 次/分钟,超限返回 <code>429</code> 并携带 <code>Retry-After</code> 响应头。',
+          '<strong>登录防爆破</strong>:同一「用户名 + IP」连续 5 次密码失败锁定 15 分钟,期间登录一律 <code>429 {"error":"too_many_attempts"}</code> + <code>Retry-After</code>。',
+          '<strong>引擎冷却状态机</strong>(每引擎独立):触发 = 引擎返回 blocked(403)/ 429 / captcha。连续第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截则计数归零。',
           '<strong>冷却期内</strong>:该引擎所有 search / check 请求快速失败、不发真实请求,返回 <code>503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}</code> 并携带 <code>Retry-After</code>;/v1 与 /{engine}/search 的 <code>meta.engines_cooldown</code> 同步列出冷却引擎。',
           '<strong>到期恢复</strong>:冷却到期后放行一个探测请求,成功即恢复、失败进下一档。管理员可在「引擎状态」页强制恢复或强制冷却。'
         ])
@@ -2859,9 +3334,12 @@ async def run():
         errTable([
           ['400', 'bad_request', '参数错误;reason 取值:<code>EMPTY_QUERY</code>(URL 列表为空)/ <code>TOO_MANY_URLS</code>(超过 20 条)/ <code>INVALID_PARAM</code>(参数非法)'],
           ['401', 'unauthorized', '密钥无效 / 已禁用,或管理员 JWT 缺失、过期'],
-          ['404', 'not_found', '接口或资源不存在(公网 API 挂在 /web-tool 前缀下,根路径 404)'],
           ['403', 'blocked', '搜索引擎反爬拦截了请求(引擎级错误同样会以 code=blocked 出现在单元结果中)'],
+          ['403', 'forbidden', '该请求被拒绝访问(如来源不在允许范围内)'],
+          ['404', 'not_found', '接口或资源不存在(公网 API 挂在 /web-tool 前缀下,根路径 404)'],
+          ['405', 'method_not_allowed', '该接口不支持此 HTTP 方法(如对 /v1/engines 使用 POST)'],
           ['429', 'quota_exceeded', '当日配额已用尽;带 <code>Retry-After</code>'],
+          ['429', 'rate_limited', '请求过于频繁(公网或管理面限速);带 <code>Retry-After</code>'],
           ['429', 'too_many_attempts', '登录失败次数过多,已锁定;带 <code>Retry-After</code>'],
           ['429', 'captcha_detected', '引擎返回验证码(引擎级 429 不影响批量其它引擎)'],
           ['503', 'engine_cooldown', '引擎冷却中:<code>{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}</code>;带 <code>Retry-After</code>'],
@@ -2903,9 +3381,59 @@ async def run():
     }));
   }
 
-  /* ================= 8d. 页面:系统设置 ================= */
+  /* ================= 8d. 页面:系统设置(V4 §10.6:左锚点 + 右表单卡) ================= */
 
   function pageSettings(root) {
+    /* 左分组锚点(运行 / 数据 / 系统)+ scrollspy,复用文档页范式 */
+    var NAVS = [
+      ['st-account', '账户安全', '运行'],
+      ['st-security', '安全机制', '运行'],
+      ['st-sessions', '会话管理', '数据'],
+      ['st-audit', '安全审计', '数据'],
+      ['st-backup', '数据备份', '系统']
+    ];
+    var tocLinks = [];
+    var nav = el('nav', { class: 'settings-nav', 'aria-label': '设置目录' });
+    var lastGroup = '';
+    NAVS.forEach(function (n) {
+      if (n[2] !== lastGroup) {
+        nav.appendChild(el('div', { class: 'nav-label', text: n[2] }));
+        lastGroup = n[2];
+      }
+      var a = el('a', {
+        href: 'javascript:void(0)',
+        text: n[1],
+        onclick: function () {
+          setActiveToc(a);
+          var target = document.getElementById(n[0]);
+          if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+        }
+      });
+      tocLinks.push({ link: a, id: n[0] });
+      nav.appendChild(a);
+    });
+    function setActiveToc(active) {
+      tocLinks.forEach(function (t) { t.link.classList.toggle('on', t.link === active); });
+    }
+    function syncTocScroll() {
+      var best = null;
+      var bestTop = -Infinity;
+      tocLinks.forEach(function (t) {
+        var node = document.getElementById(t.id);
+        if (!node) return;
+        var top = node.getBoundingClientRect().top;
+        if (top <= 120 && top > bestTop) {
+          bestTop = top;
+          best = t;
+        }
+      });
+      if (best) best.link.classList.add('on');
+      tocLinks.forEach(function (t) {
+        if (t !== best) t.link.classList.remove('on');
+      });
+    }
+    setPageInterval(syncTocScroll, 400);
+
     /* ---- 修改密码 ---- */
     var oldPwd = el('input', { class: 'input', type: 'password', autocomplete: 'current-password', placeholder: '当前密码' });
     var newPwd = el('input', { class: 'input', type: 'password', autocomplete: 'new-password', placeholder: '至少 8 位,建议混合字母 / 数字 / 符号' });
@@ -2977,7 +3505,7 @@ async def run():
       }
     });
 
-    var pwdCard = el('div', { class: 'card' },
+    var pwdCard = el('div', { class: 'card', id: 'st-account' },
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '修改管理员密码' })),
       el('div', { class: 'card-body' },
         el('div', { class: 'field' },
@@ -2992,20 +3520,216 @@ async def run():
           confirmPwd),
         err,
         submitBtn,
-        el('div', { class: 'form-hint', style: 'margin-top:12px;', text: '密码以 bcrypt 哈希存储;修改成功后全部已登录会话立即失效,需要重新登录。' })));
+        el('div', { class: 'form-hint', style: 'margin-top:12px;', text: '修改成功后需重新登录。' }))); // P-12:脚注缩短,完整表述仅保留在「安全机制」卡
 
     /* ---- 安全机制说明 ---- */
-    var infoCard = el('div', { class: 'card' },
+    var infoCard = el('div', { class: 'card', id: 'st-security' },
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '安全机制' })),
       el('div', { class: 'card-body' },
         el('ul', { class: 'info-list' },
           el('li', null, el('b', { text: '登录锁定:' }), '同一「用户名 + IP」连续 5 次密码错误后锁定 15 分钟;期间登录一律返回 429 {"error":"too_many_attempts"} 与 Retry-After。'),
           el('li', null, el('b', { text: '管理 API 限速:' }), '全部 /api/* 默认 60 次 / 分钟,超限返回 429 与 Retry-After。'),
-          el('li', null, el('b', { text: '会话失效:' }), '修改密码后全部已登录 token(含当前浏览器)立即失效,需要重新登录。'),
+          el('li', null, el('b', { text: '会话失效:' }), '密码以 bcrypt 哈希存储;修改密码后全部已登录 token(含当前浏览器)立即失效,需要重新登录。'),
           el('li', null, el('b', { text: '公网鉴权:' }), '/v1/* 与 MCP 使用 X-API-Key(哈希存储,面板仅可见前缀);引擎冷却期间请求快速失败,不产生上游流量。'))));
 
-    var grid = el('div', { class: 'settings-grid' }, pwdCard, infoCard);
-    root.appendChild(grid);
+    /* ---- 会话管理(UI 壳:GET /api/sessions 随服务端新版本提供) ---- */
+    var sessionBody = el('div', { class: 'card-body' });
+    var sessionsCard = el('div', { class: 'card', id: 'st-sessions' },
+      el('div', { class: 'card-head' },
+        el('h2', { class: 'card-title' }, '会话管理', el('span', { class: 'card-head-sub', text: '当前登录中的管理员会话' })),
+        el('button', {
+          class: 'btn btn-secondary btn-sm', type: 'button', text: '撤销其他会话',
+          onclick: function () { revokeOtherSessions(); }
+        })),
+      sessionBody);
+
+    function revokeOtherSessions() {
+      api('GET', '/api/sessions').then(function (data) {
+        var items = (data && Array.isArray(data.items)) ? data.items : [];
+        var others = items.filter(function (s) { return s && !s.current; });
+        if (!others.length) {
+          toast('没有其他活跃会话', 'info');
+          return;
+        }
+        confirmDialog({
+          title: '撤销其他会话',
+          message: '确定撤销除当前浏览器以外的 ' + others.length + ' 个会话吗?对应设备下次请求时将被要求重新登录。',
+          confirmText: '撤销'
+        }).then(function (yes) {
+          if (!yes) return;
+          var jobs = others.map(function (s) {
+            return api('DELETE', '/api/sessions/' + encodeURIComponent(String(s.id)));
+          });
+          Promise.all(jobs)
+            .then(function () {
+              toast('已撤销 ' + others.length + ' 个其他会话', 'success');
+              loadSessions();
+            })
+            .catch(function (e) { toast(e.message, 'error'); });
+        });
+      }).catch(function (e) { toast(e.message, 'error'); });
+    }
+
+    function revokeSession(id) {
+      api('DELETE', '/api/sessions/' + encodeURIComponent(String(id)))
+        .then(function () {
+          toast('会话已撤销', 'success');
+          loadSessions();
+        })
+        .catch(function (e) { toast(e.message, 'error'); });
+    }
+
+    function shellUnavailable(body, what) {
+      body.innerHTML = '';
+      body.appendChild(el('div', { class: 'shell-note', text: what + '需要服务端对应接口支持(随平台新版本提供),当前实例尚未启用。' }));
+    }
+
+    function loadSessions() {
+      sessionBody.innerHTML = '';
+      sessionBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      api('GET', '/api/sessions').then(function (data) {
+        var items = (data && Array.isArray(data.items)) ? data.items : [];
+        sessionBody.innerHTML = '';
+        if (!items.length) {
+          sessionBody.appendChild(el('div', { class: 'shell-note', text: '当前没有活跃会话记录。' }));
+          return;
+        }
+        var tbody = el('tbody');
+        items.forEach(function (s) {
+          s = s || {};
+          var isCur = !!s.current;
+          var row = el('tr', { class: isCur ? 'row-open' : '' },
+            el('td', { class: 'td-mono', text: s.ip || '—' }),
+            el('td', { class: 'td-mono', text: (s.last_active_at || s.last_active) ? fmtDateTime(s.last_active_at || s.last_active) : '—' }),
+            el('td', null, el('span', { class: 'pill ' + (isCur ? 'pill-green' : 'pill-gray'), text: isCur ? '当前会话' : '活跃' })),
+            el('td', null, el('div', { class: 'row-actions' },
+              el('button', {
+                class: 'btn btn-ghost btn-sm', type: 'button', text: '撤销',
+                onclick: function () {
+                  confirmDialog({
+                    title: '撤销会话',
+                    message: isCur ? '这是当前浏览器会话,撤销后将立即退出登录。确定继续吗?' : '确定撤销该会话吗?对应设备将被要求重新登录。',
+                    confirmText: '撤销'
+                  }).then(function (yes) { if (yes) revokeSession(s.id); });
+                }
+              }))));
+          tbody.appendChild(row);
+        });
+        sessionBody.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
+          el('thead', null, el('tr', null,
+            el('th', { text: '来源 IP' }),
+            el('th', { text: '最近活跃' }),
+            el('th', { text: '状态' }),
+            el('th', { text: '操作' }))),
+          tbody)));
+      }).catch(function (e) {
+        if (e.status === 404 || e.status === 401) shellUnavailable(sessionBody, '会话列表');
+        else {
+          sessionBody.innerHTML = '';
+          sessionBody.appendChild(el('div', { class: 'shell-note', text: '会话列表加载失败:' + (e.message || '网络异常') }));
+        }
+      });
+    }
+
+    /* ---- 安全审计(UI 壳:GET /api/audit 随服务端新版本提供) ---- */
+    var auditBody = el('div', { class: 'card-body' });
+    var auditCard = el('div', { class: 'card', id: 'st-audit' },
+      el('div', { class: 'card-head' },
+        el('h2', { class: 'card-title' }, '安全审计', el('span', { class: 'card-head-sub', text: '管理员操作记录(最近 20 条)' })),
+        el('button', {
+          class: 'btn btn-secondary btn-sm', type: 'button', text: '刷新',
+          onclick: function () { loadAudit(); }
+        })),
+      auditBody);
+
+    function loadAudit() {
+      auditBody.innerHTML = '';
+      auditBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      api('GET', '/api/audit?limit=20').then(function (data) {
+        var items = (data && Array.isArray(data.items)) ? data.items : [];
+        auditBody.innerHTML = '';
+        if (!items.length) {
+          auditBody.appendChild(el('div', { class: 'shell-note', text: '暂无审计记录。' }));
+          return;
+        }
+        var tbody = el('tbody');
+        items.forEach(function (a) {
+          a = a || {};
+          tbody.appendChild(el('tr', null,
+            el('td', null, el('span', { class: 'chip', text: a.action || '—' })),
+            el('td', { class: 'td-mono', text: a.target || '—' }),
+            el('td', { class: 'td-mono', text: fmtDateTime(a.ts || a.time) }),
+            el('td', { class: 'td-mono', text: a.ip || '—' })));
+        });
+        auditBody.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
+          el('thead', null, el('tr', null,
+            el('th', { text: '动作' }),
+            el('th', { text: '对象' }),
+            el('th', { text: '时间' }),
+            el('th', { text: '来源 IP' }))),
+          tbody)));
+      }).catch(function (e) {
+        if (e.status === 404 || e.status === 401) shellUnavailable(auditBody, '审计轨迹');
+        else {
+          auditBody.innerHTML = '';
+          auditBody.appendChild(el('div', { class: 'shell-note', text: '审计轨迹加载失败:' + (e.message || '网络异常') }));
+        }
+      });
+    }
+
+    /* ---- 数据备份(UI 壳:GET /api/admin/backup 随服务端新版本提供) ---- */
+    var backupBody = el('div', { class: 'card-body' });
+    var backupCard = el('div', { class: 'card', id: 'st-backup' },
+      el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '数据备份' })),
+      backupBody);
+
+    function downloadBackup() {
+      toast('正在生成备份快照…', 'info');
+      fetch(API_BASE + '/api/admin/backup', {
+        credentials: 'same-origin',
+        headers: { 'Authorization': 'Bearer ' + getToken() }
+      }).then(function (res) {
+        if (res.status === 404) throw new Error('备份接口需要服务端支持,当前实例尚未提供');
+        if (!res.ok) throw new Error('下载失败(HTTP ' + res.status + ')');
+        return res.blob().then(function (blob) {
+          var d = new Date();
+          var name = 'web2api-backup-' +
+            d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) +
+            '-' + pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds()) + '.db';
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+          toast('备份已开始下载:' + name, 'success');
+        });
+      }).catch(function (e) {
+        toast(e.message, 'error');
+      });
+    }
+
+    backupBody.appendChild(el('div', null,
+      el('p', { class: 'card-desc', text: '下载数据库的一致性快照(密钥、用量、审计与配置数据)。' }),
+      el('div', { style: 'margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;' },
+        el('button', {
+          class: 'btn btn-primary', type: 'button', text: '下载备份快照',
+          onclick: downloadBackup
+        })),
+      el('div', { class: 'form-hint', style: 'margin-top:12px;', text: '建议定期下载备份,并在停服窗口演练恢复流程。' })));
+
+    /* ---- 布局:左锚点 + 右卡片流 ---- */
+    var cardsCol = el('div', { class: 'settings-cards' },
+      el('div', { class: 'settings-grid' }, pwdCard, infoCard),
+      sessionsCard,
+      auditCard,
+      backupCard);
+    root.appendChild(el('div', { class: 'settings-layout' }, nav, cardsCol));
+
+    loadSessions();
+    loadAudit();
   }
 
   /* ================= 9. 启动 ================= */
@@ -3082,7 +3806,7 @@ async def run():
               (e.retryAfter ? ',约 ' + e.retryAfter + ' 秒后可重试' : '(15 分钟)') + '。');
           } else if (e.status === 404) {
             // 平台停用:/api/* 未挂载,静态面板仍可访问
-            showErr('平台 API 未启用:面板页面可以打开,但登录接口不存在(HTTP 404)。请检查 config.yaml 的 platform.enabled 是否为 true,修改后重启服务。');
+            showErr('平台 API 未在配置中启用,请启用平台后重启服务。');
           } else {
             showErr(e.message);
           }
@@ -3097,43 +3821,66 @@ async def run():
     var btn = $('#btn-logout');
     if (!btn) return;
     btn.addEventListener('click', function () {
-      clearAuth();
-      toast('已退出登录', 'info');
-      if (location.hash === '#/login') showLogin();
-      else location.hash = '#/login';
+      /* S4 会话: 先撤销服务端会话并清除 httpOnly cookie(旧实例无此端点时
+       * 静默降级为纯前端登出),再清本地状态。 */
+      api('POST', '/api/auth/logout', null, { skipAuthRedirect: true })
+        .catch(function () { /* 旧实例无 /api/auth/logout — 纯前端登出 */ })
+        .then(function () {
+          clearAuth();
+          toast('已退出登录', 'info');
+          if (location.hash === '#/login') showLogin();
+          else location.hash = '#/login';
+        });
     });
   }
 
   function boot() {
     initTheme();
     bindThemeButtons();
+    bindSidebarToggle();
     bindLogin();
     bindLogout();
     bindSearchHotkey();
     window.addEventListener('hashchange', renderRoute);
 
-    if (!isLoggedIn()) {
-      showLogin();
-      return;
-    }
-    // 恢复缓存的用户名,再校验 token
+    // B-12: 登录态以 /api/me 为权威(cookie 会话对前端不可读);内存 token
+    // 仅用于恢复缓存的用户名与 Bearer 双轨。
     try {
       state.username = localStorage.getItem(LS_USERNAME) || '';
     } catch (e) { /* 忽略 */ }
 
-    api('GET', '/api/me')
+    // T-07: 首屏不等 /api/me 往返,立即渲染登录页或已有会话的页面,消除
+    // 冷启动 1s+ 的整页空白窗口(首访与再访行为一致);/api/me 返回后按原
+    // 逻辑校正最终视图。
+    if (isLoggedIn()) {
+      bootRendered = true;
+      renderRoute();
+    } else {
+      showLogin();
+    }
+
+    api('GET', '/api/me', null, { skipAuthRedirect: true })
       .then(function (me) {
         if (me && me.username) {
           state.username = me.username;
           try { localStorage.setItem(LS_USERNAME, me.username); } catch (e) { /* 忽略 */ }
         }
+        if (bootRendered) {
+          showApp(); // 顶栏用户名/头像用 /api/me 的权威值刷新,页面数据已在首轮加载
+          return;
+        }
         renderRoute();
       })
       .catch(function (e) {
-        if (e.status === 401) return; // onUnauthorized 已处理跳转
+        if (e.status === 401) {
+          // 首次访问(无 cookie/无内存 token)静默回登录页,不误报「登录已过期」。
+          clearAuth();
+          showLogin();
+          return;
+        }
         showLogin();
         if (e.status === 404) {
-          setLoginMsg('平台 API 未启用:面板页面可以打开,但 /api/* 管理接口未挂载。请检查 config.yaml 的 platform.enabled 是否为 true,修改后重启服务。', true);
+          setLoginMsg('平台 API 未在配置中启用,请启用平台后重启服务。', true);
         } else {
           toast('无法连接服务:' + e.message, 'error');
         }

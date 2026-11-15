@@ -605,7 +605,10 @@ func TestUnauthorizedIsRejectedByAuthLayer(t *testing.T) {
 }
 
 func TestInvalidOriginIs403(t *testing.T) {
-	app := newTestApp(t, fakeAuth, Deps{})
+	// S4-B-10: the Origin check is a whitelist — the request's own origin
+	// (httptest Host = example.com) plus security.mcp_allowed_origins. The
+	// test app allowlists claude.ai explicitly.
+	app := newTestApp(t, fakeAuth, Deps{OriginAllowlist: []string{"claude.ai"}})
 	status, _, out := rpc(t, app, rpcMsg(1, "tools/list", nil),
 		map[string]string{"X-API-Key": "sk-test-123", fiber.HeaderOrigin: "not-a-url"})
 	if status != fiber.StatusForbidden {
@@ -615,13 +618,19 @@ func TestInvalidOriginIs403(t *testing.T) {
 		t.Fatalf("origin envelope mismatch: %v", out)
 	}
 
-	// Valid origins pass.
-	for _, origin := range []string{"https://claude.ai", "http://localhost:3000"} {
+	// Same-origin and allowlisted origins pass.
+	for _, origin := range []string{"http://example.com", "https://example.com", "https://claude.ai"} {
 		status, _, _ = rpc(t, app, rpcMsg(1, "tools/list", nil),
 			map[string]string{"X-API-Key": "sk-test-123", fiber.HeaderOrigin: origin})
 		if status != fiber.StatusOK {
-			t.Fatalf("origin %q status = %d, want 200", origin, status)
+			t.Fatalf("origin %q status = %d, want 200 (same-origin / allowlist)", origin, status)
 		}
+	}
+	// A foreign, non-allowlisted origin is rejected (DNS-rebinding 防线).
+	status, _, _ = rpc(t, app, rpcMsg(1, "tools/list", nil),
+		map[string]string{"X-API-Key": "sk-test-123", fiber.HeaderOrigin: "http://localhost:3000"})
+	if status != fiber.StatusForbidden {
+		t.Fatalf("foreign origin status = %d, want 403", status)
 	}
 	// No Origin (curl / agents) passes.
 	status, _, _ = rpc(t, app, rpcMsg(1, "tools/list", nil), authorized())
@@ -694,6 +703,32 @@ func TestMethodNotAllowedOnGetMCP(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusMethodNotAllowed {
 		t.Fatalf("GET /mcp status = %d, want 405", resp.StatusCode)
+	}
+}
+
+// TestForgedSessionDoesNotCorruptLiveSessions (T-01 回归): forged Mcp-Session-Id
+// requests must never poison live sessions. The historical defect: fiber's
+// c.Get returns a zero-copy string over a pooled fasthttp kv buffer; storing
+// that alias as a map key let later requests (forged sids included) rewrite the
+// key bytes in place, so a valid sid intermittently answered 404 -32001 and
+// then recovered. sessionStore now deep-copies ids before they touch the map.
+func TestForgedSessionDoesNotCorruptLiveSessions(t *testing.T) {
+	app := newTestApp(t, fakeAuth, Deps{})
+
+	_, resp, _ := rpc(t, app, rpcMsg(1, "initialize", map[string]any{"protocolVersion": "2025-06-18"}), authorized())
+	sid := resp.Header.Get(sessionHeader)
+	if sid == "" {
+		t.Fatalf("session id missing")
+	}
+
+	for i := 0; i < 500; i++ {
+		forged := fmt.Sprintf("forged-%d-%s", i, sid[:8])
+		if status, _, _ := rpc(t, app, rpcMsg(100+i, "tools/list", nil), withSession(forged)); status != fiber.StatusNotFound {
+			t.Fatalf("iter %d: forged sid status = %d, want 404", i, status)
+		}
+		if status, _, _ := rpc(t, app, rpcMsg(200+i, "tools/list", nil), withSession(sid)); status != fiber.StatusOK {
+			t.Fatalf("iter %d: valid sid polluted by forged traffic (status=%d)", i, status)
+		}
 	}
 }
 

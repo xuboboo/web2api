@@ -315,7 +315,7 @@ func TestNewReusesSecretAndHash(t *testing.T) {
 }
 
 func compareAdminPassword(p *Platform, password string) error {
-	return bcrypt.CompareHashAndPassword(p.adminHash, []byte(password))
+	return bcrypt.CompareHashAndPassword(p.adminHash(), []byte(password))
 }
 
 // TestNewFallsBackToJSONWhenBoltBlocked verifies the contract fallback: when

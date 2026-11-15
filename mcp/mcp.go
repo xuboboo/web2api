@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/sirupsen/logrus"
 )
 
 // Version is reported as serverInfo.version by initialize. The serve command
@@ -101,10 +102,15 @@ const (
 // The mcp package itself never charges quota nor pre-checks it — billing and
 // quota precheck belong entirely to the AuthAny wrapper (P0-9). A nil dep
 // yields a per-call tool error result instead of a panic.
+//
+// S4-B-10: OriginAllowlist extends the Origin check beyond the request's own
+// origin (security.mcp_allowed_origins). Entries may be full origins
+// ("https://panel.example.com") or bare hosts ("panel.example.com").
 type Deps struct {
-	Search        func(ctx context.Context, engine, query string, limit int) ([]map[string]any, error)
-	CheckIndexed  func(ctx context.Context, urls []string, engines []string) (any, error)
-	EnginesStatus func() any
+	Search          func(ctx context.Context, engine, query string, limit int) ([]map[string]any, error)
+	CheckIndexed    func(ctx context.Context, urls []string, engines []string) (any, error)
+	EnginesStatus   func() any
+	OriginAllowlist []string
 }
 
 // rpcRequest is one decoded JSON-RPC 2.0 request. ID is raw so the response
@@ -134,8 +140,9 @@ type rpcResponse struct {
 
 // server owns the dependency surface and the in-memory MCP session table.
 type server struct {
-	deps     Deps
-	sessions sessionStore
+	deps            Deps
+	sessions        sessionStore
+	originAllowlist []string // normalized extra allowed origins (S4-B-10)
 }
 
 // sessionStore tracks MCP sessions issued at initialize. Sessions live in
@@ -172,7 +179,15 @@ func (s *sessionStore) newSession() string {
 
 // touch reports whether id is live, refreshing its last-seen timestamp and
 // pruning expired sessions.
+//
+// T-01 根因修复: id 通常来自 fiber c.Get → fasthttp Peek 的零拷贝字符串
+// (unsafeString),其底层 kv 缓冲区在 Ctx 池化下会被后续请求原地复用改写;
+// Go 1.24+ 的 Swiss map 在命中赋值时也会重写键槽。若把该别名直接写进
+// s.m,键内容会随后续请求(典型:伪造 Mcp-Session-Id 的请求把缓冲区前缀
+// 覆盖掉)就地变化,有效会话随即间歇性 404 -32001 "session not found",
+// 且之后同 sid 又恢复 200。入库前必须深拷贝为自有字符串。
 func (s *sessionStore) touch(id string) bool {
+	id = strings.Clone(id)
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -185,12 +200,22 @@ func (s *sessionStore) touch(id string) bool {
 }
 
 // drop removes a session (MCP DELETE termination) and reports whether it existed.
+// id 深拷贝的必要性同 touch(T-01):不把 fasthttp 缓冲区别名留在任何
+// 与 map 交互的路径上。
 func (s *sessionStore) drop(id string) bool {
+	id = strings.Clone(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok := s.m[id]
 	delete(s.m, id)
 	return ok
+}
+
+// size reports the number of live sessions (diagnostics only).
+func (s *sessionStore) size() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.m)
 }
 
 func (s *sessionStore) pruneLocked(now time.Time) {
@@ -212,6 +237,7 @@ func (s *sessionStore) pruneLocked(now time.Time) {
 // without credentials. auth may be nil (bare test/loopback deployments).
 func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 	srv := &server{deps: deps, sessions: *newSessionStore(sessionTTL)}
+	srv.originAllowlist = normalizeOriginAllowlist(deps.OriginAllowlist)
 
 	post := []fiber.Handler{srv.handleMCP}
 	if auth != nil {
@@ -249,16 +275,32 @@ func (s *server) handleTerminate(c *fiber.Ctx) error {
 // everything else answers a single JSON object with HTTP 200 (or 400 for
 // parse/invalid-request framing errors).
 func (s *server) handleMCP(c *fiber.Ctx) error {
-	if !validOrigin(c.Get(fiber.HeaderOrigin)) {
+	if !s.validOrigin(c.Get(fiber.HeaderOrigin), c.Hostname()) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "invalid_origin"})
 	}
 
 	if id := strings.TrimSpace(c.Get(sessionHeader)); id != "" {
 		if !s.sessions.touch(id) {
+			// T-01 取证日志(debug 级,仅 --verbose/--debug 运行时可见):记录实际
+			// 收到的 sid 全文、长度与库内活跃会话数,用于区分三类成因——伪造/过期
+			// sid(正常)、其他进程铸造的 sid(多实例/端口复用)、本进程铸造却被
+			// 误判丢失(touch 查表缺陷;根因见 sessionStore.touch 的深拷贝注释,
+			// 保留本日志以便线上复核)。本机无 gcc 无法构建 -race,该日志是
+			// 生产环境的精确取证通道。
+			logrus.WithFields(logrus.Fields{
+				"sid":           id,
+				"sid_len":       len(id),
+				"ip":            c.IP(),
+				"live_sessions": s.sessions.size(),
+			}).Debug("mcp: Mcp-Session-Id 校验失败(session not found)")
 			return c.Status(fiber.StatusNotFound).JSON(rpcResponse{
 				JSONRPC: "2.0",
 				ID:      json.RawMessage("null"),
-				Error:   &rpcError{Code: codeSessionNotFound, Message: "session not found; send initialize again"},
+				Error: &rpcError{
+					Code:    codeSessionNotFound,
+					Message: "session not found; send initialize again",
+					Data:    map[string]any{"received_sid_len": len(id)},
+				},
 			})
 		}
 	}
@@ -472,10 +514,30 @@ func localString(c *fiber.Ctx, keys ...string) string {
 	return ""
 }
 
-// validOrigin implements the MCP Origin check: non-browser clients (curl,
-// agents, SDKs) send no Origin and pass; an Origin that fails to parse as an
-// absolute http(s) URL is rejected with 403 (MCP 规范: 无效 Origin → 403).
-func validOrigin(raw string) bool {
+// normalizeOriginAllowlist lower-cases entries and reduces them to their host
+// (port included), accepting both full origins and bare hosts (S4-B-10).
+func normalizeOriginAllowlist(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, raw := range entries {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		host := raw
+		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			host = u.Host
+		}
+		out = append(out, strings.ToLower(host))
+	}
+	return out
+}
+
+// validOrigin implements the MCP Origin check (S4-B10 白名单化): non-browser
+// clients (curl, agents, SDKs) send no Origin and pass; an Origin that fails
+// to parse as an absolute http(s) URL is rejected with 403 (MCP 规范: 无效
+// Origin → 403); otherwise the Origin must match the request's own host
+// (same-origin, DNS-rebinding 防线) or an entry of security.mcp_allowed_origins.
+func (s *server) validOrigin(raw string, requestHost string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return true
@@ -484,7 +546,19 @@ func validOrigin(raw string) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
-	return u.Scheme == "http" || u.Scheme == "https"
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	if requestHost != "" && strings.EqualFold(u.Host, requestHost) {
+		return true
+	}
+	host := strings.ToLower(u.Host)
+	for _, allowed := range s.originAllowlist {
+		if allowed == host {
+			return true
+		}
+	}
+	return false
 }
 
 // isJSONArray reports whether the body is a JSON array (batching was removed

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -23,10 +24,11 @@ type jsonStore struct {
 }
 
 type jsonStoreData struct {
-	Keys     map[string]*APIKey `json:"keys"`
-	Usage    []UsageRecord      `json:"usage"`
-	Settings map[string]string  `json:"settings"` // base64-encoded values
-	Seq      uint64             `json:"usage_seq"`
+	Keys     map[string]*APIKey     `json:"keys"`
+	Usage    []UsageRecord          `json:"usage"`
+	Settings map[string]string      `json:"settings"` // base64-encoded values
+	Seq      uint64                 `json:"usage_seq"`
+	Sessions map[string]*AdminSession `json:"sessions,omitempty"` // S4-GAP 会话系统
 }
 
 func newJSONStore(path string) (*jsonStore, error) {
@@ -36,6 +38,7 @@ func newJSONStore(path string) (*jsonStore, error) {
 			Keys:     map[string]*APIKey{},
 			Usage:    []UsageRecord{},
 			Settings: map[string]string{},
+			Sessions: map[string]*AdminSession{},
 		},
 	}
 	raw, err := os.ReadFile(path)
@@ -51,6 +54,9 @@ func newJSONStore(path string) (*jsonStore, error) {
 		}
 		if s.data.Usage == nil {
 			s.data.Usage = []UsageRecord{}
+		}
+		if s.data.Sessions == nil {
+			s.data.Sessions = map[string]*AdminSession{}
 		}
 		return s, nil
 	}
@@ -77,6 +83,19 @@ func (s *jsonStore) saveLocked() error {
 		return err
 	}
 	return nil
+}
+
+// Backup serializes the whole document (S4-GAP 运维: JSON fallback snapshot;
+// restorable via admin-restore into the same kind of store).
+func (s *jsonStore) Backup(w io.Writer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, err := json.MarshalIndent(&s.data, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(raw)
+	return err
 }
 
 func (s *jsonStore) ListKeys() ([]APIKey, error) {
@@ -170,17 +189,30 @@ func (s *jsonStore) UsageAggregate() (*UsageAggregate, error) {
 	today := localDate(now)
 	window24h := now.Add(-24 * time.Hour)
 	agg := &UsageAggregate{ByEngine: map[string]EngineStat{}}
-	for _, r := range s.data.Usage {
-		agg.TotalCalls++
+	for i := range s.data.Usage {
+		r := &s.data.Usage[i]
+		// B-01/P-01 有效调用口径: reached calls only in the call counters;
+		// rejections surface via the additive fields.
+		reached := recordReached(r)
 		agg.TotalUnits += int64(r.Units)
+		if reached {
+			agg.TotalCalls++
+		}
 		if localDate(r.Time) == today {
-			agg.TodayCalls++
 			agg.TodayUnits += int64(r.Units)
+			agg.TodayCallsAll++
+			if reached {
+				agg.TodayCalls++
+			}
 		}
 		if r.Time.After(window24h) {
-			agg.Calls24h++
-			if r.Status == fiber.StatusOK {
-				agg.OK24h++
+			if reached {
+				agg.Calls24h++
+				if r.Status == fiber.StatusOK {
+					agg.OK24h++
+				}
+			} else {
+				agg.Rejected24h++
 			}
 		}
 		for engine, stat := range r.EngineStats {
@@ -224,7 +256,8 @@ func (s *jsonStore) UsageTimeseries(days int) ([]UsageDayStat, error) {
 }
 
 // ListUsagePage returns the filtered newest-first page plus the filtered
-// total. Records are stored ascending by seq; walk backwards.
+// total. Records are stored ascending by seq; walk backwards. S4-GAP: From/To
+// bound the walk by record time (To inclusive).
 func (s *jsonStore) ListUsagePage(filter UsagePageFilter) ([]UsageRecord, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,6 +266,12 @@ func (s *jsonStore) ListUsagePage(filter UsagePageFilter) ([]UsageRecord, int, e
 	skipped := 0
 	for i := len(s.data.Usage) - 1; i >= 0; i-- {
 		r := s.data.Usage[i]
+		if !filter.To.IsZero() && r.Time.After(filter.To) {
+			continue
+		}
+		if !filter.From.IsZero() && r.Time.Before(filter.From) {
+			continue
+		}
 		if filter.KeyID != "" && r.KeyID != filter.KeyID {
 			continue
 		}
@@ -247,6 +286,65 @@ func (s *jsonStore) ListUsagePage(filter UsagePageFilter) ([]UsageRecord, int, e
 		items = append(items, r)
 	}
 	return items, matched, nil
+}
+
+// ---------------------------------------------------------------------------
+// S4-GAP 会话系统: in-document session mirror.
+// ---------------------------------------------------------------------------
+
+func (s *jsonStore) ListSessions() ([]AdminSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]AdminSession, 0, len(s.data.Sessions))
+	for _, sess := range s.data.Sessions {
+		out = append(out, *sess)
+	}
+	return out, nil
+}
+
+func (s *jsonStore) GetSession(id string) (*AdminSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.data.Sessions[id]; ok {
+		cp := *sess
+		return &cp, nil
+	}
+	return nil, nil
+}
+
+func (s *jsonStore) PutSession(sess *AdminSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *sess
+	s.data.Sessions[sess.ID] = &cp
+	return s.saveLocked()
+}
+
+func (s *jsonStore) DeleteSession(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Sessions[id]; !ok {
+		return false, nil
+	}
+	delete(s.data.Sessions, id)
+	return true, s.saveLocked()
+}
+
+func (s *jsonStore) DeleteAllSessions(keepID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for id := range s.data.Sessions {
+		if keepID != "" && id == keepID {
+			continue
+		}
+		delete(s.data.Sessions, id)
+		deleted++
+	}
+	if deleted > 0 {
+		return deleted, s.saveLocked()
+	}
+	return deleted, nil
 }
 
 // PruneUsageBefore deletes records older than cutoff and returns the count.

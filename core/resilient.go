@@ -299,15 +299,19 @@ func normalizeLimiterWaitErr(ctx context.Context, err error) error {
 // invokeEngine is the single panic-recovery point for every engine call made
 // through the resilient pipeline (browser, raw, and any future engine method).
 // A rod/CDP panic surfaces as ErrEngineInternal instead of killing the process.
+// S4-GAP 指标: every real invocation feeds engine_calls_total{engine,ok}.
 func invokeEngine(ctx context.Context, engine SearchEngine, q Query) (results []SearchResult, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			results = nil
 			err = RecoverEnginePanicWithContext(ctx, engine.Name(), recovered, nil)
+			Metrics().IncEngineCall(engine.Name(), false)
 		}
 	}()
 
-	return engine.Search(ctx, q)
+	results, err = engine.Search(ctx, q)
+	Metrics().IncEngineCall(engine.Name(), err == nil)
+	return results, err
 }
 
 func (rs *ResilientSearcher) GetCircuitBreakerStats() []map[string]interface{} {

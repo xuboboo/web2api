@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 const (
@@ -43,6 +45,14 @@ type APIKey struct {
 	TodayDate  string     `json:"today_date"` // local YYYY-MM-DD UsedToday belongs to
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	// ExpiresAt optionally caps the key's lifetime (S4-GAP 密钥增强): after
+	// this instant authenticateAPIKey rejects with 401. nil = never expires.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// AllowedIPs optionally restricts the key to a set of CIDR ranges
+	// (S4-GAP 密钥增强): empty = no IP restriction; a non-empty list that
+	// does not match the caller IP answers 403 forbidden. Bare IPs are
+	// accepted and treated as /32 (IPv6: /128).
+	AllowedIPs []string `json:"allowed_ips,omitempty"`
 }
 
 // EngineStat aggregates per-engine attempt/success counts derived from
@@ -51,6 +61,14 @@ type EngineStat struct {
 	Calls int64 `json:"calls"`
 	OK    int64 `json:"ok"`
 }
+
+// Usage outcomes (B-01 用量记账如实化). Recorded on new entries; historical
+// records without an outcome ("") are treated as reached for compatibility.
+const (
+	OutcomeBilled       = "billed"        // reached the engine and completed with HTTP 200
+	OutcomeEngineFailed = "engine_failed" // reached the engine layer but answered 5xx
+	OutcomeRejected     = "rejected"      // never reached business logic (400/401/403/429)
+)
 
 // UsageRecord is one persisted entry per guarded /v1/index/check request.
 type UsageRecord struct {
@@ -65,6 +83,31 @@ type UsageRecord struct {
 	Status      int                   `json:"status"`
 	TookMS      int64                 `json:"took_ms"`
 	EngineStats map[string]EngineStat `json:"engine_stats,omitempty"`
+	// Outcome is the billing verdict (B-01): billed / engine_failed /
+	// rejected. Empty on pre-S4 records — those count as reached.
+	Outcome string `json:"outcome,omitempty"`
+}
+
+// recordReached reports whether the record counted as "reached the engine /
+// business logic" (P-01 有效调用口径). Rejected requests (invalid params,
+// quota/rate limits, cooldown fast-fails) are excluded. Pre-S4 records carry
+// no outcome and stay in the reached bucket (兼容既有数据).
+func recordReached(r *UsageRecord) bool {
+	return r.Outcome == "" || r.Outcome == OutcomeBilled || r.Outcome == OutcomeEngineFailed
+}
+
+// outcomeForStatus derives the billing verdict from the real HTTP status
+// (B-01). 503 answers are cooldown/circuit fast-fails — they never reached
+// the engine, so they count as rejected, not engine_failed.
+func outcomeForStatus(status int) string {
+	switch {
+	case status == fiber.StatusOK:
+		return OutcomeBilled
+	case status >= 500 && status != fiber.StatusServiceUnavailable:
+		return OutcomeEngineFailed
+	default:
+		return OutcomeRejected
+	}
 }
 
 // ResolveEngines validates and normalizes an engine list: lower-cases, applies

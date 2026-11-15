@@ -18,7 +18,7 @@ func TestInitLoggerSaveLog(t *testing.T) {
 
 	for _, save := range []bool{false, true} {
 		t.Chdir(t.TempDir())
-		InitLogger(false, false, false, save, LogFormatText)
+		InitLogger(false, false, false, save, LogFormatText, 0, 0)
 		logger.SetOutput(out)
 		if logFile != nil {
 			// Close ./logs.txt so the temp dir can be removed on Windows.

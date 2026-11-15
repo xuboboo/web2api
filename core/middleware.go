@@ -87,8 +87,44 @@ func RequestTimeoutMiddleware(timeout time.Duration) fiber.Handler {
 func CORSMiddleware(cfg CORSConfig) fiber.Handler {
 	cfg = normalizeCORSConfig(cfg)
 
+	// B-13: allow_origins accepts a comma-separated list. "*" keeps the
+	// wildcard; a list echoes back only the matching origin and sends no ACAO
+	// otherwise. The admin plane (/api/*) never receives CORS headers — the
+	// panel is same-origin, so cross-origin reads of the management API are
+	// simply not needed and would only widen the browser attack surface.
+	wildcard := strings.TrimSpace(cfg.AllowOrigins) == "*"
+	allowedOrigins := map[string]bool{}
+	if !wildcard {
+		for _, entry := range strings.Split(cfg.AllowOrigins, ",") {
+			if entry = strings.ToLower(strings.TrimSpace(entry)); entry != "" {
+				allowedOrigins[entry] = true
+			}
+		}
+	}
+
 	return func(c *fiber.Ctx) error {
-		c.Set("Access-Control-Allow-Origin", cfg.AllowOrigins)
+		isAdminPlane := strings.HasPrefix(c.Path(), BasePath+"/api/") || c.Path() == BasePath+"/api"
+		if isAdminPlane {
+			// No ACAO for the management plane (B-13). Preflights answer 204
+			// without allow headers so browsers stop early.
+			if c.Method() == "OPTIONS" {
+				return c.SendStatus(fiber.StatusNoContent)
+			}
+			return c.Next()
+		}
+		origin := strings.TrimSpace(c.Get(fiber.HeaderOrigin))
+		switch {
+		case wildcard:
+			c.Set("Access-Control-Allow-Origin", cfg.AllowOrigins)
+		case origin != "" && allowedOrigins[strings.ToLower(origin)]:
+			// Echo the matched entry so credentials/origin binding stay exact.
+			c.Set("Access-Control-Allow-Origin", origin)
+		case c.Method() == "OPTIONS":
+			// Non-matching preflight: no ACAO, browser blocks the request.
+			return c.SendStatus(fiber.StatusNoContent)
+		default:
+			return c.Next()
+		}
 		c.Set("Access-Control-Allow-Methods", cfg.AllowMethods)
 		c.Set("Access-Control-Allow-Headers", cfg.AllowHeaders)
 		c.Set("Access-Control-Max-Age", fmt.Sprintf("%d", cfg.MaxAge))
@@ -153,11 +189,24 @@ func RequestLoggerMiddleware() fiber.Handler {
 		entry := WithRequest(c.UserContext()).WithFields(logFields)
 		if status >= 500 {
 			entry.Error("request failed")
+		} else if status == fiber.StatusTooManyRequests {
+			// 429 限速逐条 warn 会刷爆日志(档 50 限速 40s 内滚出 3 个 10MB 段)
+			// 并淹没真实告警;聚合计数已由 Metrics().IncRateLimited →
+			// /web-tool/metrics rate_limited_total 承担,逐条请求日志降为 debug。
+			entry.Debug("request rate limited")
 		} else if status >= 400 {
 			entry.Warn("request error")
 		} else {
 			entry.Info("request completed")
 		}
+
+		// S4-GAP 指标: per-route/status counters + sparse duration histogram.
+		route := c.Route().Path
+		if route == "" || route == "/" {
+			route = "unmatched"
+		}
+		Metrics().IncHTTP(route, status)
+		Metrics().ObserveRequestDuration(latency.Seconds())
 
 		return err
 	}
@@ -255,12 +304,22 @@ func statusText(code int) string {
 	switch {
 	case code == 400:
 		return "bad_request"
+	case code == 401:
+		return "unauthorized"
+	case code == 403:
+		return "forbidden"
 	case code == 404:
 		return "not_found"
+	case code == 405:
+		return "method_not_allowed"
 	case code == 429:
 		return "rate_limited"
+	case code == 502:
+		return "bad_gateway"
 	case code == 503:
 		return "service_unavailable"
+	case code == 504:
+		return "gateway_timeout"
 	case code >= 400 && code < 500:
 		return "client_error"
 	case code >= 500:

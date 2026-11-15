@@ -2,11 +2,13 @@ package platform
 
 import (
 	"encoding/json"
+	"net"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 )
 
 // apiKeyHeader is the public-API credential header (fiber v2 ships no constant
@@ -34,23 +36,64 @@ func bearerToken(header string) string {
 
 // authenticateAPIKey resolves the caller's API key from X-API-Key (or
 // Authorization: Bearer) and enforces the status contract: missing/unknown or
-// disabled keys are rejected (禁用 key 一律 401).
-func (p *Platform) authenticateAPIKey(c *fiber.Ctx) (*APIKey, bool) {
+// disabled keys are rejected (禁用 key 一律 401). S4-GAP 密钥增强: a key past
+// its expires_at is rejected with 401; a key whose allowed_ips list does not
+// match the caller IP is rejected with 403 (denyStatus).
+func (p *Platform) authenticateAPIKey(c *fiber.Ctx) (key *APIKey, denyStatus int, ok bool) {
 	raw := strings.TrimSpace(c.Get(apiKeyHeader))
 	if raw == "" {
 		raw = bearerToken(c.Get(fiber.HeaderAuthorization))
 	}
 	if raw == "" {
-		return nil, false
+		return nil, 0, false
 	}
 	key, err := p.store.GetKeyByHash(sha256Hex(raw))
 	if err != nil || key == nil {
-		return nil, false
+		return nil, 0, false
 	}
 	if key.Status != KeyStatusActive {
-		return nil, false
+		return nil, 0, false
 	}
-	return key, true
+	if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
+		return nil, 0, false
+	}
+	if !ipAllowedFor(key.AllowedIPs, c.IP()) {
+		return nil, fiber.StatusForbidden, false
+	}
+	return key, 0, true
+}
+
+// ipAllowedFor matches the caller IP against the key's CIDR allowlist
+// (S4-GAP 密钥增强). An empty list allows every IP; bare IPs are treated as
+// /32 (IPv4) or /128 (IPv6).
+func ipAllowedFor(allowedIPs []string, ip string) bool {
+	if len(allowedIPs) == 0 {
+		return true
+	}
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed == nil {
+		return false
+	}
+	for _, entry := range allowedIPs {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if !strings.Contains(entry, "/") {
+			if parsed.Equal(net.ParseIP(entry)) {
+				return true
+			}
+			continue
+		}
+		_, cidr, err := net.ParseCIDR(entry)
+		if err != nil {
+			continue
+		}
+		if cidr.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseIndexRequest pre-parses an index/check request to size the quota check.
@@ -116,9 +159,24 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		started := time.Now()
 
-		key, ok := p.authenticateAPIKey(c)
+		key, denyStatus, ok := p.authenticateAPIKey(c)
 		if !ok {
+			if denyStatus == fiber.StatusForbidden {
+				return errForbidden(c)
+			}
+			if !p.allowUnauthRate(c.IP()) {
+				core.Metrics().IncRateLimited()
+				return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().UnauthRatePerMinute))
+			}
 			return errUnauthorized(c)
+		}
+
+		// S4-B-02: per-key token bucket (security.api_rate_per_minute, 0=off;
+		// burst = max(10, rate/4)). The daily-quota pre-check below is kept
+		// unchanged and stays conservative at full units.
+		if !p.allowKeyRate(key.ID) {
+			core.Metrics().IncRateLimited()
+			return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().APIRatePerMinute))
 		}
 
 		urls, engines, parsed := p.parseIndexRequest(c)
@@ -128,6 +186,7 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 		}
 
 		if units > 0 && key.DailyQuota > 0 && usedTodayUnits(key, time.Now())+int64(units) > key.DailyQuota {
+			core.Metrics().IncQuotaBlocked()
 			return errQuotaExceeded(c)
 		}
 
@@ -155,24 +214,30 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 }
 
 // writeUsage persists the usage record and key counters after an index/check
-// request. 计费口径(按成功单元扣费): the charged units are the number of OK
-// units derived from the response envelope (units whose engine field carries
-// an error object are not charged — including raw-mode not_implemented
-// pseudo-units). Quota pre-checks stay conservative at full units. If the
-// envelope cannot be parsed (defensive), the full requested units are charged,
-// matching the pre-2026 behavior.
+// request. B-01 用量记账如实化: the HTTP status is derived from the real
+// handler error (*APIError.HTTPStatus / *fiber.Error.Code / other → 500)
+// instead of blindly rewriting a not-yet-rendered 200 into 500. 计费口径: only
+// a completed HTTP 200 bills — charged units are the OK units derived from the
+// response envelope (units whose engine field carries an error object are not
+// charged — including raw-mode not_implemented pseudo-units; when the envelope
+// cannot be parsed the full requested units are charged, matching the pre-2026
+// behavior). Any 4xx/5xx final state records zero units, whether the handler
+// returned an error value or wrote the status itself. Every record carries the
+// outcome verdict (billed / engine_failed / rejected) so the P-01 有效调用 KPI
+// can exclude rejects.
 func (p *Platform) writeUsage(c *fiber.Ctx, key *APIKey, endpoint string, urls, engines []string, units int, started time.Time, handlerErr error) {
 	at := time.Now()
-	status := c.Response().StatusCode()
-	if status == fiber.StatusOK && handlerErr != nil {
-		status = fiber.StatusInternalServerError
-	}
+	status := realHandlerStatus(c.Response().StatusCode(), handlerErr)
+	outcome := outcomeForStatus(status)
 	engineStats := parseEngineStatsFromBody(c.Response().Body())
-	charged := units
-	if engineStats != nil {
-		charged = 0
-		for _, s := range engineStats {
-			charged += int(s.OK)
+	charged := 0
+	if status == fiber.StatusOK && handlerErr == nil {
+		charged = units
+		if engineStats != nil {
+			charged = 0
+			for _, s := range engineStats {
+				charged += int(s.OK)
+			}
 		}
 	}
 	rec := &UsageRecord{
@@ -186,11 +251,34 @@ func (p *Platform) writeUsage(c *fiber.Ctx, key *APIKey, endpoint string, urls, 
 		Status:      status,
 		TookMS:      at.Sub(started).Milliseconds(),
 		EngineStats: engineStats,
+		Outcome:     outcome,
 	}
 	consume := charged > 0 && status == fiber.StatusOK && handlerErr == nil
 	if err := p.recordUsage(rec, key.ID, int64(charged), consume, at); err != nil {
 		logrus.WithError(err).Warn("platform: 写入 usage 记录失败")
 	}
+	core.Metrics().AddUsageUnits(int64(charged))
+}
+
+// realHandlerStatus derives the true final HTTP status of a guarded request.
+// fiber renders the error response AFTER the middleware chain unwinds, so
+// c.Response().StatusCode() still carries the not-yet-overwritten 200 default
+// when the handler failed — the error value is the source of truth.
+func realHandlerStatus(responseStatus int, handlerErr error) int {
+	if handlerErr == nil {
+		return responseStatus
+	}
+	switch e := handlerErr.(type) {
+	case *core.APIError:
+		if e.HTTPStatus > 0 {
+			return e.HTTPStatus
+		}
+	case *fiber.Error:
+		if e.Code > 0 {
+			return e.Code
+		}
+	}
+	return fiber.StatusInternalServerError
 }
 
 // parseEngineStatsFromBody derives per-engine attempt/success counts from the
@@ -228,30 +316,102 @@ func parseEngineStatsFromBody(body []byte) map[string]EngineStat {
 	return stats
 }
 
-// jwtGuard protects every admin endpoint except /api/auth/login: Authorization
-// Bearer <JWT>, signature, expiry and token_version verified (契约 B: 改密码后
-// 旧 token 全部失效).
+// parseEngineStatsFromMCPBody derives per-engine attempt/success counts from an
+// MCP tools/call response body (T-02 与 writeUsage 同口径): the tool payload
+// rides in result.content[].text as a JSON string carrying the same
+// results[].engines envelope as /v1/index/check (check_indexed 走
+// serv.CheckIndexBatch,响应结构一致). Returns nil when the body is not a
+// text-bearing tool result or the payload has no per-engine section (web_search
+// 结果、工具级错误信封) — callers then charge the full requested units,
+// mirroring writeUsage's unparsed-envelope behavior.
+func parseEngineStatsFromMCPBody(body []byte) map[string]EngineStat {
+	if len(body) == 0 {
+		return nil
+	}
+	var resp struct {
+		Result struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	for _, item := range resp.Result.Content {
+		if item.Type != "text" || item.Text == "" {
+			continue
+		}
+		if stats := parseEngineStatsFromBody([]byte(item.Text)); stats != nil {
+			return stats
+		}
+	}
+	return nil
+}
+
+// adminSessionCookie is the httpOnly session cookie name (S4-B-12). The
+// console login sets it alongside the Bearer token; jwtGuard accepts either
+// so existing API consumers (Bearer) stay untouched.
+const adminSessionCookie = "w2a_admin_session"
+
+// verifyAdminToken validates signature, expiry, token_version and — for S4
+// tokens — that the bound session is still active. Legacy tokens without a
+// sid stay valid until their own TTL (兼容).
+func (p *Platform) verifyAdminToken(token string) (*jwtClaims, bool) {
+	claims, err := verifyJWT(p.secret, token)
+	if err != nil {
+		return nil, false
+	}
+	if claims.TV != p.tokenVersion() {
+		return nil, false
+	}
+	if claims.SID != "" && !p.sessionActive(claims.SID) {
+		return nil, false
+	}
+	return claims, true
+}
+
+// adminTokenFromRequest prefers the httpOnly cookie (S4-B-12) and falls back
+// to the Authorization: Bearer header (既有契约不变).
+func adminTokenFromRequest(c *fiber.Ctx) string {
+	if token := strings.TrimSpace(c.Cookies(adminSessionCookie)); token != "" {
+		return token
+	}
+	return bearerToken(c.Get(fiber.HeaderAuthorization))
+}
+
+// jwtGuard protects every admin endpoint except /api/auth/login: JWT via
+// httpOnly cookie (preferred) or Authorization Bearer <JWT>; signature,
+// expiry, token_version and session revocation verified (契约 B: 改密码后旧
+// token 全部失效; S4-GAP 会话: 撤销会话后旧 cookie/Bearer 同样失效).
 func (p *Platform) jwtGuard() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		token := bearerToken(c.Get(fiber.HeaderAuthorization))
+		token := adminTokenFromRequest(c)
 		if token == "" {
 			return errUnauthorized(c)
 		}
-		claims, err := verifyJWT(p.secret, token)
-		if err != nil {
+		claims, ok := p.verifyAdminToken(token)
+		if !ok {
 			return errUnauthorized(c)
 		}
-		if claims.TV != p.tokenVersion() {
-			return errUnauthorized(c)
-		}
+		c.Locals(localAdminSessionID, claims.SID)
+		c.Locals(localAdminUsername, claims.Sub)
+		p.touchSession(claims.SID, false)
 		return c.Next()
 	}
 }
 
 // ValidateDataPlaneKey reports whether the request carries a valid, active
 // X-API-Key (or Bearer key material). It backs the optional data-plane auth
-// switch (security.data_plane_auth) without exposing store internals.
+// switch (security.data_plane_auth) without exposing store internals. S4-GAP
+// 密钥增强: an expired key answers false; a non-allowlisted IP is treated the
+// same here (the data-plane guard turns any rejection into 401/403 upstream).
 func (p *Platform) ValidateDataPlaneKey(c *fiber.Ctx) bool {
-	_, ok := p.authenticateAPIKey(c)
+	_, denyStatus, ok := p.authenticateAPIKey(c)
+	if !ok && denyStatus == fiber.StatusForbidden {
+		c.Set("X-Auth-Deny", "forbidden")
+		return false
+	}
 	return ok
 }

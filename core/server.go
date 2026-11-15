@@ -2,13 +2,14 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -58,10 +59,16 @@ type Server struct {
 	addr          string
 	searchEngines []SearchEngine
 	cache         *ResponseCache
-	resilient     *ResilientSearcher
-	startTime     time.Time
-	opts          ServerOptions
-	draining      atomic.Bool
+	// indexCache caches index/check batch responses (S4-GAP 性能项 a) when
+	// ServerOptions.IndexCheckCacheTTL > 0. Errors/cooldown units are never cached.
+	indexCache *ResponseCache
+	resilient  *ResilientSearcher
+	startTime  time.Time
+	opts       ServerOptions
+	draining   atomic.Bool
+	// storageKind is injected by the serve command ("bbolt"/"json") for
+	// /health.storage (B-06).
+	storageKind atomic.Pointer[string]
 }
 
 // ServerOptions configures HTTP server middleware and resilience behavior.
@@ -92,6 +99,13 @@ type ServerOptions struct {
 	RequestTimeout time.Duration
 	// ResolveConfig configures wrapped result URL resolution limits.
 	ResolveConfig URLResolveConfig
+	// MetricsToken guards GET <BasePath>/metrics (S4-GAP 运维指标). Empty =
+	// loopback-only access; non-empty = Bearer token required (any client IP).
+	MetricsToken string
+	// IndexCheckCacheTTL caches index/check batch responses for this long
+	// (S4-GAP 性能项 a). 0 = off (每次真实打引擎, 现语义). Cache hits add
+	// meta.cache:"hit" (additive); units with errors/cooldown are not cached.
+	IndexCheckCacheTTL time.Duration
 	// RequestAuth, when non-nil, guards the data-plane routes (dedicated
 	// /{engine}/search and /stats/*) with an authentication check (契约: 数据
 	// 面可选鉴权开关). It is a validator: return nil to allow, an error to
@@ -172,6 +186,13 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 			"cache_max_size": opts.CacheMaxSize,
 		}).Info("Response cache enabled")
 	}
+	if opts.IndexCheckCacheTTL > 0 && opts.CacheMaxSize > 0 {
+		serv.indexCache = NewResponseCache(opts.IndexCheckCacheTTL, opts.CacheMaxSize)
+		logrus.WithFields(logrus.Fields{
+			"cache_ttl":      opts.IndexCheckCacheTTL.String(),
+			"cache_max_size": opts.CacheMaxSize,
+		}).Info("Index-check response cache enabled")
+	}
 
 	// Defense-in-depth: engine panics are recovered in the resilient layer
 	// (invokeEngine); this catches panics in handlers that bypass it (stats,
@@ -199,6 +220,7 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	// the fixed BasePath. The root serves nothing.
 	app.Get(BasePath+"/health", serv.handleHealthCheck)
 	app.Get(BasePath+"/ready", serv.handleReadinessCheck)
+	app.Get(BasePath+"/metrics", serv.handleMetrics)
 	serv.registerDataPlaneRoute(app, BasePath+"/stats", serv.handleStats)
 	serv.registerDataPlaneRoute(app, BasePath+"/stats/cache", serv.handleCacheStats)
 	serv.registerDataPlaneRoute(app, BasePath+"/stats/proxy", serv.handleProxyStats)
@@ -419,7 +441,11 @@ func mapSearchError(err error) searchErrorSpec {
 	case errors.Is(err, context.Canceled):
 		return searchErrorSpec{status: fiber.StatusServiceUnavailable, code: "request_canceled", message: "request canceled"}
 	}
-	return searchErrorSpec{status: fiber.StatusBadGateway, code: "engine_internal", message: err.Error()}
+	// B-08: uncategorized engine errors keep a fixed message — the raw error
+	// string may carry internal paths or upstream URL fragments. The original
+	// error goes to the server logs (call sites log "Search failed" with the
+	// error attached) and the sanitized excerpt stays in meta.error_detail.
+	return searchErrorSpec{status: fiber.StatusBadGateway, code: "engine_internal", message: "engine internal error"}
 }
 
 func searchAPIError(err error, engineName string, q Query, proxyMeta ProxyExecutionMeta) *APIError {
@@ -524,11 +550,15 @@ func (s *Server) cacheEnvelopeIfEligible(engineName, usedEngine, action string, 
 }
 
 // HealthStatus is returned by /health and summarizes service state.
+// B-07 版本指纹收敛: the former system block (goroutines/memory_mb/go_version)
+// moved behind the admin-plane JWT (GET /web-tool/api/runtime); the public
+// endpoint only carries status/uptime/engines plus the storage kind
+// (B-06: storage=bbolt|json, omitted when the platform is disabled).
 type HealthStatus struct {
-	Status  string                 `json:"status"`
-	Uptime  string                 `json:"uptime"`
-	Engines []EngineHealth         `json:"engines"`
-	System  map[string]interface{} `json:"system"`
+	Status  string         `json:"status"`
+	Uptime  string         `json:"uptime"`
+	Engines []EngineHealth `json:"engines"`
+	Storage string         `json:"storage,omitempty"`
 }
 
 // ReadinessStatus is returned by /ready to indicate if this instance can
@@ -591,18 +621,13 @@ func (s *Server) handleHealthCheck(c *fiber.Ctx) error {
 		overallStatus = "degraded"
 	}
 
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
 	health := HealthStatus{
 		Status:  overallStatus,
 		Uptime:  time.Since(s.startTime).Round(time.Second).String(),
 		Engines: engines,
-		System: map[string]interface{}{
-			"goroutines": runtime.NumGoroutine(),
-			"memory_mb":  memStats.Alloc / 1024 / 1024,
-			"go_version": runtime.Version(),
-		},
+	}
+	if kind := s.storageKind.Load(); kind != nil {
+		health.Storage = *kind
 	}
 
 	if overallStatus == "unhealthy" {
@@ -618,6 +643,28 @@ func (s *Server) handleReadinessCheck(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(status)
 	}
 	return c.JSON(status)
+}
+
+// SetStorageKind injects the storage kind reported by /health.storage
+// (B-06: storage=bbolt|json; omitted when the platform is disabled).
+func (s *Server) SetStorageKind(kind string) {
+	s.storageKind.Store(&kind)
+}
+
+// handleMetrics serves the hand-written OpenMetrics text (S4-GAP 运维指标).
+// Auth: security.metrics_token Bearer when configured; otherwise only
+// loopback clients may scrape (挂载于公开前缀,防止指纹与负载数据外泄).
+func (s *Server) handleMetrics(c *fiber.Ctx) error {
+	if token := strings.TrimSpace(s.opts.MetricsToken); token != "" {
+		auth := strings.TrimSpace(c.Get(fiber.HeaderAuthorization))
+		if auth != "Bearer "+token {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		}
+	} else if !ipIsLoopback(c.IP()) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+	}
+	c.Set(fiber.HeaderContentType, "text/plain; version=1.0.0; charset=utf-8")
+	return c.Send([]byte(Metrics().RenderOpenMetrics()))
 }
 
 func (s *Server) handleStats(c *fiber.Ctx) error {
@@ -1159,10 +1206,33 @@ func (s *Server) CheckIndexBatch(ctx context.Context, urls []string, engines []s
 		return nil, err
 	}
 
+	// S4-GAP 性能项(a): index/check response cache. Default off
+	// (cache.index_check_ttl_seconds=0 keeps the "every check hits the real
+	// engine" semantics); when enabled, a fully-successful batch for the same
+	// (urls × engines) set within the TTL answers from memory with
+	// meta.cache="hit" (additive). Responses with any unit error / cooldown
+	// verdict are never cached, so recovery is never masked beyond the TTL.
+	if s.indexCache != nil {
+		key := buildIndexCheckCacheKey(urls, selected)
+		if cached, ok := s.indexCache.Get(key); ok {
+			var hit IndexCheckResponse
+			if err := json.Unmarshal(cached, &hit); err == nil {
+				hit.ID = requestID
+				hit.CreatedAt = startedAt.UTC().Format(time.RFC3339)
+				hit.Meta.RequestID = requestID
+				hit.Meta.TookMs = time.Since(startedAt).Milliseconds()
+				hit.Meta.EnginesCooldown = s.enginesCooldownMeta()
+				hit.Meta.Cache = "hit"
+				WithRequest(requestCtx).WithField("took_ms", hit.Meta.TookMs).Debug("Index check cache hit")
+				return hit, nil
+			}
+		}
+	}
+
 	results := RunIndexCheckUnits(requestCtx, s.resilient, selected, urls)
 
 	WithRequest(requestCtx).WithField("took_ms", time.Since(startedAt).Milliseconds()).Info("Index check completed")
-	return IndexCheckResponse{
+	resp := IndexCheckResponse{
 		ID:        requestID,
 		CreatedAt: startedAt.UTC().Format(time.RFC3339),
 		Results:   results,
@@ -1172,7 +1242,35 @@ func (s *Server) CheckIndexBatch(ctx context.Context, urls []string, engines []s
 			Units:           len(urls) * len(selected),
 			EnginesCooldown: s.enginesCooldownMeta(),
 		},
-	}, nil
+	}
+	if s.indexCache != nil && !indexCheckHasUnitError(results) {
+		if data, err := json.Marshal(resp); err == nil {
+			s.indexCache.Set(buildIndexCheckCacheKey(urls, selected), data)
+		}
+	}
+	return resp, nil
+}
+
+// buildIndexCheckCacheKey derives the index-check cache key from the cleaned
+// URL list and the selected engine names (order-sensitive on URLs, because
+// the response rows follow the request order).
+func buildIndexCheckCacheKey(urls []string, engines []SearchEngine) string {
+	raw := "ic|" + strings.Join(urls, "\x1f") + "|" + strings.Join(IndexCheckEngineNames(engines), ",")
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+// indexCheckHasUnitError reports whether any unit carried an error verdict —
+// such batches are excluded from the index-check response cache.
+func indexCheckHasUnitError(results []IndexCheckURLResult) bool {
+	for _, r := range results {
+		for _, outcome := range r.Engines {
+			if outcome.err != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // validateIndexCheckURLs applies the platform URL rules (trim, 1..20 entries,

@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Web2API — 网站收录查询开放平台
-  version: "0.8.19"
+  version: "1.0" # B-07 版本指纹收敛: 公开规范不携带真实应用版本号,真实版本仅在鉴权后的管理端点暴露(见 docs/openapi-admin.yaml)
   license:
     name: MIT
     url: https://github.com/xuboboo/web2api/blob/main/LICENSE
@@ -506,7 +506,7 @@ paths:
                     result:
                       protocolVersion: "2025-06-18"
                       capabilities: { tools: { listChanged: false } }
-                      serverInfo: { name: web2api, version: "0.8.19" }
+                      serverInfo: { name: web2api, version: "1.0" }  # B-07 版本中性化: 示例同样不带真实版本号
                 invalidParams:
                   value:
                     jsonrpc: "2.0"

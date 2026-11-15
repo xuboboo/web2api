@@ -62,9 +62,13 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `admin_password` | `admin123` | `admin123` | 控制台管理员密码（生产环境务必修改） |
 | `jwt_expire_hours` | `24` | `24` | 管理员 JWT 有效期（小时） |
 
-说明:存储主路径为 bbolt(纯 Go 无 CGO),打开失败时自动回退等价 JSON 文件存储
-(`<data_dir>/web2api.json`),接口不变。API key 只存 SHA-256 哈希,完整 key 仅在
-创建时返回一次。1 URL × 1 引擎 = 1 unit;`daily_quota=0` 为不限。
+说明:存储主路径为 bbolt(纯 Go 无 CGO)。S4-B-06 起**锁冲突 fail-closed**:
+数据目录被第二个进程占用时启动直接失败(避免双实例分裂记账);JSON 文件回退
+(`<data_dir>/web2api.json`)仅覆盖非锁类打开失败,`/health` 的 `storage` 字段
+暴露实际存储类型。API key 只存 SHA-256 哈希,完整 key 仅在创建/轮换时返回一次。
+1 URL × 1 引擎 = 1 unit;`daily_quota=0` 为不限。管理员会话(sessions 桶)支持
+逐会话撤销与滑动续期,审计轨迹落 `<data_dir>/audit.log`(JSON Lines,与
+app.log_max_mb/log_backups 同轮转机制)。
 
 ## proxies
 
@@ -72,7 +76,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | --- | --- | --- | --- |
 | `global` | 空 | 空 | 全局代理（等价 `--proxy`） |
 | `entries[]` | 空 | 空 | 代理池：`{url, tags[]}` |
-| `allow_request_proxy_url` | `false` | `true` | 允许 `X-Proxy-URL` 头覆盖 |
+| `allow_request_proxy_url` | `false` | `false` | 允许 `X-Proxy-URL` 头覆盖(S4-B-03 出厂默认已翻转;既有部署若依赖自带代理需显式改回 `true`) |
 | `health.failure_threshold` | `3` | `2` | 连续失败多少次判定代理不健康 |
 | `lanes.enabled` | `true` | `true` | 按“引擎+代理会话”复用浏览器 cookie |
 | `lanes.max_lanes` | `100` | `100` | sticky lane 的 LRU 上限 |
@@ -84,6 +88,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | --- | --- | --- | --- |
 | `cache.ttl_seconds` | `300` | `120` | 专用端点 JSON 缓存 TTL，0 关闭 |
 | `cache.max_size` | `1000` | `1000` | 缓存条目上限 |
+| `cache.index_check_ttl_seconds` | `0` | `0` | S4: index/check 批量响应缓存 TTL（秒），0=关（保持每次真实打引擎）；命中响应 `meta.cache="hit"`（additive），含错误/冷却单元的响应不缓存 |
 | `resilience.max_retries` | `3` | `1` | 每引擎重试次数 |
 | `resilience.allow_endpoint_fallback` | `false` | `false` | 允许专用端点失败后回退到其它引擎 |
 | `circuit_breaker.failures` | `5` | `8` | 连续失败多少次打开熔断 |
@@ -101,6 +106,45 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `allow_methods` | `GET, POST, OPTIONS` | 同默认 |
 | `allow_headers` | 见 `cmd/root.go` | 默认列表 + `X-Use-Profile` |
 | `max_age` | `86400` | `86400` |
+
+## security（S4 新增键）
+
+| 键 | 默认值 | 本仓库 | 说明 |
+| --- | --- | --- | --- |
+| `admin_rate_per_minute` | `60` | `60` | `/api/*` 全局限速 |
+| `admin_rate_per_ip` | `30` | `30` | S4-B-05: `/api/*` 按 IP 分桶限速（0=关） |
+| `api_rate_per_minute` | `120` | `120` | S4-B-02: `/v1/*` 与 MCP 每 key 限速（0=关） |
+| `unauth_rate_per_minute` | `30` | `30` | S4-B-02: 无有效凭据请求按 IP 前置限速（0=关） |
+| `data_plane_auth` | `false` | `true` | S4-B-03: 数据面鉴权开关（本仓库模板已翻转；代码默认仍 false 兼容既有部署） |
+| `trust_proxy_headers` | `false` | `false` | S4-B-14: TLS 反代场景开启后按 `X-Forwarded-Proto=https` 下发 HSTS |
+| `mcp_allowed_origins` | 空 | 空 | S4-B-10: MCP Origin 白名单（空=仅同源；空 Origin 始终放行） |
+| `metrics_token` | 空 | 空 | S4: `/web-tool/metrics` Bearer 令牌（空=仅 loopback 抓取） |
+| `login_lockout.fails` | `5` | `5` | 登录锁定阈值 |
+| `login_lockout.minutes` | `15` | `15` | 登录锁定时长 |
+| `password_policy.min_length` | `8` | `8` | S4-B-11: 改密最小长度 |
+| `password_policy.min_classes` | `0` | `0` | S4-B-11: 改密字符类数要求（内置常用密码黑名单始终生效） |
+
+## app 日志轮转（S4 新增键）
+
+| 键 | 默认值 | 本仓库 | 说明 |
+| --- | --- | --- | --- |
+| `app.log_max_mb` | `10` | `10` | serve 模式 `logs.txt` 单文件上限（MB），超过滚动为 `logs.txt.1/.2…`（0=不轮转） |
+| `app.log_backups` | `5` | `5` | 保留的历史日志份数（`audit.log` 同机制） |
+
+启动校验（S4-GAP 运维）: 不认识的配置键启动时输出 Warn 清单；
+`WEB2API_STRICT_CONFIG=1` 时转为启动失败（退出码非 0）。
+
+## 优雅停机与停止信号（运维注记，T-01）
+
+serve 收到首个停止信号后进入排水（30 秒上限），随后关闭日志/端口/存储并把
+**成功停机的退出码统一为 0**。停止信号的可投递方式按平台区分：
+
+- **Linux/macOS**：`SIGTERM`（`kill <pid>`、systemd stop）与控制台 `Ctrl+C`（`SIGINT`）均有效。
+- **Windows**：进程注册的 `SIGTERM` 不可投递——请使用**控制台事件**（`Ctrl+C`、
+  `taskkill /pid <pid>`（不带 `/F`，触发 CTRL_BREAK））或服务包装器（NSSM /
+  Windows Service）投递停止信号；`taskkill /F` 为强杀，不走排水。Windows 控制
+  台以 `Ctrl+C` 停止时，进程显式 `os.Exit(0)` 收尾，避免旧版以 0xC000013A
+  （STATUS_CONTROL_C_EXIT）作为退出码。
 
 ## captcha / 2captcha
 

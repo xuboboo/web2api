@@ -19,7 +19,14 @@ func TestStatusText(t *testing.T) {
 		{404, "not_found"},
 		{429, "rate_limited"},
 		{503, "service_unavailable"},
-		{401, "client_error"},
+		// S4-B-16 错误码名补全: explicit mappings replace the old
+		// client_error catch-all.
+		{401, "unauthorized"},
+		{403, "forbidden"},
+		{405, "method_not_allowed"},
+		{502, "bad_gateway"},
+		{504, "gateway_timeout"},
+		{418, "client_error"},
 		{500, "server_error"},
 		{200, "error"},
 	}
@@ -45,7 +52,10 @@ func TestCORSMiddleware_UsesConfiguredHeaders(t *testing.T) {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
+	// S4-B-13: with an origin list (not "*") the matching request Origin is
+	// echoed; requests without an Origin (curl/agents) get no ACAO at all.
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Header.Set("Origin", "https://example.com")
 	resp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
