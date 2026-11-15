@@ -333,6 +333,8 @@ html.dark .icon-btn .icon-moon { display: block; }
 /* ---------- 6. Hero ---------- */
 .hero {
   margin-top: calc(-1 * var(--nav-h)); /* 暗段上移填满导航后方,消除顶部亮带 */
+  min-height: 100vh; /* 首屏整屏都是暗色 Harness 段:两主题下都不露浅色底 */
+  box-sizing: border-box;
   padding: calc(40px + var(--nav-h)) 0 72px;
 }
 .hero-head { max-width: 100%; }

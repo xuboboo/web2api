@@ -147,12 +147,12 @@
   </div>
 
   <div class="apis-note">
-    <b>API 平面</b> —— 收录判定 <code>POST /web-tool/v1/index/check</code> 与四引擎搜索 <code>GET /web-tool/{engine}/search</code> 正常对外服务;引擎冷却期间对应请求快速失败(HTTP 503 <code>engine_cooldown</code> + <code>Retry-After</code>),不消耗配额,客户端据 <code>meta.engines_cooldown</code> 跳过并在 <code>Retry-After</code> 后重试。鉴权与配额说明见 <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>。
+    <b>API 平面</b> —— 收录判定与四引擎搜索正常对外服务;接入方式、错误码与冷却语义见官网「API 文档」或 <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>。
   </div>
 </main>
 
 <footer class="status-foot">
-  <span>数据每 10 秒自动刷新 · 生成时间 <span id="genAt2">—</span></span>
+  <span>数据每 10 秒自动刷新 · 更新时间 <span id="genAt2">—</span></span>
   <a href="../">返回官网</a>
   <a href="../console/">进入控制台</a>
 </footer>
@@ -197,8 +197,8 @@
     banner.className = degraded ? 'banner b-degraded' : 'banner b-ok';
     title.textContent = degraded ? '部分引擎降级 —— 冷却 / 熔断自愈中' : '全部系统正常运行';
 
-    var stamp = data && data.generated_at ? data.generated_at.replace('T', ' ').replace('Z', ' UTC') : '';
-    if (gen) gen.textContent = stamp ? '生成于 ' + stamp : '';
+    var stamp = data && data.generated_at ? data.generated_at : '';
+    if (gen) gen.textContent = stamp ? '数据更新于 ' + stamp : '';
     if (gen2) gen2.textContent = stamp || '—';
 
     if (!engines.length) {

@@ -224,7 +224,7 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 			c.Set(fiber.HeaderCacheControl, "public, max-age=5")
 			return c.JSON(fiber.Map{
 				"engines":      serv.EnginesStatusWithCooldown(),
-				"generated_at": time.Now().UTC().Format(time.RFC3339),
+				"generated_at": time.Now().Format("2006-01-02 15:04:05"),
 			})
 		})
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
