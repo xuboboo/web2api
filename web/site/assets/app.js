@@ -40,6 +40,7 @@
   /* ---------- 2) 导航:滚动状态 + 锚点激活(rAF 节流) ---------- */
   function initNav() {
     var nav = document.getElementById('siteNav');
+    var heroSection = document.querySelector('.hero');
     var links = Array.prototype.slice.call(document.querySelectorAll('.nav-links a[data-section]'));
     var items = [];
     links.forEach(function (a) {
@@ -53,12 +54,18 @@
 
     var ticking = false;
     var onScroll = function () {
+      /* 导航状态切换是廉价的单行 class 操作,同步执行——
+       * 放进 rAF 会在后台/合成节流标签页里卡住状态(实测踩坑) */
+      var heroEnd = 96;
+      if (heroSection) {
+        heroEnd = heroSection.getBoundingClientRect().bottom + window.scrollY;
+      }
+      if (nav) nav.classList.toggle('scrolled', window.scrollY > heroEnd - 64);
+
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(function () {
         ticking = false;
-        if (nav) nav.classList.toggle('scrolled', window.scrollY > 8);
-
         var probe = window.scrollY + 96; /* 导航 65px + 余量 */
         var current = null;
         for (var i = 0; i < items.length; i++) {
