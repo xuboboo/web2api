@@ -316,10 +316,10 @@ html.dark .icon-btn .icon-moon { display: block; }
 .site-nav.menu-open .menu-btn .bar:last-child { top: 17px; transform: rotate(-45deg); }
 
 /* ---------- 6. Hero ---------- */
-.hero { padding: 88px 0 96px; }
+.hero { padding: 40px 0 72px; }
 .hero-head { max-width: 100%; }
 .hero-grid {
-  margin-top: 44px;
+  margin-top: 28px;
   display: grid;
   grid-template-columns: minmax(0, 10fr) minmax(0, 11fr);
   gap: 64px;
@@ -1049,7 +1049,7 @@ html:not(.no-js) .reveal-hero.is-visible {
   .cols-3, .cols-2 { grid-template-columns: 1fr; }
   .split { gap: 40px; margin-top: 56px; }
   .cooldown-grid { gap: 40px; }
-  .hero { padding-top: 64px; }
+  .hero { padding-top: 40px; }
   .diag-req { margin-left: 0; }
 }
 
