@@ -15,8 +15,8 @@
   --border: #E2E0D8;
   --card: #FAF9F5;
   --primary: #141413;
-  --brand: #ED5B20;            /* 强调橙,橙底配深字(不放白字) */
-  --brand-foreground: #141413;
+  --brand: #2E55A5;            /* 品牌蓝,蓝底白字 */
+  --brand-foreground: #FFFFFF;
   --radius: 10px;
   --radius-lg: 16px;
 
@@ -39,7 +39,8 @@
   --ink-text: rgba(255, 255, 255, 0.5);
   --ink-dim: rgba(255, 255, 255, 0.72);
   --ink-faint: rgba(255, 255, 255, 0.35);
-  --ink-orange: #FF8A3D;
+  --ink-accent: #5B8DEF;
+  --ink-green: #9ECE6A;
   --ink-num: #8089FF;
 
   --nav-glass: rgba(250, 249, 245, 0.95);
@@ -64,7 +65,7 @@ html.dark {
   --muted-foreground: #A8A69F;
   --border: #2E2B26;
   --primary: #F3F1EB;
-  --brand: #FF8A3D;
+  --brand: #5B8DEF;
   --border-strong: #3A3730;
   --canvas-dot: #f3f1eb0d;
   --nav-glass: rgba(20, 20, 19, 0.95);
@@ -692,7 +693,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 .code-tab:hover { color: var(--ink-title); background: rgba(255, 255, 255, 0.06); }
 .code-tab.active, .code-tab[aria-selected="true"] {
-  background: var(--ink-orange);
+  background: var(--ink-accent);
   color: #0A0A0A;
   font-weight: 600;
 }
@@ -742,7 +743,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 .tk-cmd { color: var(--ink-title); font-weight: 600; }
 .tk-flag { color: var(--ink-dim); }
 .tk-key { color: var(--ink-dim); }
-.tk-str { color: var(--ink-orange); }
+.tk-str { color: var(--ink-green); }
 .tk-num { color: var(--ink-num); }
 .tk-bool { color: var(--ok); }
 .tk-com { color: var(--ink-faint); }
@@ -935,7 +936,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: var(--ink-orange);
+  background: var(--ink-accent);
   color: #0A0A0A;
   display: grid;
   place-items: center;

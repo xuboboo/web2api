@@ -17,7 +17,7 @@
 | 区块留白 | 上下各 **160px**(实测 `pt-ds-11`) | 约 96–120px(视觉读数) |
 | 动效 | 入场 opacity+translateY 渐显(JS 驱动),`prefers-reduced-motion` 降级 | `landing-fade-up` 关键帧 + **logo 无缝跑马灯 40s** |
 
-**Web2API 官网采用:zero.cat 的「暖纸衬线」为主线(导航/Hero/正文),内嵌 DeepSeek 的「暗色产品窗口」语言展示 API/终端/代码。
+**Web2API 官网采用:zero.cat 的「暖纸衬线」为主线(导航/Hero/正文),内嵌 DeepSeek 的「暗色产品窗口」语言展示 API/终端/代码;强调色不取 zero.cat 的橙,改用品牌蓝(亮 `#2E55A5` / 暗 `#5B8DEF`,2026-11-15 应用户要求)。
 即:纸面上放一台机器 —— 亮色页面承载叙事,深色窗口承载「产品感」。两站均默认亮色主题,同时各自提供完整暗色主题(见 §2)。**
 
 ---
@@ -40,17 +40,17 @@
 | `--primary` | `#141413` | 主按钮深色态 |
 | `--radius` | `0.625rem`(10px) | 全局圆角基准 |
 
-强调橙(按钮实测 `rgb(237,91,32)`):
+品牌蓝(2026-11-15 应用户要求由橙改蓝,与 Logo `#2E55A5` 同族):
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--brand` | 亮色态 `#ED5B20`;暗色态 `#FF8A3D` | 主 CTA、链接 hover、图表主色、状态点 |
-| brand-foreground | `#141413`(深墨字) | **橙底上放深字,不放白字**(zero.cat 实测) |
+| `--brand` | 亮色态 `#2E55A5`;暗色态 `#5B8DEF` | 主 CTA、链接 hover、图表主色、状态点 |
+| brand-foreground | 亮色态 `#FFFFFF`;暗色态 `#141413`(继承) | 蓝底上亮色主题放白字、暗色主题放深字(对比度实测 ≥5:1) |
 
 暗色主题(zero.cat `.dark` 类,实测):
 `--background:#141413` / `--foreground:#F3F1EB` / `--card:#1D1C19` / `--secondary:#262420` /
-`--accent:#2E2B26` / `--muted-foreground:#A8A69F` / `--destructive:#E05A5A` / `--brand:#FF8A3D`。
-图表序列色:`#FF8A3D #8089FF #00C386 #00B1FB #FFA824`。
+`--accent:#2E2B26` / `--muted-foreground:#A8A69F` / `--destructive:#E05A5A` / `--brand:#5B8DEF`。
+图表序列色:`#5B8DEF #8089FF #00C386 #00B1FB #D66BB8`。
 
 DeepSeek 暗色组件语言(实测,用于「产品窗口」):
 - 页面底 `#0A0A0A`;标题 `#FFFFFF`;正文 `rgba(255,255,255,.5)`(50% 白,16px/25.6px);

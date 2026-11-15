@@ -22,7 +22,7 @@
 
 ## 1. 设计基因(一段话)
 
-**暖纸色工作台 + 反色单色 CTA + 等宽数字**。亮色主题是带黄棕底调的"羊皮纸"暖白(#faf9f5),暗色主题是暖炭黑(#141413),两套主题共用一套语义结构;唯一强调色是橙色(亮 #c2410c 系 / 暗 #ff8a3d,营销 CTA 用 #ed5b20 橙底**深字**),其余界面全靠暖灰阶 + 0.8px hairline 分层,卡片无投影(shadow-as-border);标题层用衬线字(Anthropic Serif → Lora → 思源宋体,中文标题呈宋体质感),UI 正文用 Inter,一切数字/代码/价格用 Geist Mono;大数字 + 小灰标签是数据表达的唯一范式;微交互全部 150–200ms,按下有 `scale(0.96)` 反馈,焦点是 2px 橙色 30% 环。
+**暖纸色工作台 + 反色单色 CTA + 等宽数字**。亮色主题是带黄棕底调的"羊皮纸"暖白(#faf9f5),暗色主题是暖炭黑(#141413),两套主题共用一套语义结构;唯一强调色是品牌蓝(亮 #2e55a5 / 暗 #5b8def,营销 CTA 同蓝系,2026-11-15 应用户要求由橙改蓝),其余界面全靠暖灰阶 + 0.8px hairline 分层,卡片无投影(shadow-as-border);标题层用衬线字(Anthropic Serif → Lora → 思源宋体,中文标题呈宋体质感),UI 正文用 Inter,一切数字/代码/价格用 Geist Mono;大数字 + 小灰标签是数据表达的唯一范式;微交互全部 150–200ms,按下有 `scale(0.96)` 反馈,焦点是 2px 蓝色 30% 环。
 
 ---
 
@@ -67,13 +67,13 @@
 | `--accent` | `#eae8e0` | `#2e2b26` | 悬停底、选中底 |
 | `--accent-fg` | `#141413` | `#f3f1eb` | 悬停态文字 |
 | `--secondary` | `#efeee8` / 字 `#30302e` | `#262420` / 字 `#f3f1eb` | 次级按钮底 |
-| `--primary` | `#141413`(反色黑钮) | `#ff8a3d`(橙) | 主按钮/选中态;亮暗语义相反 |
+| `--primary` | `#141413`(反色黑钮) | `#5b8def`(蓝) | 主按钮/选中态;亮暗语义相反 |
 | `--primary-fg` | `#faf9f5` | `#141413` | 主按钮文字 |
-| `--brand` | `#c2410c`(焦橙) | `#ff8a3d`(亮橙) | 链接/焦点环 `--ring`/图表主色/动态计费字 |
-| `--brand-cta` | `#ed5b20`(橙底)hover `#f06b37`,字 `#141413` | 同左(两主题同一硬编码) | 营销级 CTA(登录页/hero);实测 class `bg-[#ed5b20] text-[#141413] hover:bg-[#f06b37]` |
+| `--brand` | `#2e55a5`(深蓝) | `#5b8def`(亮蓝) | 链接/焦点环 `--ring`/图表主色/动态计费字 |
+| `--brand-cta` | `#2e55a5`(蓝底)hover `#3b66db`,字 `#ffffff` | `#5b8def` hover `#7aa2ff`,字 `#141413` | 营销级 CTA(登录页/hero) |
 | `--border` | `#e2e0d8` | `#393730` | 全站 hairline |
 | `--input` | `#e2e0d8` | `#44413a` | 输入框边框 |
-| `--ring` | `var(--brand)` | `#ff8a3d` | 焦点环(用 30% 透明度) |
+| `--ring` | `var(--brand)` | `#5b8def` | 焦点环(用 30% 透明度) |
 | `--canvas-dot` | `#1414130d` | `#f3f1eb0d` | 点阵纹理(特性卡图标区/登录右侧背景,1px 圆点平铺) |
 | `--skeleton` | base `#edece6` / highlight `#f6f5f0` | base `#292825` / highlight `#383632` | 骨架屏 |
 
@@ -94,11 +94,11 @@
 
 | 系 | 亮色实测 | 暗色实测 |
 |---|---|---|
-| chart-1 | `#ff8a3d` | `#eb8561` |
+| chart-1 | `#5b8def` | `#7aa2ff` |
 | chart-2 | `#625fff` | `#82ad6a` |
 | chart-3 | `#00bb7f` | `#79aad8` |
 | chart-4 | `#00a5ef` | `#fb93b4` |
-| chart-5 | `#f99c00` | `#b6cdc6` |
+| chart-5 | `#d66bb8` | `#b6cdc6` |
 
 - /rankings 堆叠柱状图实测:分段间留 1px 白缝(亮)/暗缝(暗),无渐变、无圆角或 2px 微圆角;仅横向网格线;轴标签 10–12px muted。
 - 状态进度条(模型卡健康度):**分段块状**(约 14–16 个小方块一行),绿 #00bb7f 系为健康,掺红段表示异常百分比(实测截图)。
@@ -170,7 +170,7 @@
 | 变体 | 几何 | 亮色 | 暗色 |
 |---|---|---|---|
 | Primary-solid(反色 CTA) | h36 / px16 / r10 / 14px·500 | 底 `#141413` 字 `#faf9f5` | 底 `#f3f1eb` 字 `#141413`(登录页「登录」钮实测两态) |
-| Brand-CTA(橙,仅营销面) | h48 / px28 / r10 / 16px·500 | 底 `#ed5b20` 字 `#141413`,hover `#f06b37` | 同亮色(实测暗色下同值) |
+| Brand-CTA(蓝,仅营销面) | h48 / px28 / r10 / 16px·500 | 底 `#2e55a5` 字 `#ffffff`,hover `#3b66db` | 底 `#5b8def` 字 `#141413`,hover `#7aa2ff` |
 | Outline(次操作) | h32–48 / px12–28 / r8–10 / `0.8px solid var(--border)` | 底 transparent~background,hover 底 `--accent` 字 `--accent-fg` | 底 transparent,`dark:border-input` |
 | Ghost/Text | 无底,字 `--muted-fg`,hover 变 `--fg` | 图标钮/工具栏钮;顶部登录钮实测即 outline h32 | 同 |
 | Danger | outline + `--destructive` 字与边框 | 危险确认 | 暗色字 `#ff6367` |
@@ -188,7 +188,7 @@
 1. **chip(筛选值)**:h30 / r8 / `0.8px` 边 / 底 background / 12px·500 / gap 6px;计数后缀 `×1.5` 用 muted 小字;选中态底 `--accent` 或橙。
 2. **toggle-group(分段,标准/充值、/1M /1K)**:h32 / 组整体 r10、成员间 r0 / 成员底 `--muted`(#f1f0eb)/ `0.8px` 边 / 14px·500;激活成员底 `--background` 或橙字(实测视图切换激活为橙)。
 3. **underline tabs(今天/本周/本月/今年)**:px12 py8 / 14px·500 / 激活项 `--fg` + 底部 2px `--fg` 下划线(`relative -mb-px`)/ 非激活 `--muted-fg`。
-- **状态 pill**(表格):r-full(30px)/ `2px 10px` / 12px·600;启用=实心 success(暗色 `text hsl(150,86%,65%)`);冷却=warning 描边+同色字;熔断=destructive 描边;停用=灰字无框;「动态计费」类=橙字(实测 #c2410c)+ 亮橙圆点。
+- **状态 pill**(表格):r-full(30px)/ `2px 10px` / 12px·600;启用=实心 success(暗色 `text hsl(150,86%,65%)`);冷却=warning 描边+同色字;熔断=destructive 描边;停用=灰字无框;「动态计费」类=蓝字(var(--brand))+ 品牌蓝圆点。
 
 ### 4.4 卡片 / 统计带(实测两个范式)
 
@@ -207,7 +207,7 @@
 
 ### 4.6 代码块 / 终端卡(3 行代码区实测)
 
-- 容器:r14 卡,顶部条 `--muted`:左红黄绿三点(8px 圆点)+ 右侧 pill Tab(Chat=橙实心白字,其余文字态);主体 padding 16–24px,Geist Mono 13–14px;字符串/URL 高亮 `--brand`(亮 #c2410c);底部状态条 hairline 上边:`POST /v1/chat/completions` mono 11px muted + 右侧 `● 200 OK`(success 圆点 8px + mono 11px)。
+- 容器:r14 卡,顶部条 `--muted`:左红黄绿三点(8px 圆点)+ 右侧 pill Tab(Chat=品牌蓝实心白字,其余文字态);主体 padding 16–24px,Geist Mono 13–14px;字符串/URL 高亮 `--brand`(亮 #2e55a5);底部状态条 hairline 上边:`POST /v1/chat/completions` mono 11px muted + 右侧 `● 200 OK`(success 圆点 8px + mono 11px)。
 - 面板落位:在线调试页的请求/响应窗、Agent 集成页的代码示例、API 文档页,全部用此终端卡范式;**不用**现版的 `#09093f` 深蓝代码底(见 §6 取舍)。
 
 ### 4.7 筛选侧栏(/pricing 左栏实测)
@@ -267,7 +267,7 @@
 |---|---|---|---|
 | 亮色底 | `#ffffff` | **`#faf9f5` 暖纸白** | zero.cat 全站实测;"冷机房感"→"文档纸面感",与"网站收录/数据情报"的产品叙事更贴 |
 | 暗色底 | `#000` | **`#141413` 暖炭黑**(卡片 `#1d1c19`) | 纯黑在长时间后台工作中过于生硬;zero.cat 暗 hero/表格实测 |
-| 强调色 | 蓝 `#2e55a5`/`#2997ff` | **橙:亮 `#c2410c`(链接/焦点环)/ 暗 `#ff8a3d`;CTA `#ed5b20`(橙底深字)** | 跟随参照语言;同时反色 CTA(亮黑/暗白)承接了 Vercel 黑白基因中"单色主按钮"的克制——蓝整套退役 |
+| 强调色 | 蓝 `#2e55a5`/`#2997ff` | 蓝:亮 `#2e55a5`(链接/焦点环)/ 暗 `#5b8def`;CTA 同蓝系 | 与参照同为蓝系(2026-11-15 应用户要求由橙改蓝);同时反色 CTA(亮黑/暗白)承接了 Vercel 黑白基因中"单色主按钮"的克制 |
 | 标题字体 | 全无衬线 700 | **页头 h1 / 卡片标题 / 登录字标用衬线(Lora + Noto Serif SC),UI/表格全 Inter** | zero.cat 签名;中文呈宋体,回退链照抄其自带配置;仅标题层,信息区不受影响 |
 | 等宽字体 | Roboto Mono | **Geist Mono**(回退 JetBrains Mono) | 实测栈;数字观感更"票据化" |
 | 圆角 | 4–8px | **8 / 10 / 14 三档**(按钮输入 10、卡片 14、kbd 4) | 实测;4px 过硬,与暖纸气质冲突 |

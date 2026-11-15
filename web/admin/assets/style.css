@@ -34,10 +34,10 @@
   --btn-primary-fg: #faf9f5;
   --btn-primary-hover: #2e2b26;
 
-  /* 品牌橙(唯一强调色) */
-  --brand: #c2410c;            /* 链接 / 焦点环 / 图表主色 / 高亮 */
-  --brand-cta: #ed5b20;        /* 橙底深字 CTA(登录页/hero) */
-  --brand-cta-hover: #f06b37;
+  /* 品牌蓝(唯一强调色) */
+  --brand: #2e55a5;            /* 链接 / 焦点环 / 图表主色 / 高亮 */
+  --brand-cta: #2e55a5;        /* 蓝底白字 CTA(登录页/hero) */
+  --brand-cta-hover: #3b66db;
 
   /* hairline / 输入 */
   --border: #e2e0d8;
@@ -45,7 +45,7 @@
   --input-bg: #faf9f5;
 
   /* 焦点环(brand 30%) */
-  --ring-soft: rgba(194, 65, 12, .3);
+  --ring-soft: rgba(46, 85, 165, .3);
 
   /* 侧栏(shadcn Sidebar 实测变量) */
   --sidebar: #faf9f5;
@@ -81,11 +81,11 @@
   --danger-soft-bg: rgba(204, 61, 61, .08);
 
   /* 图表色板(§3.3,最多同屏 5 系) */
-  --chart-1: #ff8a3d;
+  --chart-1: #5b8def;
   --chart-2: #625fff;
   --chart-3: #00bb7f;
   --chart-4: #00a5ef;
-  --chart-5: #f99c00;
+  --chart-5: #d66bb8;
 
   /* 浮层阴影(唯一一档) */
   --shadow-pop: 0 8px 24px rgba(20, 20, 19, .12);
@@ -116,22 +116,22 @@ html.dark {
   --secondary: #262420;
   --secondary-fg: #f3f1eb;
 
-  /* 主按钮反色:暗=白底黑字;语义主色=橙 */
-  --primary: #ff8a3d;
+  /* 主按钮反色:暗=白底黑字;语义主色=蓝 */
+  --primary: #5b8def;
   --primary-fg: #141413;
   --btn-primary-bg: #f3f1eb;
   --btn-primary-fg: #141413;
   --btn-primary-hover: #ffffff;
 
-  --brand: #ff8a3d;
-  --brand-cta: #ed5b20;
-  --brand-cta-hover: #f06b37;
+  --brand: #5b8def;
+  --brand-cta: #5b8def;
+  --brand-cta-hover: #7aa2ff;
 
   --border: #393730;
   --input: #44413a;
   --input-bg: rgba(243, 241, 235, .04);
 
-  --ring-soft: rgba(255, 138, 61, .3);
+  --ring-soft: rgba(91, 141, 239, .3);
 
   --sidebar: #191816;
   --sidebar-border: #393730;
@@ -162,7 +162,7 @@ html.dark {
   --danger-pill-fg: hsl(358, 100%, 81%);
   --danger-soft-bg: hsl(358, 76%, 10%);
 
-  --chart-1: #eb8561;
+  --chart-1: #7aa2ff;
   --chart-2: #82ad6a;
   --chart-3: #79aad8;
   --chart-4: #fb93b4;
@@ -818,12 +818,12 @@ th.td-num-h { text-align: right; }
   flex: 0 0 26px;
   border-radius: var(--radius-md);
   background: #141413;
-  color: #ff8a3d;
+  color: #5b8def;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-html.dark .brand-logo { background: #f3f1eb; color: #c2410c; }
+html.dark .brand-logo { background: #f3f1eb; color: #2e55a5; }
 .brand-text {
   display: flex;
   flex-direction: column;
@@ -950,7 +950,7 @@ html.dark .brand-logo { background: #f3f1eb; color: #c2410c; }
   letter-spacing: -0.02em;
 }
 .login-stat span { font-size: 12.5px; color: rgba(243, 241, 235, .55); }
-.login-stat .ls-accent { color: #ff8a3d; }
+.login-stat .ls-accent { color: #5b8def; }
 
 .login-panel {
   flex: 1;
@@ -970,13 +970,13 @@ html.dark .brand-logo { background: #f3f1eb; color: #c2410c; }
   height: 40px;
   border-radius: var(--radius-lg);
   background: #141413;
-  color: #ff8a3d;
+  color: #5b8def;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 24px;
 }
-html.dark .login-mark { background: #f3f1eb; color: #c2410c; }
+html.dark .login-mark { background: #f3f1eb; color: #2e55a5; }
 .login-title {
   margin: 0 0 6px;
   font-size: 24px;
