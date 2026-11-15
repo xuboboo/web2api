@@ -66,7 +66,7 @@
       ticking = true;
       requestAnimationFrame(function () {
         ticking = false;
-        var probe = window.scrollY + 96; /* 导航 65px + 余量 */
+        var probe = window.scrollY + 96; /* 导航 64px + 余量 */
         var current = null;
         for (var i = 0; i < items.length; i++) {
           if (items[i].sec.offsetTop <= probe) current = items[i].link;
@@ -80,9 +80,8 @@
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll, { passive: true });
     onScroll();
-    return {
-      closeMenuAndMark: function (link) { setActive(link); }
-    };
+    /* A-20:原此处返回的 closeMenuAndMark 死代码已删除(initNav() 返回值
+       在启动段本就被丢弃,菜单收起由 initMenu() 自行处理) */
   }
 
   /* ---------- 3) 移动端汉堡菜单(200ms 过渡) ---------- */
@@ -300,8 +299,16 @@
       var board = document.getElementById('engineStatusBoard');
       if (!board) return;
       var CN = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
+      /* A-15:全站引擎展示统一排序 百度/搜狗/360 搜索/必应(看板数据为 API 序,前端按此固定序重排) */
+      var ENGINE_ORDER = ['baidu', 'sogou', 'so360', 'bing'];
       var SEGS = 12;
 
+      /* A-10:与 status 页同款 HTML 转义(纵深一致性;数据源为自有 API,无实际注入面) */
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (ch) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+        });
+      }
       function pill(state) {
         if (state === 'cooldown') return '<span class="st-pill st-cool">冷却</span>';
         if (state === 'circuit_open') return '<span class="st-pill st-cb">熔断</span>';
@@ -321,6 +328,11 @@
           board.innerHTML = '<div class="engine-row"><div class="eng-top"><span class="eng-name">—</span><span class="st-pill st-ok">暂无数据</span></div></div>';
           return;
         }
+        engines = engines.slice().sort(function (a, b) {
+          var ia = ENGINE_ORDER.indexOf(a.engine); if (ia === -1) ia = 99;
+          var ib = ENGINE_ORDER.indexOf(b.engine); if (ib === -1) ib = 99;
+          return ia - ib;
+        });
         var html = '';
         engines.forEach(function (eng) {
           var state = eng.state || 'ok';
@@ -340,11 +352,11 @@
             segs += '<span class="' + cls + '"></span>';
           }
           var extra = state === 'cooldown' && eng.until
-            ? '<span class="st-extra cd-remaining" data-until="' + eng.until + '">' + remainingText(eng.until) + '</span>'
+            ? '<span class="st-extra cd-remaining" data-until="' + esc(eng.until) + '">' + esc(remainingText(eng.until)) + '</span>'
             : '';
           html += '<div class="engine-row">'
-            + '<div class="eng-top"><span class="eng-name">' + eng.engine + '</span>'
-            + '<span class="eng-cn">' + (CN[eng.engine] || eng.engine) + '</span>'
+            + '<div class="eng-top"><span class="eng-name">' + esc(eng.engine) + '</span>'
+            + '<span class="eng-cn">' + esc(CN[eng.engine] || eng.engine) + '</span>'
             + pill(state) + extra + '</div>'
             + '<div class="seg-bar" aria-hidden="true">' + segs + '</div>'
             + '</div>';

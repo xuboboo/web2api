@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -718,9 +720,27 @@ func TestStaticAssets(t *testing.T) {
 	if !strings.Contains(body, "openapi: 3.1.0") {
 		t.Fatalf("embedded spec must be the 3.1 document, got prefix %q", firstLine(body))
 	}
-	for _, want := range []string{"/api/engines/{name}/cooldown/force", "/api/playground/check", "/api/auth/password", "/mcp", "/v1/index/check"} {
+	// 审计 A-08:公开规范只含数据面 + Agent 面;/api/* 管理面整体移入
+	// docs/openapi-admin.yaml(内部文档,不 embed 不 serve)。
+	for _, want := range []string{"/mcp", "/v1/index/check", "/v1/quota", "/{engine}/search"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("spec must document %s", want)
+		}
+	}
+	// 高层平面描述允许提及 "/api/*";具体管理端点形状不得出现(路径级断言
+	// 在 TestOpenAPISpecContractInvariants 以 YAML path key 复核)。
+	for _, banned := range []string{"/api/auth", "/api/me", "/api/keys", "/api/stats", "/api/usage", "/api/engines", "/api/playground"} {
+		if strings.Contains(body, banned) {
+			t.Fatalf("public spec must not document admin endpoint %s* (审计 A-08)", banned)
+		}
+	}
+	adminSpec, adminErr := os.ReadFile(filepath.Join("..", "docs", "openapi-admin.yaml"))
+	if adminErr != nil {
+		t.Fatalf("internal admin spec must exist in repo: %v", adminErr)
+	}
+	for _, want := range []string{"/api/engines/{name}/cooldown/force", "/api/playground/check", "/api/auth/password"} {
+		if !strings.Contains(string(adminSpec), want) {
+			t.Fatalf("docs/openapi-admin.yaml must document %s", want)
 		}
 	}
 
@@ -772,7 +792,8 @@ func TestStaticAssets(t *testing.T) {
 
 // TestOpenAPISpecContractInvariants validates the spec structurally: unique
 // operationIds (Coze 硬性要求), a summary/description on every operation, and
-// the contract's 14 /api/* paths.
+// the A-08 invariant that the public spec documents zero /api/* admin paths
+// (the full admin plane lives in docs/openapi-admin.yaml, not embedded).
 func TestOpenAPISpecContractInvariants(t *testing.T) {
 	var spec struct {
 		OpenAPI string `yaml:"openapi"`
@@ -813,8 +834,8 @@ func TestOpenAPISpecContractInvariants(t *testing.T) {
 	if ops == 0 {
 		t.Fatalf("spec paths parsed empty — YAML structure mismatch")
 	}
-	if apiOps != 14 {
-		t.Fatalf("spec must cover the contract's 14 /api/* endpoint registrations, got %d", apiOps)
+	if apiOps != 0 {
+		t.Fatalf("public spec must not document /api/* admin endpoints (审计 A-08), got %d", apiOps)
 	}
 }
 

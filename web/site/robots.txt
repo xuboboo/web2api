@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+# 管理面与 API 面不对爬虫开放
+Disallow: /console/
+Disallow: /api/
+Disallow: /v1/
+Disallow: /mcp
+
+# 上线清单(A-14):Sitemap 与 og:url 同批依赖生产域名——
+# 域名未定,先以 YOUR-DOMAIN 占位;同时要求反向代理把根路径 /robots.txt、
+# /sitemap.xml 转发到本实例(若代理只转发 /web-tool/*,根级文件不可达)。
+Sitemap: https://YOUR-DOMAIN/web-tool/sitemap.xml

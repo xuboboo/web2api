@@ -9,9 +9,11 @@ import (
 )
 
 // The agent-ecosystem assets are static files embedded into the single
-// binary (契约 C: go:embed 静态文件). openapi.yaml covers every /api/*,
-// /v1/*, /{engine}/search and health/stats endpoint; llms.txt is the
-// agent-facing platform brief.
+// binary (契约 C: go:embed 静态文件). openapi.yaml is the PUBLIC contract —
+// data plane (/v1/*, /{engine}/search, health/stats) plus agent plane (/mcp)
+// only; admin-plane /api/* definitions live in the repo-only
+// docs/openapi-admin.yaml and are neither embedded nor served (审计 A-08).
+// llms.txt is the agent-facing platform brief.
 var (
 	//go:embed openapi.yaml
 	openapiSpec []byte
@@ -57,6 +59,13 @@ pre{margin:0;background:#161615;border:.8px solid rgba(255,255,255,.06);border-r
 .foot{margin-top:16px;color:rgba(255,255,255,.35);font-size:12px}
 .foot a{color:#3ECF8E;text-decoration:none}
 @media(max-width:640px){.wrap{padding:24px 14px 40px}pre{padding:16px 12px}}
+/* 细滚动条(与官网 V3 同款):本页不加载 assets/style.css,此处内联同规格 */
+@supports (-moz-appearance: checkbox){html{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}pre{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:999px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.36)}
+::-webkit-scrollbar-corner{background:transparent}
 </style></head><body><div class="wrap">
 <div class="head"><h1>` + html.EscapeString(title) + `</h1><div class="bar"><button class="btn" id="copyBtn" type="button">复制全文</button></div></div>
 <p class="sub">` + html.EscapeString(subtitle) + ` · 程序化导入(Dify/Coze/curl)请直接 GET 本地址,自动返回原始内容。</p>

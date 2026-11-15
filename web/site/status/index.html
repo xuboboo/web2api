@@ -1,13 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>服务器状态 · Web2API 网站收录查询开放平台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='32' cy='29' r='16' fill='%23F5F8F5'/%3E%3Cpath d='M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z' fill='%23E05A5A'/%3E%3Cpath d='M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z' fill='%23E05A5A' opacity='.85'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='27.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Ccircle cx='38' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='36.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Cpath d='M28 36 L32 58 L36 36 Z' fill='%23F0B429'/%3E%3Ccircle cx='18' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3Ccircle cx='46' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="../assets/style.css?v=20261116e">
+<link rel="stylesheet" href="../assets/style.css?v=20261116n">
 <script>
-/* 主题预置:与官网一致,默认暗夜;显式选择过浅色才用浅色 */
+/* 主题预置:默认暗夜色;仅当用户显式选择过浅色(w2a_site_theme=light)才用浅色。
+ * 在 CSS 生效前设置 class,避免主题闪变 */
 (function () {
   try {
     if (localStorage.getItem('w2a_site_theme') !== 'light') {
@@ -17,13 +18,14 @@
 })();
 </script>
 <style>
+/* 状态页内联样式:与官网 assets/style.css V3 token 对齐(引同一份 CSS,自动级联双主题) */
 .status-page { min-height: 100vh; }
 .status-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  max-width: 1056px;
+  max-width: calc(var(--container) + 48px);
   margin: 0 auto;
   padding: 26px 24px;
 }
@@ -33,14 +35,15 @@
 .status-links { display: flex; gap: 6px; align-items: center; }
 .status-links a {
   padding: 7px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font: 500 13.5px/1 var(--font-sans);
   color: var(--muted-foreground);
   text-decoration: none;
+  white-space: nowrap; /* A-02:导航项整条换行,390px 不再逐字竖排 */
   transition: color .15s ease, background-color .15s ease;
 }
 .status-links a:hover { color: var(--foreground); background: var(--accent); }
-.status-main { max-width: 1056px; margin: 0 auto; padding: 12px 24px 64px; }
+.status-main { max-width: calc(var(--container) + 48px); margin: 0 auto; padding: 12px 24px 64px; }
 .banner {
   display: flex;
   align-items: center;
@@ -52,11 +55,11 @@
   margin-bottom: 28px;
 }
 .banner .b-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.banner.b-ok .b-dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(0, 195, 134, .18); }
+.banner.b-ok .b-dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(0, 168, 107, .18); }
 .banner.b-ok .b-title { color: var(--foreground); }
 .banner.b-degraded { border-color: rgba(240, 180, 65, .4); }
-.banner.b-degraded .b-dot { background: #F0B429; box-shadow: 0 0 0 4px rgba(240, 180, 65, .18); }
-.banner.b-degraded .b-title { color: #F0B429; }
+.banner.b-degraded .b-dot { background: var(--warn); box-shadow: 0 0 0 4px rgba(240, 180, 65, .18); }
+.banner.b-degraded .b-title { color: var(--warn); }
 .b-title { font: 600 17px/1.4 var(--font-sans); }
 .b-meta { margin-left: auto; font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); }
 .panel {
@@ -71,32 +74,36 @@
   align-items: center;
   gap: 10px;
   padding: 16px 2px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-faint);
   flex-wrap: wrap;
 }
 .eng-row:last-child { border-bottom: 0; }
 .eng-name { font: 600 13.5px/1 var(--font-mono); color: var(--foreground); }
 .eng-cn { font: 400 12.5px/1 var(--font-sans); color: var(--muted-foreground); }
+/* 状态 pill:与官网看板同构(§6.4 tint 底 + 同色字) */
 .st-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 24px;
-  padding: 0 11px;
-  border-radius: 100px;
-  font: 600 11.5px/1 var(--font-sans);
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font: 500 12px/1 var(--font-sans);
 }
-.st-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.st-ok { background: rgba(0, 195, 134, .12); color: #00C386; }
-.st-cool { background: rgba(240, 180, 65, .12); color: #F0B429; }
-.st-cb { background: rgba(224, 90, 90, .12); color: #E05A5A; }
+.st-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.st-ok { background: rgba(0, 168, 107, .12); color: var(--ok); }
+.st-cool { background: rgba(240, 180, 65, .14); color: var(--warn); }
+.st-cb { background: rgba(214, 69, 69, .12); color: var(--destructive); }
+html.dark .st-ok { background: rgba(62, 207, 142, .14); }
+html.dark .st-cool { background: rgba(240, 180, 65, .17); }
+html.dark .st-cb { background: rgba(229, 100, 92, .15); }
 .st-count { font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); font-variant-numeric: tabular-nums; margin-left: 4px; }
 .st-reason { font: 400 12px/1 var(--font-sans); color: var(--muted-foreground); }
 .seg-bar { display: flex; gap: 6px; flex-basis: 100%; margin-top: 12px; }
 .seg { flex: 1; height: 6px; border-radius: 3px; background: var(--muted); }
-.seg.on-ok { background: #00C386; }
-.seg.on-warn { background: #F0B429; }
-.seg.on-err { background: transparent; border: 1px solid rgba(224, 90, 90, .5); }
+.seg.on-ok { background: var(--ok); }
+.seg.on-warn { background: var(--warn); }
+.seg.on-err { background: transparent; border: 1px solid var(--destructive); }
 .apis-note {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -107,12 +114,12 @@
   color: var(--muted-foreground);
 }
 .apis-note b { color: var(--foreground); font-weight: 600; }
-.apis-note code { font: 500 12px/1 var(--font-mono); background: var(--muted); border-radius: 5px; padding: 2px 6px; }
+.apis-note code { font: 500 12px/1 var(--font-mono); background: var(--muted); border-radius: var(--radius-sm); padding: 2px 6px; }
 .status-foot {
-  max-width: 1056px;
+  max-width: calc(var(--container) + 48px);
   margin: 0 auto;
   padding: 0 24px 48px;
-  font: 400 12px/20px var(--font-sans);
+  font: 400 12.5px/20px var(--font-sans);
   color: var(--muted-foreground);
   display: flex;
   flex-wrap: wrap;
@@ -120,6 +127,12 @@
 }
 .status-foot a { color: var(--brand); text-decoration: none; }
 .status-foot a:hover { text-decoration: underline; }
+/* A-02:窄屏头部允许整组换行堆叠 */
+@media (max-width: 560px) {
+  .status-head { flex-wrap: wrap; }
+  .status-links { gap: 4px; }
+  .status-links a { padding: 6px 10px; font-size: 13px; }
+}
 </style>
 </head>
 <body class="status-page">
@@ -160,6 +173,8 @@
 <script>
 (function () {
   var CN = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
+  /* A-15:引擎展示统一排序 百度/搜狗/360 搜索/必应(看板数据为 API 序,前端按此固定序重排) */
+  var ENGINE_ORDER = ['baidu', 'sogou', 'so360', 'bing'];
   var SEGS = 12;
 
   function pill(state) {
@@ -205,6 +220,11 @@
       panel.innerHTML = '<div class="eng-row"><span class="eng-name">—</span><span class="st-pill st-ok">暂无引擎数据</span></div>';
       return;
     }
+    engines = engines.slice().sort(function (a, b) {
+      var ia = ENGINE_ORDER.indexOf(a.engine); if (ia === -1) ia = 99;
+      var ib = ENGINE_ORDER.indexOf(b.engine); if (ib === -1) ib = 99;
+      return ia - ib;
+    });
     var html = '';
     engines.forEach(function (eng) {
       var state = eng.state || 'ok';

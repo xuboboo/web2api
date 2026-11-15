@@ -225,7 +225,7 @@ func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 		})
 	})
 
-	app.Get("/openapi.yaml", serveAsset(openapiSpec, "application/yaml; charset=utf-8", "OpenAPI 3.1 规范", "Web2API 全端点机器可读契约,Dify / Coze / n8n 可直接导入"))
+	app.Get("/openapi.yaml", serveAsset(openapiSpec, "application/yaml; charset=utf-8", "OpenAPI 3.1 规范", "Web2API 数据面与 Agent 面契约,Dify / Coze / n8n 可直接导入(A-08:管理面 /api/* 不在公开规范中,完整定义见仓库 docs/openapi-admin.yaml)"))
 	app.Get("/llms.txt", serveAsset(llmsText, "text/plain; charset=utf-8", "llms.txt · Agent 平台简介", "面向 AI Agent 的平台说明与端点清单"))
 	return nil
 }

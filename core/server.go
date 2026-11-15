@@ -97,6 +97,11 @@ type ServerOptions struct {
 	// 面可选鉴权开关). It is a validator: return nil to allow, an error to
 	// reject; it must NOT call c.Next().
 	RequestAuth fiber.Handler
+	// ExtraMiddleware runs at the very front of the chain (right after panic
+	// recovery, before every route registration). The serve command uses it
+	// for site-wide security headers (审计 A-19) so even the API routes core
+	// registers at construction time carry them.
+	ExtraMiddleware []fiber.Handler
 }
 
 // DefaultServerOptions returns production-oriented defaults for cache, CORS,
@@ -172,6 +177,14 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	// (invokeEngine); this catches panics in handlers that bypass it (stats,
 	// fingerprint check) so the process survives.
 	app.Use(fiberrecover.New(fiberrecover.Config{EnableStackTrace: true}))
+	// Caller-supplied middleware goes next so it precedes every route
+	// (fiber matches in registration order) — security headers must wrap
+	// responses from the API routes registered below, not only the panels.
+	for _, mw := range opts.ExtraMiddleware {
+		if mw != nil {
+			app.Use(mw)
+		}
+	}
 	app.Use(RequestContextMiddleware())
 	if opts.RequestTimeout > 0 {
 		app.Use(RequestTimeoutMiddleware(opts.RequestTimeout))

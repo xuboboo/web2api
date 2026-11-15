@@ -217,16 +217,6 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		// EnginesStatusWithCooldown / ResetCooldown / ForceCooldown (契约 A).
 		plat.RegisterAdmin(root, serv.IndexCheckHandler, serv)
 		plat.RegisterPublic(root, serv.IndexCheckHandler)
-		// 公开服务器状态(官网「服务器状态」看板数据源):无鉴权,仅非敏感字段
-		// (引擎名 / 状态 / 冷却时间窗 / 连续拦截数),5 秒缓存头防刷。
-		// 注意:platform.enabled=false 时引擎仍在运行,此端点照常提供。
-		app.Get(core.BasePath+"/engines/status", func(c *fiber.Ctx) error {
-			c.Set(fiber.HeaderCacheControl, "public, max-age=5")
-			return c.JSON(fiber.Map{
-				"engines":      serv.EnginesStatusWithCooldown(),
-				"generated_at": time.Now().Format("2006-01-02 15:04:05"),
-			})
-		})
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
 		// 根植于 BasePath。必须在 mountStaticPanels 之前注册,静态通配不覆盖这些路由。
 		mountMCP(app, serv, plat)
@@ -241,6 +231,19 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 			"console_url": consoleURL(),
 		}).Info("收录查询平台已挂载: 官网与 API 统一部署在 " + core.BasePath + " 前缀之下, 官网地址: " + panelURL() + ", 控制台地址: " + consoleURL())
 	}
+
+	// 公开服务器状态(官网「服务器状态」看板数据源):无鉴权,仅非敏感字段
+	// (引擎名 / 状态 / 冷却时间窗 / 连续拦截数),5 秒缓存头防刷。
+	// A-11:注册移出 platform.Enabled 分支——platform.enabled=false 时引擎仍在
+	// 运行,官网看板与状态页照常可用(与原注释承诺一致);本端点只依赖
+	// serv.EnginesStatusWithCooldown,不需要 platform 实例。
+	app.Get(core.BasePath+"/engines/status", func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderCacheControl, "public, max-age=5")
+		return c.JSON(fiber.Map{
+			"engines":      serv.EnginesStatusWithCooldown(),
+			"generated_at": time.Now().Format("2006-01-02 15:04:05"),
+		})
+	})
 
 	mountStaticPanels(app)
 
@@ -373,13 +376,57 @@ func mountStaticPanels(app *fiber.App) {
 	siteDir := findStaticIndexDir(siteDirCandidates)
 	if siteDir == "" {
 		logrus.Warn("官网静态资源缺失(web/site/index.html 未找到)," + core.BasePath + "/ 将返回 404;API 不受影响")
-	} else {
-		app.Static(core.BasePath, siteDir)
-		logrus.WithFields(logrus.Fields{
-			"url": panelURL(),
-			"dir": siteDir,
-		}).Info("官网已挂载: " + panelURL())
+		return
 	}
+	app.Static(core.BasePath, siteDir)
+	logrus.WithFields(logrus.Fields{
+		"url": panelURL(),
+		"dir": siteDir,
+	}).Info("官网已挂载: " + panelURL())
+
+	// (4) A-13 品牌化 404 兜底:注册在静态挂载之后,静态命中优先。
+	// 用 app.All 而非 app.Get:否则 GET 通配会让未注册方法的请求(如平台关闭时
+	// 的 POST /api/auth/login)从 404 变成 405(fiber 按路径命中他法路由)。
+	// HTML 请求(且路径不含 API 前缀)返回官网 404 页;API 路径与其余情形
+	// 返回 fiber.ErrNotFound,由 JSONErrorMiddleware 按现状输出 JSON 404
+	// (API 语义不变、不泄漏内部信息)。
+	notFoundPage := filepath.Join(siteDir, "404.html")
+	if info, err := os.Stat(notFoundPage); err == nil && !info.IsDir() {
+		app.All(core.BasePath+"/*", func(c *fiber.Ctx) error {
+			p := c.Path()
+			for _, prefix := range []string{"/api/", "/v1/", "/mcp", "/engines/"} {
+				if strings.Contains(p, prefix) {
+					return fiber.ErrNotFound
+				}
+			}
+			if c.Accepts("html", "json") == "html" {
+				return c.Status(fiber.StatusNotFound).SendFile(notFoundPage)
+			}
+			return fiber.ErrNotFound
+		})
+	} else {
+		logrus.Warn("官网 404 页缺失(web/site/404.html 未找到)," + core.BasePath + "/* 未命中路径将返回 JSON 404")
+	}
+
+	// (5) A-14 根级 robots.txt / sitemap.xml:BasePath 挂载下 /web-tool/robots.txt
+	// 由上面的 app.Static 自动覆盖;根路径 /robots.txt、/sitemap.xml 需在
+	// BasePath 之外单独注册,读同一份文件。部署依赖(如实声明):反向代理必须
+	// 把根路径转发到本实例——若代理只转发 /web-tool/*,根级文件不可达;sitemap
+	// <loc> 与 og:url 同批依赖生产域名(web/site/sitemap.xml 内为占位符)。
+	registerRootSEOFile(app, "/robots.txt", filepath.Join(siteDir, "robots.txt"))
+	registerRootSEOFile(app, "/sitemap.xml", filepath.Join(siteDir, "sitemap.xml"))
+}
+
+// registerRootSEOFile serves one static SEO file at the fiber app root (outside
+// core.BasePath) from the marketing site directory. Registration is skipped
+// when the file does not exist.
+func registerRootSEOFile(app *fiber.App, route, file string) {
+	if info, err := os.Stat(file); err != nil || info.IsDir() {
+		return
+	}
+	app.Get(route, func(c *fiber.Ctx) error {
+		return c.SendFile(file)
+	})
 }
 
 func buildFingerprintBrowserOptions() core.BrowserOpts {
@@ -398,6 +445,51 @@ func buildFingerprintBrowserOptions() core.BrowserOpts {
 		opts.IsHeadless = false
 	}
 	return opts
+}
+
+// cspInlineScriptHashes lists the sha256 hashes of every inline <script> this
+// binary serves outside the admin console (审计 A-19:哈希法,无需 unsafe-inline).
+// 已核实的内联脚本面(改动任一脚本内容必须同步更新哈希):
+//   1. 官网/状态页/404 页共用的主题预置脚本(web/site/index.html、
+//      web/site/status/index.html、web/site/404.html,三处逐字一致);
+//   2. 状态页引擎看板脚本(web/site/status/index.html);
+//   3. openapi.yaml / llms.txt 浏览器视图的复制脚本(mcp/assets.go assetView)。
+// 控制台(web/admin)的内联脚本面未逐项核验,对其只下发 Report-Only,不阻断。
+const cspInlineScriptHashes = "'sha256-FneMDt+RQl3mtgKESJPgeSkA7sAw8Abzx8e9WL0SZvg=' " +
+	"'sha256-AGFaINW4LivGF38SmZC0cM28VIFAtmBOYt+kzvJ714k=' " +
+	"'sha256-QMScITwwri5Sy12UZQ78xHdQQtmsA+TNYyrbbubwJxg='"
+
+// contentSecurityPolicy is the site-wide CSP value. style-src keeps
+// 'unsafe-inline' because the status/404 pages and the asset viewer ship
+// inline <style> blocks (零构建契约,无外链化改造空间).
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' " + cspInlineScriptHashes + "; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"frame-ancestors 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'"
+
+// securityHeadersHandler sets the site-wide security response headers on every
+// response (审计 A-19). CSP runs in enforcement mode everywhere except the
+// admin console, whose inline-script surface is not yet fully audited — there
+// the identical value goes out as Content-Security-Policy-Report-Only so
+// violations are observable without breaking the panel. httpOnly Cookie
+// 迁移(管理员 JWT 目前在 localStorage)为评估项,本期不动代码,由 CSP 先兜底。
+func securityHeadersHandler() fiber.Handler {
+	consolePrefix := core.BasePath + "/console"
+	return func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderXContentTypeOptions, "nosniff")
+		c.Set(fiber.HeaderReferrerPolicy, "strict-origin-when-cross-origin")
+		c.Set(fiber.HeaderXFrameOptions, "DENY")
+		if strings.HasPrefix(c.Path(), consolePrefix) {
+			c.Set("Content-Security-Policy-Report-Only", contentSecurityPolicy)
+		} else {
+			c.Set("Content-Security-Policy", contentSecurityPolicy)
+		}
+		return c.Next()
+	}
 }
 
 func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fingerprintBrowserOpts core.BrowserOpts) core.ServerOptions {
@@ -420,6 +512,7 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		FingerprintBrowserOpts: fingerprintBrowserOpts,
 		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
 		ResolveConfig:          core.DefaultURLResolveConfig(),
+		ExtraMiddleware:        []fiber.Handler{securityHeadersHandler()},
 		Resilience: core.ResilientConfig{
 			Retry: retryCfg,
 			CircuitBreaker: core.CircuitBreakerConfig{

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 上线清单(A-14):<loc> 依赖生产域名,与 og:url 同批替换 YOUR-DOMAIN;
+     部署侧需确认反向代理把根路径 /sitemap.xml 转发到本实例。 -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://YOUR-DOMAIN/web-tool/</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://YOUR-DOMAIN/web-tool/status/</loc>
+    <changefreq>daily</changefreq>
+  </url>
+</urlset>

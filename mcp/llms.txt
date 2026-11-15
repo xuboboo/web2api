@@ -47,19 +47,12 @@
 ### Agent 平面
 
 - [POST /mcp](/web-tool/mcp) — MCP JSON-RPC 2.0(见上)。
-- [GET /openapi.yaml](/web-tool/openapi.yaml) — OpenAPI 3.1 全端点规范。
+- [GET /openapi.yaml](/web-tool/openapi.yaml) — OpenAPI 3.1 规范(数据面 + Agent 面)。
 - [GET /llms.txt](/web-tool/llms.txt) — 本文件。
 
-### 控制平面(鉴权:Authorization: Bearer <JWT>)
+### 控制平面(仅限管理员)
 
-- [POST /api/auth/login](/web-tool/api/auth/login) — `{"username","password"}` → JWT。防爆破:同 用户名+IP 连续 5 次失败锁定 15 分钟(429 too_many_attempts)。
-- [POST /api/auth/password](/web-tool/api/auth/password) — 修改密码(新密码 ≥ 8 位;成功后全部旧 token 失效)。
-- GET /api/me、GET|POST /api/keys、PATCH|DELETE /api/keys/{id} — 密钥管理。
-- GET /api/stats/overview、GET /api/stats/timeseries?days=14、GET /api/usage — 用量统计与日志。
-- GET /api/engines — 引擎状态看板(含冷却状态机字段)。
-- POST /api/engines/{name}/cooldown/reset — 强制恢复引擎。
-- POST /api/engines/{name}/cooldown/force — 强制冷却引擎 `{"minutes":N}`。
-- [POST /api/playground/check](/web-tool/api/playground/check) — 控制台在线调试收录检测(JWT,不计费,响应结构与 /v1/index/check 一致)。
+- 管理端点(/api/*)仅对控制台登录后的管理员开放,不在公开文档中枚举端点形状;Agent 与集成方只需数据面(/v1、/{engine}/search)与 MCP。
 
 ### 运维
 

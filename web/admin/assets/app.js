@@ -36,7 +36,7 @@
     '#/engines': { title: '引擎状态', desc: '四大搜索引擎的运行、冷却与熔断状态,支持强制恢复与强制冷却。' },
     '#/keys': { title: 'API 密钥', desc: '公网 API 鉴权密钥的创建、配额与启停管理。' },
     '#/usage': { title: '使用日志', desc: '每次收录查询与搜索调用的明细记录,支持按密钥筛选。' },
-    '#/playground': { title: '在线调试', desc: '发起一次真实收录检测,响应结构与 /v1/index/check 完全一致。' },
+    '#/playground': { title: '在线调试', desc: '发起一次真实收录判定,响应结构与 /v1/index/check 完全一致。' },
     '#/agents': { title: 'Agent 集成', desc: 'MCP 端点与 Claude / Dify / Coze / n8n / LangChain 的接入配置。' },
     '#/docs': { title: 'API 文档', desc: '全部 REST 端点、MCP 工具与错误码的完整说明。' },
     '#/settings': { title: '系统设置', desc: '管理员密码修改与平台安全机制说明。' }
@@ -2056,7 +2056,7 @@
     });
 
     var formCard = el('div', { class: 'card pg-form-card' },
-      el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '收录检测' })),
+      el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '收录判定' })),
       el('div', { class: 'card-body' },
         el('div', { class: 'field' },
           el('label', { class: 'field-label', text: 'URL 列表(每行一个,1–20 条)' }),
