@@ -424,8 +424,6 @@ html.dark .icon-btn .icon-moon { display: block; }
 .dark-window .exit-card code { color: rgba(255, 255, 255, .4); }
 .dark-window .exit-card::after { border-color: #3ECF8E; box-shadow: 0 8px 20px rgba(62, 207, 142, .28); }
 .dark-window .diag-hub { background: #3ECF8E; box-shadow: 0 0 24px rgba(23, 126, 91, .5); }
-.dark-window .demo-toggle { color: rgba(255, 255, 255, .5); border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .03); }
-.dark-window .demo-toggle:hover { color: #fff; border-color: rgba(255, 255, 255, .3); }
 .eng-en { font: 500 9.5px/1 var(--font-mono); letter-spacing: .14em; color: rgba(255, 255, 255, .35); font-style: normal; }
 .dot-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); margin-left: auto; box-shadow: 0 0 6px rgba(0, 195, 134, .6); }
 .dot-dim { background: rgba(255, 255, 255, .25); box-shadow: none; }
@@ -606,14 +604,16 @@ html.dark .icon-btn .icon-moon { display: block; }
 .fan-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
 }
 .exit-card {
   position: relative;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
-  padding: 13px 14px;
+  padding: 12px;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
 .exit-card::after {
@@ -639,27 +639,10 @@ html.dark .icon-btn .icon-moon { display: block; }
   font: 500 10.5px/15px var(--font-mono);
   color: var(--muted-foreground);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.diag-tools {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-}
-.demo-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 12px;
-  border-radius: 100px;
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  font: 500 12px/1 var(--font-sans);
-  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
-}
-.demo-toggle:hover { color: var(--foreground); background: var(--accent); border-color: var(--border-strong); }
-.diagram.paused *, .diagram.paused *::before, .diagram.paused *::after { animation-play-state: paused !important; }
 
 /* ---------- 7. 数据源跑马灯 ---------- */
 .marquee-band {
@@ -1297,7 +1280,6 @@ html:not(.no-js) .reveal-hero.is-visible {
     transition: none !important;
   }
   .marquee-track, .diag-hub::after { animation: none !important; }
-  .demo-toggle { display: none; }
 }
 
 /* ---------- 官网「服务器状态」看板:实时同步 ---------- */

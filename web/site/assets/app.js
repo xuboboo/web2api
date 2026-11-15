@@ -283,19 +283,6 @@
     }
   }
 
-  /* ---------- 7) Hero 示意图「暂停演示」(无障碍) ---------- */
-  function initDemo() {
-    var btn = document.getElementById('demoToggle');
-    var diagram = document.getElementById('demoDiagram');
-    if (!btn || !diagram) return;
-    btn.addEventListener('click', function () {
-      var paused = diagram.classList.toggle('paused');
-      btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
-      var label = btn.querySelector('.demo-label');
-      if (label) label.textContent = paused ? '播放演示' : '暂停演示';
-    });
-  }
-
   /* ---------- 启动:no-js 先摘除(动效初始态生效),任何失败都兜底显示全部内容 ---------- */
   try {
     doc.classList.remove('no-js');
@@ -305,7 +292,6 @@
     initReveal();
     initTabs();
     initCopy();
-    initDemo();
     initOrigin();
     initEngineStatus();
 
