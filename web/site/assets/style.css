@@ -382,7 +382,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   color: var(--muted-foreground);
   margin-bottom: 9px;
 }
-.diag-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.diag-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: dot-pulse 2s ease-in-out infinite; }
 .diag-req code {
   display: block;
   font: 500 12px/20px var(--font-mono);
@@ -392,10 +392,23 @@ html.dark .icon-btn .icon-moon { display: block; }
 .diag-req code .muted { color: var(--muted-foreground); }
 
 .diag-stem {
+  position: relative;
   width: 1.5px;
   height: 30px;
   background: var(--border-strong);
   margin: 0 auto;
+}
+.diag-stem::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  animation: packet-y 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
 }
 
 .diag-hub {
@@ -415,20 +428,60 @@ html.dark .icon-btn .icon-moon { display: block; }
   inset: -7px;
   border-radius: 50%;
   border: 1.5px solid var(--brand);
-  opacity: 0.5;
-  animation: hub-pulse 2.4s ease-in-out infinite;
+  opacity: 0.75;
+  animation: hub-pulse 1.6s ease-out infinite;
   pointer-events: none;
 }
 @keyframes hub-pulse {
-  0%, 100% { transform: scale(0.88); opacity: 0.55; }
-  50% { transform: scale(1.1); opacity: 0.08; }
+  0% { transform: scale(0.9); opacity: 0.8; }
+  75% { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+@keyframes dot-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(0, 195, 134, .5); }
+  50% { transform: scale(1.5); box-shadow: 0 0 0 4px rgba(0, 195, 134, 0); }
+}
+@keyframes packet-y {
+  0% { transform: translateY(-4px); opacity: 0; }
+  12% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { transform: translateY(30px); opacity: 0; }
+}
+@keyframes rail-packet {
+  0%, 24% { left: 0; opacity: 0; }
+  26% { opacity: 1; }
+  50% { left: calc(100% - 7px); opacity: 1; }
+  52%, 100% { left: calc(100% - 7px); opacity: 0; }
+}
+@keyframes stub-drop {
+  0%, 2% { top: -3px; opacity: 0; }
+  4% { opacity: 1; }
+  12% { top: 24px; opacity: 0; }
+  100% { top: 24px; opacity: 0; }
+}
+@keyframes card-lit {
+  0%, 7% { opacity: 1; }
+  16%, 100% { opacity: 0; }
 }
 
 .diag-stem2 {
+  position: relative;
   width: 1.5px;
   height: 18px;
   background: var(--border-strong);
   margin: 0 auto;
+}
+.diag-stem2::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  animation: packet-y 1.6s cubic-bezier(.45, 0, .55, 1) .5s infinite;
 }
 
 /* 虚线扇形分发:rail 横线 + 各列中心竖 stub */
@@ -440,6 +493,19 @@ html.dark .icon-btn .icon-moon { display: block; }
   right: 12.5%;
   border-top: 1.5px dashed var(--border-strong);
 }
+.fan-wires .rail::after {
+  content: "";
+  position: absolute;
+  top: -3.5px;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  opacity: 0;
+  animation: rail-packet 6.4s linear infinite;
+}
 .fan-wires .stub {
   position: absolute;
   top: 0;
@@ -447,6 +513,23 @@ html.dark .icon-btn .icon-moon { display: block; }
   border-left: 1.5px dashed var(--border-strong);
   transform: translateX(-1px);
 }
+.fan-wires .stub::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, .18);
+  opacity: 0;
+  animation: stub-drop 6.4s linear infinite;
+}
+.fan-wires .s1::after { animation-delay: 1.6s; }
+.fan-wires .s2::after { animation-delay: 2.13s; }
+.fan-wires .s3::after { animation-delay: 2.67s; }
+.fan-wires .s4::after { animation-delay: 3.2s; }
 .fan-wires .s1 { left: 12.5%; }
 .fan-wires .s2 { left: 37.5%; }
 .fan-wires .s3 { left: 62.5%; }
@@ -458,12 +541,28 @@ html.dark .icon-btn .icon-moon { display: block; }
   gap: 12px;
 }
 .exit-card {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
   padding: 13px 14px;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
+.exit-card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1.5px solid var(--brand);
+  box-shadow: 0 8px 20px rgba(91, 141, 239, .22);
+  opacity: 0;
+  pointer-events: none;
+  animation: card-lit 6.4s ease infinite;
+}
+.fan-grid .exit-card:nth-child(1)::after { animation-delay: 2.2s; }
+.fan-grid .exit-card:nth-child(2)::after { animation-delay: 2.8s; }
+.fan-grid .exit-card:nth-child(3)::after { animation-delay: 3.4s; }
+.fan-grid .exit-card:nth-child(4)::after { animation-delay: 4s; }
 .exit-card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
 .exit-card h3 { font: 600 13px/18px var(--font-sans); color: var(--foreground); }
 .exit-card code {
@@ -492,7 +591,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 .demo-toggle:hover { color: var(--foreground); background: var(--accent); border-color: var(--border-strong); }
-.diagram.paused .diag-hub::after { animation-play-state: paused; }
+.diagram.paused *, .diagram.paused *::before, .diagram.paused *::after { animation-play-state: paused !important; }
 
 /* ---------- 7. 数据源跑马灯 ---------- */
 .marquee-band {
