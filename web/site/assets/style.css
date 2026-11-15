@@ -1163,21 +1163,6 @@ html.dark .icon-btn .icon-moon { display: block; }
   color: var(--muted-foreground);
 }
 
-.watermark-wrap { overflow: hidden; }
-.watermark {
-  font-family: var(--font-serif);
-  font-weight: 600;
-  font-size: clamp(72px, 10vw, 160px);
-  line-height: 0.92;
-  letter-spacing: -0.03em;
-  color: var(--brand);
-  opacity: 0.08;
-  white-space: nowrap;
-  margin: 20px 0 -0.14em -0.04em; /* 底部截断出血 */
-  user-select: none;
-  pointer-events: none;
-}
-
 /* ---------- 16. 动效基建(STYLE.md §4.2) ---------- */
 /* 初始态只在没有 no-js 时生效:JS 失败 / 禁用 JS 时内容始终可见 */
 html:not(.no-js) .reveal,
