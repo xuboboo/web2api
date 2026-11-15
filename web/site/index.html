@@ -20,7 +20,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="assets/style.css?v=20261116c">
+<link rel="stylesheet" href="assets/style.css?v=20261116e">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
 <body>
@@ -61,7 +61,7 @@
 <main id="main">
 
   <!-- ======================== Hero ======================== -->
-  <section class="hero" id="top">
+  <section class="hero hero-dark" id="top">
     <div class="container">
       <div class="hero-head">
         <span class="hero-eyebrow reveal-hero">网站收录查询开放平台</span>
@@ -77,7 +77,27 @@
             <a class="btn btn-secondary" href="#quickstart">查看快速开始</a>
           </div>
         </div>
-        <div class="diagram reveal-hero" style="--reveal-delay:480ms" id="demoDiagram">
+        <div class="diagram dark-window reveal-hero" style="--reveal-delay:480ms" id="demoDiagram">
+        <svg class="mtn" viewBox="0 0 800 460" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+          <defs>
+            <linearGradient id="mtn-far" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#1C2946"/><stop offset="1" stop-color="#111A2E"/>
+            </linearGradient>
+            <linearGradient id="mtn-mid" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#16203A"/><stop offset="1" stop-color="#0C1322"/>
+            </linearGradient>
+            <linearGradient id="mtn-near" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#0F1728"/><stop offset="1" stop-color="#090E1A"/>
+            </linearGradient>
+            <linearGradient id="mtn-fog" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="rgba(11,16,27,0)"/><stop offset="1" stop-color="#0B0F18"/>
+            </linearGradient>
+          </defs>
+          <path fill="url(#mtn-far)" d="M0 330 L70 210 L140 290 L230 150 L310 270 L400 180 L490 290 L580 170 L660 280 L740 200 L800 260 L800 460 L0 460 Z" opacity=".55"/>
+          <path fill="url(#mtn-mid)" d="M0 380 L110 250 L210 360 L330 180 L460 340 L570 230 L690 360 L800 260 L800 460 L0 460 Z"/>
+          <path fill="url(#mtn-near)" d="M0 460 L90 380 L200 450 L330 340 L470 450 L610 360 L760 450 L800 420 L800 460 L0 460 Z"/>
+          <rect y="360" width="800" height="100" fill="url(#mtn-fog)"/>
+        </svg>
         <div class="diag-req">
           <div class="diag-tag"><span class="diag-dot"></span>请求</div>
           <code>GET /web-tool/v1/index/check<br><span class="muted">?url=…&amp;engines=baidu,bing</span></code>
@@ -95,21 +115,21 @@
           <span class="stub s4"></span>
         </div>
         <div class="fan-grid">
-          <div class="exit-card" title="POST /web-tool/v1/index/check">
-            <h3>收录判定</h3>
+          <div class="exit-card" title="百度 — 批量收录判定">
+            <h3>百度 <span class="eng-en">BAIDU</span><span class="dot-ok"></span></h3>
             <code>/v1/index/check</code>
           </div>
-          <div class="exit-card" title="GET /web-tool/{engine}/search">
-            <h3>四引擎搜索</h3>
+          <div class="exit-card" title="搜狗 — 四引擎搜索">
+            <h3>搜狗 <span class="eng-en">SOGOU</span><span class="dot-ok dot-dim"></span></h3>
             <code>/{engine}/search</code>
           </div>
-          <div class="exit-card" title="GET /web-tool/v1/quota">
-            <h3>用量配额</h3>
-            <code>/v1/quota</code>
+          <div class="exit-card" title="360 搜索 — 四引擎搜索">
+            <h3>360 搜索 <span class="eng-en">SO360</span><span class="dot-ok dot-dim"></span></h3>
+            <code>/{engine}/search</code>
           </div>
-          <div class="exit-card" title="POST /web-tool/mcp">
-            <h3>MCP 接入</h3>
-            <code>/mcp</code>
+          <div class="exit-card" title="必应 — 批量收录判定">
+            <h3>必应 <span class="eng-en">BING</span><span class="dot-ok"></span></h3>
+            <code>/v1/index/check</code>
           </div>
         </div>
         <div class="diag-tools">
@@ -657,6 +677,6 @@ curl http://127.0.0.1:7000/web-tool/health</pre>
   </div>
 </footer>
 
-<script src="assets/app.js?v=20261116c" defer></script>
+<script src="assets/app.js?v=20261116e" defer></script>
 </body>
 </html>

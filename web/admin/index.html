@@ -19,13 +19,33 @@
     })();
   </script>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141413'/%3E%3Cpath d='M18.2 3.5 8.6 17h5.2l-1.4 11.5L22 15h-5.2l1.4-11.5z' fill='%234d6bfe'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="assets/style.css?v=20261116c">
+  <link rel="stylesheet" href="assets/style.css?v=20261116d">
 </head>
 <body>
 
   <!-- ========== 登录视图:左 45% 品牌区(两主题恒暗)+ 右表单区 ========== -->
   <div id="view-login" class="login hidden">
     <div class="login-brand">
+      <svg class="login-mountain" viewBox="0 0 800 600" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+        <defs>
+          <linearGradient id="lm-far" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1C2946"/><stop offset="1" stop-color="#111A2E"/>
+          </linearGradient>
+          <linearGradient id="lm-mid" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#16203A"/><stop offset="1" stop-color="#0C1322"/>
+          </linearGradient>
+          <linearGradient id="lm-near" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#0F1728"/><stop offset="1" stop-color="#090E1A"/>
+          </linearGradient>
+          <linearGradient id="lm-fog" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="rgba(11,16,27,0)"/><stop offset="1" stop-color="#0B0F18"/>
+          </linearGradient>
+        </defs>
+        <path fill="url(#lm-far)" d="M0 380 L80 240 L150 330 L240 180 L320 320 L410 220 L500 340 L590 210 L680 320 L760 250 L800 300 L800 600 L0 600 Z" opacity=".6"/>
+        <path fill="url(#lm-mid)" d="M0 440 L100 290 L200 400 L320 210 L450 380 L560 260 L690 400 L800 300 L800 600 L0 600 Z"/>
+        <path fill="url(#lm-near)" d="M0 600 L110 470 L230 550 L360 410 L500 530 L640 440 L800 540 L800 600 L0 600 Z"/>
+        <rect y="480" width="800" height="120" fill="url(#lm-fog)"/>
+      </svg>
       <h1 class="login-wordmark">Web2API</h1>
       <p class="login-brand-sub">网站收录查询开放平台 · 管理控制台</p>
       <div class="login-brand-rule" aria-hidden="true"></div>
@@ -150,6 +170,6 @@
   <div id="toast-box" class="toast-box" aria-live="polite"></div>
   <div id="modal-root"></div>
 
-  <script src="assets/app.js?v=20261116c"></script>
+  <script src="assets/app.js?v=20261116d"></script>
 </body>
 </html>

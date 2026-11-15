@@ -910,16 +910,24 @@ html.dark .brand-logo { background: #f3f1eb; color: #2e55a5; }
   align-items: stretch;
 }
 .login-brand {
+  position: relative;
   flex: 0 0 45%;
-  background: #141413;
-  background-image: radial-gradient(rgba(243, 241, 235, .06) 1px, transparent 1px);
-  background-size: 16px 16px;
+  background: linear-gradient(180deg, #0B101B 0%, #10141F 100%);
   color: #f3f1eb;
   display: flex;
   flex-direction: column;
   justify-content: center;
   padding: 64px 56px;
+  overflow: hidden;
 }
+.login-mountain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.login-brand > :not(.login-mountain) { position: relative; z-index: 1; }
 .login-wordmark {
   margin: 0;
   font-size: 48px;

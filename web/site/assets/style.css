@@ -45,6 +45,7 @@
 
   /* 字体栈:照抄 STYLE.md §1.2,不加载任何字体文件 */
   --font-serif: "Inter Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; /* 2026-11-15 标题 Sans 化(deepseek 基准),变量名保留避免全文件改动 */
+  --font-display: "Lora Variable", "Source Serif 4", "Noto Serif SC", "Songti SC", serif; /* Hero 大标题/登录字标(参考 Harness/ZeroCat 衬线) */
   --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -322,13 +323,13 @@ html.dark .icon-btn .icon-moon { display: block; }
 
 /* ---------- 6. Hero ---------- */
 .hero { padding: 40px 0 72px; }
-.hero-head { max-width: 100%; text-align: center; }
+.hero-head { max-width: 100%; }
 .hero-grid {
   margin-top: 36px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 36px;
-  justify-items: center;
+  grid-template-columns: minmax(0, 10fr) minmax(0, 11fr);
+  gap: 48px;
+  align-items: center;
 }
 
 .hero-eyebrow {
@@ -358,22 +359,74 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 
 .hero-lead {
-  margin: 24px auto 0;
+  margin-top: 24px;
   max-width: 560px;
   font-size: 17px;
   line-height: 28px;
   color: var(--muted-foreground);
 }
 
-.hero-ctas { margin-top: 32px; display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
+.hero-ctas { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 16px; }
 
-/* --- Hero 下方:查询分发示意图(居中) --- */
-.diagram { min-width: 0; width: 100%; max-width: 660px; margin: 0 auto; }
-
-/* 白色半透明卡片:deepseek 柔影语言 */
-.diag-req, .exit-card {
-  box-shadow: 0 1px 2px rgba(22, 34, 59, .05), 0 12px 32px rgba(77, 107, 254, .08);
+/* --- Hero 右侧:暗窗示意图(Harness 语言:山 + 分发) --- */
+.hero-dark {
+  background:
+    radial-gradient(1000px 480px at 76% 34%, rgba(77, 107, 254, .16), transparent 62%),
+    linear-gradient(180deg, #0B101B 0%, #0B101B 86%, rgba(11, 16, 27, 0) 100%);
+  color: #fff;
+  padding: 56px 0 96px;
 }
+.hero-dark .hero-eyebrow { color: rgba(255, 255, 255, .55); }
+.hero-dark .hero-title { color: #fff; font-family: var(--font-display); letter-spacing: .02em; }
+.hero-dark .hero-lead { color: rgba(255, 255, 255, .55); }
+.hero-dark .btn-secondary {
+  background: rgba(255, 255, 255, .04);
+  color: rgba(255, 255, 255, .85);
+  border-color: rgba(255, 255, 255, .18);
+}
+.hero-dark .btn-secondary:hover { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .3); color: #fff; }
+
+.diagram { min-width: 0; width: 100%; }
+.dark-window {
+  position: relative;
+  background: linear-gradient(180deg, #10141F 0%, #0B0F18 100%);
+  border: .8px solid rgba(255, 255, 255, .08);
+  border-radius: var(--radius-lg);
+  padding: 26px 26px 18px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(11, 16, 27, .45);
+}
+.dark-window .mtn {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  width: 100%; height: 62%;
+  opacity: .9;
+  pointer-events: none;
+}
+.dark-window > *:not(.mtn) { position: relative; z-index: 1; }
+.dark-window .diag-req { background: rgba(255, 255, 255, .03); border-color: rgba(255, 255, 255, .09); max-width: none; }
+.dark-window .diag-req code { color: rgba(255, 255, 255, .85); }
+.dark-window .diag-req code .muted { color: rgba(255, 255, 255, .4); }
+.dark-window .diag-tag { color: rgba(255, 255, 255, .5); }
+.dark-window .diag-stem, .dark-window .diag-stem2 { background: rgba(255, 255, 255, .16); }
+.dark-window .diag-stem::after, .dark-window .diag-stem2::after { background: #5B8DEF; }
+.dark-window .fan-wires .rail { border-top-color: rgba(255, 255, 255, .16); }
+.dark-window .fan-wires .stub { border-left-color: rgba(255, 255, 255, .16); }
+.dark-window .fan-wires .rail::after, .dark-window .fan-wires .stub::after { background: #5B8DEF; }
+.dark-window .exit-card { background: rgba(255, 255, 255, .03); border-color: rgba(255, 255, 255, .1); }
+.dark-window .exit-card:hover { border-color: rgba(255, 255, 255, .24); }
+.dark-window .exit-card h3 { color: #fff; display: flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
+.dark-window .exit-card code { color: rgba(255, 255, 255, .4); }
+.dark-window .exit-card::after { border-color: #5B8DEF; box-shadow: 0 8px 20px rgba(91, 141, 239, .28); }
+.dark-window .diag-hub { background: #4D6BFE; box-shadow: 0 0 24px rgba(77, 107, 254, .5); }
+.dark-window .demo-toggle { color: rgba(255, 255, 255, .5); border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .03); }
+.dark-window .demo-toggle:hover { color: #fff; border-color: rgba(255, 255, 255, .3); }
+.eng-en { font: 500 9.5px/1 var(--font-mono); letter-spacing: .14em; color: rgba(255, 255, 255, .35); font-style: normal; }
+.dot-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); margin-left: auto; box-shadow: 0 0 6px rgba(0, 195, 134, .6); }
+.dot-dim { background: rgba(255, 255, 255, .25); box-shadow: none; }
+
+/* 白色卡片柔影仅用于亮色区段内的卡片 */
+.section .diag-req, .section .exit-card { box-shadow: 0 1px 2px rgba(22, 34, 59, .05), 0 12px 32px rgba(77, 107, 254, .08); }
 
 .diag-req {
   border: 1px solid var(--border);
