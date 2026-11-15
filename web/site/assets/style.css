@@ -1298,3 +1298,30 @@ html:not(.no-js) .reveal-hero.is-visible {
   .marquee-track, .diag-hub::after { animation: none !important; }
   .demo-toggle { display: none; }
 }
+
+/* ---------- 官网「服务器状态」看板:实时同步 ---------- */
+.engine-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(0, 195, 134, .18);
+  animation: live-blink 2s ease-in-out infinite;
+}
+@keyframes live-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+.live-label { font: 500 11.5px/1 var(--font-sans); letter-spacing: .04em; color: var(--muted-foreground); }
+.st-extra {
+  margin-left: auto;
+  font: 500 12px/1 var(--font-mono);
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}

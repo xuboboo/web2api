@@ -307,6 +307,87 @@
     initCopy();
     initDemo();
     initOrigin();
+    initEngineStatus();
+
+    /* ---------- 9) 官网「服务器状态」看板:真实接口同步(10s 轮询) ---------- */
+    function initEngineStatus() {
+      var board = document.getElementById('engineStatusBoard');
+      if (!board) return;
+      var CN = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
+      var SEGS = 12;
+
+      function pill(state) {
+        if (state === 'cooldown') return '<span class="st-pill st-cool">冷却</span>';
+        if (state === 'circuit_open') return '<span class="st-pill st-cb">熔断</span>';
+        return '<span class="st-pill st-ok">正常</span>';
+      }
+      function remainingText(untilStr) {
+        if (!untilStr) return '';
+        var ms = new Date(untilStr).getTime() - Date.now();
+        if (ms <= 0) return '等待恢复探测';
+        var m = Math.floor(ms / 60000);
+        var s = Math.floor((ms % 60000) / 1000);
+        return '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+      }
+      function render(data) {
+        var engines = (data && data.engines) || [];
+        if (!engines.length) {
+          board.innerHTML = '<div class="engine-row"><div class="eng-top"><span class="eng-name">—</span><span class="st-pill st-ok">暂无数据</span></div></div>';
+          return;
+        }
+        var html = '';
+        engines.forEach(function (eng) {
+          var state = eng.state || 'ok';
+          var now = Date.now();
+          var remMin = Infinity;
+          if (state === 'cooldown' && eng.until) {
+            remMin = Math.max(0, (new Date(eng.until).getTime() - now) / 60000);
+          }
+          var filled = 0;
+          if (state === 'ok') filled = SEGS;
+          else if (state === 'cooldown' && isFinite(remMin)) filled = Math.max(1, Math.round(SEGS * Math.min(1, remMin / 120)));
+          var segs = '';
+          for (var i = 0; i < SEGS; i++) {
+            var cls = 'seg';
+            if (state === 'circuit_open') cls += ' on-err';
+            else if (i < filled) cls += state === 'cooldown' ? ' on-warn' : ' on-ok';
+            segs += '<span class="' + cls + '"></span>';
+          }
+          var extra = state === 'cooldown' && eng.until
+            ? '<span class="st-extra cd-remaining" data-until="' + eng.until + '">' + remainingText(eng.until) + '</span>'
+            : '';
+          html += '<div class="engine-row">'
+            + '<div class="eng-top"><span class="eng-name">' + eng.engine + '</span>'
+            + '<span class="eng-cn">' + (CN[eng.engine] || eng.engine) + '</span>'
+            + pill(state) + extra + '</div>'
+            + '<div class="seg-bar" aria-hidden="true">' + segs + '</div>'
+            + '</div>';
+        });
+        board.innerHTML = html;
+      }
+      function tick() {
+        Array.prototype.forEach.call(board.querySelectorAll('.cd-remaining[data-until]'), function (el) {
+          var u = el.getAttribute('data-until');
+          if (!u) return;
+          var ms = new Date(u).getTime() - Date.now();
+          if (ms <= 0) { el.textContent = '等待恢复探测'; return; }
+          var m = Math.floor(ms / 60000);
+          var s = Math.floor((ms % 60000) / 1000);
+          el.textContent = '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+        });
+      }
+      function load() {
+        fetch('/web-tool/engines/status')
+          .then(function (r) { return r.json(); })
+          .then(function (data) { render(data); tick(); })
+          .catch(function () {
+            board.innerHTML = '<div class="engine-row"><div class="eng-top"><span class="eng-name">—</span><span class="st-pill st-cb">状态获取失败</span></div></div>';
+          });
+      }
+      load();
+      setInterval(load, 10000);
+      setInterval(tick, 1000);
+    }
 
     function initOrigin() {
       /* 自适应部署地址:示例代码里的 127.0.0.1:7000 重写为当前访问源,

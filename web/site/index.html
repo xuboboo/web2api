@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Web2API 网站收录查询开放平台</title>
-<meta name="description" content="Web2API 网站收录查询开放平台:一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;附四引擎原始搜索、MCP 与 OpenAPI 双入口 Agent 接入、引擎风控冷却自愈;单二进制 + bbolt 自托管,MIT 开源。">
+<meta name="description" content="Web2API 网站收录查询开放平台:一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;附四引擎原始搜索、MCP 与 OpenAPI 双入口 Agent 接入、风控冷却自愈;单二进制 + bbolt 自托管,MIT 开源。">
 <meta property="og:title" content="Web2API 网站收录查询开放平台">
 <meta property="og:description" content="一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;自托管、Agent 双入口(MCP + OpenAPI)。">
 <meta property="og:type" content="website">
@@ -20,7 +20,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="assets/style.css?v=20261116g">
+<link rel="stylesheet" href="assets/style.css?v=20261116h">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
 <body>
@@ -235,7 +235,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/><path d="M9 12a3 3 0 0 1 5.4-1.8M15 12a3 3 0 0 1-5.4 1.8"/><path d="M14.6 9v1.6H13M9.4 15v-1.6H11"/></svg>
           </div>
           <div class="f-body">
-            <h3>引擎风控,冷却自愈</h3>
+            <h3>风控自愈,稳定兜底</h3>
             <p>连续拦截按 10 / 30 / 120 分钟三档自动冷却,240 分钟无拦截计数归零;冷却期零真实请求,到期探测恢复。</p>
           </div>
         </div>
@@ -527,7 +527,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   <section class="section" id="cooldown">
     <div class="container">
       <div class="sec-head center reveal">
-        <span class="eyebrow">引擎风控</span>
+        <span class="eyebrow">服务器状态</span>
         <h2>冷却不是故障,是自愈</h2>
       </div>
       <div class="cooldown-grid">
@@ -542,44 +542,15 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
           </div>
         </div>
         <div class="engine-panel reveal" style="--reveal-delay:240ms">
-          <div class="engine-row">
-            <div class="eng-top">
-              <span class="eng-name">baidu</span><span class="eng-cn">百度</span>
-              <span class="st-pill st-ok">正常</span>
-            </div>
-            <div class="seg-bar" aria-hidden="true">
-              <span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span>
+          <div class="engine-panel-head">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span class="live-label">实时同步 · 每 10 秒刷新</span>
+          </div>
+          <div id="engineStatusBoard" aria-live="polite">
+            <div class="engine-row">
+              <div class="eng-top"><span class="eng-name">…</span><span class="st-pill st-ok">加载中</span></div>
             </div>
           </div>
-          <div class="engine-row">
-            <div class="eng-top">
-              <span class="eng-name">sogou</span><span class="eng-cn">搜狗</span>
-              <span class="st-pill st-cool">冷却</span>
-              <span class="st-count">剩余 09:42</span>
-            </div>
-            <div class="seg-bar" aria-hidden="true">
-              <span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
-            </div>
-          </div>
-          <div class="engine-row">
-            <div class="eng-top">
-              <span class="eng-name">so360</span><span class="eng-cn">360 搜索</span>
-              <span class="st-pill st-ok">正常</span>
-            </div>
-            <div class="seg-bar" aria-hidden="true">
-              <span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span>
-            </div>
-          </div>
-          <div class="engine-row">
-            <div class="eng-top">
-              <span class="eng-name">bing</span><span class="eng-cn">必应</span>
-              <span class="st-pill st-cb">熔断</span>
-            </div>
-            <div class="seg-bar" aria-hidden="true">
-              <span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span>
-            </div>
-          </div>
-          <p class="viz-note">示意状态,用于说明「正常 / 冷却 / 熔断」三种语义;实时倒计时与运维操作见控制台「引擎状态」页(10 秒自动刷新)。</p>
         </div>
       </div>
     </div>
@@ -697,6 +668,6 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   </div>
 </footer>
 
-<script src="assets/app.js?v=20261116g" defer></script>
+<script src="assets/app.js?v=20261116h" defer></script>
 </body>
 </html>

@@ -217,6 +217,16 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		// EnginesStatusWithCooldown / ResetCooldown / ForceCooldown (契约 A).
 		plat.RegisterAdmin(root, serv.IndexCheckHandler, serv)
 		plat.RegisterPublic(root, serv.IndexCheckHandler)
+		// 公开服务器状态(官网「服务器状态」看板数据源):无鉴权,仅非敏感字段
+		// (引擎名 / 状态 / 冷却时间窗 / 连续拦截数),5 秒缓存头防刷。
+		// 注意:platform.enabled=false 时引擎仍在运行,此端点照常提供。
+		app.Get(core.BasePath+"/engines/status", func(c *fiber.Ctx) error {
+			c.Set(fiber.HeaderCacheControl, "public, max-age=5")
+			return c.JSON(fiber.Map{
+				"engines":      serv.EnginesStatusWithCooldown(),
+				"generated_at": time.Now().UTC().Format(time.RFC3339),
+			})
+		})
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
 		// 根植于 BasePath。必须在 mountStaticPanels 之前注册,静态通配不覆盖这些路由。
 		mountMCP(app, serv, plat)
