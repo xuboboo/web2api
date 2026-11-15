@@ -340,20 +340,17 @@ html.dark .icon-btn .icon-moon { display: block; }
   align-items: center;
 }
 
-.hero-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font: 600 12px/16px var(--font-sans);
-  letter-spacing: 0.06em;
-  color: var(--muted-foreground);
+/* 导航副标:暗段上浅白,滚入浅色区转灰绿(随 .site-nav 配色切换) */
+.brand-sub {
+  font: 500 12px/1 var(--font-sans);
+  color: rgba(255, 255, 255, .6);
+  border-left: 1px solid rgba(255, 255, 255, .25);
+  padding-left: 10px;
+  margin-left: 2px;
 }
-.hero-eyebrow::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--brand);
+.site-nav.scrolled .brand-sub {
+  color: var(--muted-foreground);
+  border-left-color: var(--border);
 }
 
 .hero-title {
@@ -385,7 +382,6 @@ html.dark .icon-btn .icon-moon { display: block; }
   color: #fff;
   padding: 56px 0 96px;
 }
-.hero-dark .hero-eyebrow { color: rgba(255, 255, 255, .55); }
 .hero-dark .hero-title { color: #fff; font-family: var(--font-display); letter-spacing: .02em; }
 .hero-dark .hero-lead { color: rgba(255, 255, 255, .55); }
 .hero-dark .btn-secondary {
@@ -1256,6 +1252,7 @@ html:not(.no-js) .reveal-hero.is-visible {
 }
 
 @media (max-width: 760px) {
+  .brand-sub { display: none; }
   .section { padding: 72px 0; }
   .section-tight { padding: 56px 0; }
   .stats { grid-template-columns: repeat(2, 1fr); }
