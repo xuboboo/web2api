@@ -1023,12 +1023,6 @@ html:not(.dark) .login-hint {
   border-color: rgba(180, 83, 9, .4);
   color: #9a5408;
 }
-.login-foot {
-  margin: 20px 0 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted-fg);
-}
 
 /* ==================== 10. 图表 ==================== */
 
