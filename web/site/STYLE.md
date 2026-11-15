@@ -17,39 +17,43 @@
 | 区块留白 | 上下各 **160px**(实测 `pt-ds-11`) | 约 96–120px(视觉读数) |
 | 动效 | 入场 opacity+translateY 渐显(JS 驱动),`prefers-reduced-motion` 降级 | `landing-fade-up` 关键帧 + **logo 无缝跑马灯 40s** |
 
-**Web2API 官网采用:zero.cat 的「暖纸衬线」为主线(导航/Hero/正文),内嵌 DeepSeek 的「暗色产品窗口」语言展示 API/终端/代码;强调色不取 zero.cat 的橙,改用品牌蓝(亮 `#2E55A5` / 暗 `#5B8DEF`,2026-11-15 应用户要求)。
-即:纸面上放一台机器 —— 亮色页面承载叙事,深色窗口承载「产品感」。两站均默认亮色主题,同时各自提供完整暗色主题(见 §2)。**
+**Web2API 官网采用:deepseek.com 主站设计语言(2026-11-15 领导拍板,由暖纸衬线体系整体切换)——冰蓝雾面渐变底、居中构图、无衬线宽字距大标题、白色半透明卡片 + 柔影、品牌蓝 `#4D6BFE` 点缀;保留 DeepSeek Harness 的「暗色产品窗口」语言展示 API/终端/代码。
+两套主题各自完整(见 §2);导航顶部透明融入雾面,滚动后转白色玻璃条。**
 
 ---
 
 ## 1. 设计 Token 表
 
-### 1.1 颜色(实测自 zero.cat CSS 变量)
+### 1.1 颜色(deepseek.com 风格体系)
 
 亮色主题(默认,`:root`):
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--background` | `#FAF9F5` | 页面底色(暖纸白) |
-| `--foreground` | `#141413` | 主文字/标题墨色 |
-| `--muted-foreground` | `#5E5D59` | 次级文字/正文灰 |
-| `--muted` | `#EFEEE8` | 弱底色(标签、代码块底) |
-| `--accent` | `#EAE8E0` | hover 底、icon 头部区 |
-| `--border` | `#E2E0D8` | 全部 1px 描边 |
-| `--card` | `#FAF9F5` | 卡片底(卡片靠 border 区分,不靠底色) |
-| `--primary` | `#141413` | 主按钮深色态 |
+| `--background` | `#F7FAFD` | 页面基底(冰蓝雾面) |
+| `--foreground` | `#16223B` | 主文字/标题(深蓝黑) |
+| `--muted-foreground` | `#5E6B85` | 次级文字/正文灰蓝 |
+| `--muted` | `#EDF2FA` | 弱底色(标签、代码块底) |
+| `--accent` | `#E3EDFB` | hover 底、icon 头部区 |
+| `--border` | `rgba(109,134,180,.24)` | 全部 hairline 描边(蓝灰) |
+| `--card` | `#FFFFFF` | 卡片底(白卡 + 柔影,不靠底色) |
+| `--primary` | `#16223B` | 反色主按钮深色态 |
 | `--radius` | `0.625rem`(10px) | 全局圆角基准 |
 
-品牌蓝(2026-11-15 应用户要求由橙改蓝,与 Logo `#2E55A5` 同族):
+页面背景叠加三层冰蓝 radial 光晕(`background-attachment: fixed`),实现「雾面」质感 —— 见 body 规则。
+
+品牌蓝(DeepSeek 蓝 `#4D6BFE`;2026-11-15 二次改色:由 `#2E55A5`/`#5B8DEF` 蓝黑白组合整体升级为 deepseek 风格,领导拍板):
 
 | Token | 值 | 用途 |
 |---|---|---|
-| `--brand` | 亮色态 `#2E55A5`;暗色态 `#5B8DEF` | 主 CTA、链接 hover、图表主色、状态点 |
-| brand-foreground | 亮色态 `#FFFFFF`;暗色态 `#141413`(继承) | 蓝底上亮色主题放白字、暗色主题放深字(对比度实测 ≥5:1) |
+| `--brand` | 亮色态 `#4D6BFE`;暗色态 `#6E8FFF` | 主 CTA、链接 hover、数据包/脉冲动画、状态点 |
+| `--brand-foreground` | `#FFFFFF`(两主题一致) | 蓝底白字 |
+| `--ink-accent` | `#4D6BFE` | 暗色产品窗内强调色 |
+| `--ink-green` | `#9ECE6A` | 暗窗代码字符串高亮 |
 
-暗色主题(zero.cat `.dark` 类,实测):
-`--background:#141413` / `--foreground:#F3F1EB` / `--card:#1D1C19` / `--secondary:#262420` /
-`--accent:#2E2B26` / `--muted-foreground:#A8A69F` / `--destructive:#E05A5A` / `--brand:#5B8DEF`。
+暗色主题(`html.dark`,deepseek 深蓝黑体系):
+`--background:#0B101B` / `--foreground:#E9EFFA` / `--card:#121A2A` / `--muted:#16203A` /
+`--accent:#18233C` / `--muted-foreground:#8B9BC0` / `--brand:#6E8FFF` / `--border:rgba(122,150,210,.16)`。
 图表序列色:`#5B8DEF #8089FF #00C386 #00B1FB #D66BB8`。
 
 DeepSeek 暗色组件语言(实测,用于「产品窗口」):

@@ -7,28 +7,26 @@
 /* ---------- 1. Token ---------- */
 :root {
   /* 亮色主题:zero.cat 实测值(STYLE.md §1.1) */
-  --background: #FAF9F5;
-  --foreground: #141413;
-  --muted-foreground: #5E5D59;
-  --muted: #EFEEE8;
-  --accent: #EAE8E0;
-  --border: #E2E0D8;
-  --card: #FAF9F5;
-  --primary: #141413;
-  --brand: #2E55A5;            /* 品牌蓝,蓝底白字 */
+  --background: #F7FAFD;
+  --foreground: #16223B;
+  --muted-foreground: #5E6B85;
+  --muted: #EDF2FA;
+  --accent: #E3EDFB;
+  --border: rgba(109, 134, 180, .24);
+  --card: #FFFFFF;
+  --primary: #16223B;
+  --brand: #4D6BFE;
   --brand-foreground: #FFFFFF;
   --radius: 10px;
   --radius-lg: 16px;
 
-  /* 派生 token(实现补充,来源见 STYLE.md §6):
-     --border-strong 取自仓库 logo.svg 连接线灰 #C9C4B6;
-     --ok / --warn / --ink-num 取自 §1.1 实测暗色图表序列色;
-     --canvas-dot 亮色成对值取自 web/admin/STYLE-v2.md §3.1 实测 #1414130d */
-  --border-strong: #C9C4B6;
+  /* 派生 token(2026-11-15 全新配色:deepseek.com 实测体系,领导拍板)
+     冰蓝雾面渐变底 + 白色半透明卡片 + #4D6BFE 点缀;暖纸/衬线体系退役 */
+  --border-strong: #B9C8E4;
   --ok: #00C386;
   --warn: #FFA824;
   --destructive: #E05A5A;
-  --canvas-dot: #1414130d;
+  --canvas-dot: rgba(77, 107, 254, .10);
 
   /* DeepSeek 暗色产品窗语言(两主题下恒定):#0A0A0A 窗底 / rgba 白层叠 */
   --ink-bg: #0A0A0A;
@@ -39,14 +37,14 @@
   --ink-text: rgba(255, 255, 255, 0.5);
   --ink-dim: rgba(255, 255, 255, 0.72);
   --ink-faint: rgba(255, 255, 255, 0.35);
-  --ink-accent: #5B8DEF;
+  --ink-accent: #4D6BFE;
   --ink-green: #9ECE6A;
   --ink-num: #8089FF;
 
-  --nav-glass: rgba(250, 249, 245, 0.95);
+  --nav-glass: rgba(250, 252, 255, 0.82);
 
   /* 字体栈:照抄 STYLE.md §1.2,不加载任何字体文件 */
-  --font-serif: "Anthropic Serif", "Lora Variable", Lora, "Source Serif Pro", "Source Serif 4", "Noto Serif SC", "Noto Serif TC", "Noto Serif JP", serif;
+  --font-serif: "Inter Variable", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; /* 2026-11-15 标题 Sans 化(deepseek 基准),变量名保留避免全文件改动 */
   --font-sans: "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -57,18 +55,18 @@
 
 /* 暗色主题:zero.cat .dark 实测值(STYLE.md §1.1) */
 html.dark {
-  --background: #141413;
-  --foreground: #F3F1EB;
-  --card: #1D1C19;
-  --muted: #262420;
-  --accent: #2E2B26;
-  --muted-foreground: #A8A69F;
-  --border: #2E2B26;
-  --primary: #F3F1EB;
-  --brand: #5B8DEF;
-  --border-strong: #3A3730;
-  --canvas-dot: #f3f1eb0d;
-  --nav-glass: rgba(20, 20, 19, 0.95);
+  --background: #0B101B;
+  --foreground: #E9EFFA;
+  --card: #121A2A;
+  --muted: #16203A;
+  --accent: #18233C;
+  --muted-foreground: #8B9BC0;
+  --border: rgba(122, 150, 210, .16);
+  --primary: #E9EFFA;
+  --brand: #6E8FFF;
+  --border-strong: #2A3A5E;
+  --canvas-dot: rgba(110, 143, 255, .10);
+  --nav-glass: rgba(11, 16, 27, .82);
 }
 
 html { color-scheme: light; }
@@ -85,11 +83,16 @@ html {
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  background-image:
+    radial-gradient(1100px 540px at 50% -160px, rgba(77, 107, 254, 0.12), transparent 64%),
+    radial-gradient(900px 460px at 88% 6%, rgba(110, 143, 255, 0.09), transparent 60%),
+    radial-gradient(760px 420px at 4% 30%, rgba(77, 107, 254, 0.06), transparent 62%);
+  background-attachment: fixed;
   color: var(--foreground);
   font: 400 16px/26px var(--font-sans);
   overflow-x: clip; /* 兜底:水印等出血元素不产生横向滚动 */
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition: color 0.3s ease;
 }
 
 a { color: inherit; }
@@ -230,13 +233,16 @@ h2 {
   top: 0;
   z-index: 50;
   height: var(--nav-h);
-  background: var(--nav-glass);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-  transition: border-color 0.3s ease, background-color 0.3s ease;
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.3s ease, background-color 0.3s ease, backdrop-filter 0.3s ease;
 }
-.site-nav.scrolled { border-bottom-color: var(--border-strong); }
+.site-nav.scrolled {
+  background: var(--nav-glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom-color: var(--border);
+}
 
 .nav-inner {
   height: var(--nav-h);
@@ -317,13 +323,13 @@ html.dark .icon-btn .icon-moon { display: block; }
 
 /* ---------- 6. Hero ---------- */
 .hero { padding: 40px 0 72px; }
-.hero-head { max-width: 100%; }
+.hero-head { max-width: 100%; text-align: center; }
 .hero-grid {
-  margin-top: 28px;
+  margin-top: 36px;
   display: grid;
-  grid-template-columns: minmax(0, 10fr) minmax(0, 11fr);
-  gap: 64px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 36px;
+  justify-items: center;
 }
 
 .hero-eyebrow {
@@ -343,27 +349,32 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 
 .hero-title {
-  margin-top: 20px;
+  margin-top: 18px;
   font-family: var(--font-serif);
-  font-size: clamp(40px, 5.3vw, 72px);
-  line-height: 1.12;
-  font-weight: 500;
-  letter-spacing: -0.02em;
+  font-size: clamp(38px, 5.6vw, 62px);
+  line-height: 1.22;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   color: var(--foreground);
 }
 
 .hero-lead {
-  margin-top: 24px;
-  max-width: 489px;
-  font-size: 18px;
+  margin: 24px auto 0;
+  max-width: 560px;
+  font-size: 17px;
   line-height: 28px;
   color: var(--muted-foreground);
 }
 
-.hero-ctas { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 16px; }
+.hero-ctas { margin-top: 32px; display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
 
-/* --- Hero 右侧:查询分发示意图 --- */
-.diagram { min-width: 0; }
+/* --- Hero 下方:查询分发示意图(居中) --- */
+.diagram { min-width: 0; width: 100%; max-width: 660px; margin: 0 auto; }
+
+/* 白色半透明卡片:deepseek 柔影语言 */
+.diag-req, .exit-card {
+  box-shadow: 0 1px 2px rgba(22, 34, 59, .05), 0 12px 32px rgba(77, 107, 254, .08);
+}
 
 .diag-req {
   border: 1px solid var(--border);
