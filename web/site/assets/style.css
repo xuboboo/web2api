@@ -374,10 +374,11 @@ html.dark .icon-btn .icon-moon { display: block; }
 .hero-ctas { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 16px; }
 
 /* --- Hero 右侧:暗窗示意图(Harness 语言:山 + 分发) --- */
+/* 底部实底硬边(Harness 参考即如此);渐隐到透明会在浅色雾面上叠出脏灰过渡带 */
 .hero-dark {
   background:
     radial-gradient(1000px 480px at 76% 34%, rgba(62, 207, 142, .14), transparent 62%),
-    linear-gradient(180deg, #0B1210 0%, #0B1210 86%, rgba(11, 18, 16, 0) 100%);
+    #0B1210;
   color: #fff;
   padding: 56px 0 96px;
 }
