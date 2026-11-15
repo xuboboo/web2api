@@ -686,11 +686,11 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/auth/password \
 
 - `new_password` 长度 < 8 → 400 `{"error":"bad_request","code":"INVALID_PARAM","reason":"INVALID_PARAM"}`。
 - `old_password` 错误 → 401 `{"error":"unauthorized"}`。
-- 成功后：新密码以 bcrypt 哈希存入 settings 桶并**覆盖 config.yaml 中的默认值**；`token_version` +1，**除本次返回的新 token 外，全部旧 JWT（含面板与 MCP 的 Bearer 会话）立即失效**。
+- 成功后：新密码以 bcrypt 哈希存入 settings 桶并**覆盖 config.yaml 中的默认值**；`token_version` +1，**除本次返回的新 token 外，全部旧 JWT（含控制台与 MCP 的 Bearer 会话）立即失效**。
 
 ### 6.10 POST /web-tool/api/playground/check
 
-面板「在线调试」页后端：JWT 鉴权，**不计费、不写用量**。请求/响应结构与 `/web-tool/v1/index/check` 完全一致（§2.1）：
+控制台「在线调试」页后端：JWT 鉴权，**不计费、不写用量**。请求/响应结构与 `/web-tool/v1/index/check` 完全一致（§2.1）：
 
 ```bash
 curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
@@ -777,7 +777,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
 - **冷却期内**：该引擎所有 search/check 快速失败（503 冷却信封），**不消耗真实引擎请求、不消耗代理与浏览器资源**。
 - **到期探测**：冷却到期后放行一个探测请求——成功即恢复 `ok`；失败则进入下一档冷却。
 - **行为级提示**：浏览器验证码页（无论人工还是自动触发）都会被判定为拦截并启动最短 10 分钟冷却。这是以牺牲短时可用性换取单出口 IP 存活率的刻意设计；高频使用方应配置代理池（[CONFIGURATION.md](CONFIGURATION.md) `proxies` 节）。
-- 运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset`（强制恢复）、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}`（强制冷却），见 §6.8；面板「引擎状态」页（`#/engines`）提供同能力。
+- 运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset`（强制恢复）、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}`（强制冷却），见 §6.8；控制台「引擎状态」页（`#/engines`）提供同能力。
 
 熔断器（`circuit_breaker.{failures,recovery_seconds,successes}`）与冷却状态机是**两套独立机制**：熔断针对连续请求失败（技术性失败），冷却针对反爬拦截（blocked/captcha）。两者同时生效时，冷却检查在前（不发真实请求）。
 
@@ -824,7 +824,7 @@ Agent 平面
   GET    /web-tool/api/engines                                         引擎状态机（含冷却）
   POST   /web-tool/api/engines/:name/cooldown/reset                    强制恢复
   POST   /web-tool/api/engines/:name/cooldown/force                    强制冷却 {"minutes":N}
-  POST   /web-tool/api/playground/check                                面板在线调试（不计费）
+  POST   /web-tool/api/playground/check                                控制台在线调试（不计费）
 
 健康与观测（免鉴权）
   GET  /web-tool/health  /web-tool/ready  /web-tool/stats

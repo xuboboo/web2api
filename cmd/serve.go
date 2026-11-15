@@ -160,10 +160,10 @@ func serve(cmd *cobra.Command, args []string) error {
 	return startServerWithPlatform(serv, closeBrowsers)
 }
 
-// startServerWithPlatform mounts the platform API groups and the admin panel
-// under the fixed core.BasePath, logs the panel address and runs the graceful
-// shutdown loop. closeResources (browser pool etc.) and the platform store are
-// released together when the server drains.
+// startServerWithPlatform mounts the platform API groups and the static panels
+// (site + console) under the fixed core.BasePath, logs the site/console
+// addresses and runs the graceful shutdown loop. closeResources (browser pool
+// etc.) and the platform store are released together when the server drains.
 func startServerWithPlatform(serv *core.Server, closeResources func() error) error {
 	closePlat, err := mountPlatformAndPanel(serv)
 	if err != nil {
@@ -190,8 +190,11 @@ func startServerWithPlatform(serv *core.Server, closeResources func() error) err
 //     RegisterAdmin with the *core.Server injected as platform.EngineControl,
 //     POST /api/playground/check is mounted behind the JWT guard, and the
 //     security node (契约 B) is installed via SetSecurity;
-//  2. the admin panel static files at core.BasePath (always mounted, even with
-//     the platform disabled — only /api/* and /v1/* are gated by the switch).
+//  2. the MCP agent plane (契约 C) rides mountMCP before the static mounts;
+//  3. the static panels (三期接线): the marketing site (web/site) at
+//     core.BasePath root and the admin console (web/admin) at
+//     core.BasePath+"/console" (always mounted, even with the platform
+//     disabled — only /api/* and /v1/* are gated by the switch).
 //
 // The platform closer is returned (nil when the platform is disabled).
 func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
@@ -215,19 +218,21 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		plat.RegisterAdmin(root, serv.IndexCheckHandler, serv)
 		plat.RegisterPublic(root, serv.IndexCheckHandler)
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
-		// 根植于 BasePath。必须在 mountAdminPanel 之前注册,静态通配不覆盖这些路由。
+		// 根植于 BasePath。必须在 mountStaticPanels 之前注册,静态通配不覆盖这些路由。
 		mountMCP(app, serv, plat)
 		logrus.WithFields(logrus.Fields{
-			"base_path":  core.BasePath,
-			"storage":    plat.StoreKind(),
-			"data_dir":   config.Platform.DataDir,
-			"admin_user": config.Platform.AdminUsername,
-			"public_api": panelURL() + "v1",
-			"admin_api":  panelURL() + "api",
-		}).Info("收录查询平台已挂载: 面板与 API 统一部署在 " + core.BasePath + " 前缀之下, 面板地址: " + panelURL())
+			"base_path":   core.BasePath,
+			"storage":     plat.StoreKind(),
+			"data_dir":    config.Platform.DataDir,
+			"admin_user":  config.Platform.AdminUsername,
+			"public_api":  panelURL() + "v1",
+			"admin_api":   panelURL() + "api",
+			"site_url":    panelURL(),
+			"console_url": consoleURL(),
+		}).Info("收录查询平台已挂载: 官网与 API 统一部署在 " + core.BasePath + " 前缀之下, 官网地址: " + panelURL() + ", 控制台地址: " + consoleURL())
 	}
 
-	mountAdminPanel(app)
+	mountStaticPanels(app)
 
 	if plat == nil {
 		return nil, nil
@@ -265,8 +270,9 @@ func dataPlaneAuthGuard() fiber.Handler {
 	}
 }
 
-// panelURL renders the externally reachable panel root, e.g.
-// http://127.0.0.1:7000/web-tool/. Wildcard bind hosts are shown as 127.0.0.1.
+// panelURL renders the externally reachable site root (the marketing site is
+// served at the BasePath root), e.g. http://127.0.0.1:7000/web-tool/. Wildcard
+// bind hosts are shown as 127.0.0.1.
 func panelURL() string {
 	host := strings.TrimSpace(config.Server.Host)
 	switch host {
@@ -274,6 +280,21 @@ func panelURL() string {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s:%d%s/", host, config.Server.Port, core.BasePath)
+}
+
+// consoleURL renders the externally reachable admin console root, e.g.
+// http://127.0.0.1:7000/web-tool/console/.
+func consoleURL() string {
+	return panelURL() + "console/"
+}
+
+// siteDirCandidates lists where the bundled marketing site may live, relative
+// to the working directory first, then to the executable. "../web/site" covers
+// `go test ./cmd` which runs with the package dir as cwd.
+var siteDirCandidates = []string{
+	filepath.Join("web", "site"),
+	filepath.Join("..", "web", "site"),
+	filepath.Join(filepath.Dir(os.Args[0]), "web", "site"),
 }
 
 // adminPanelDirCandidates lists where the bundled admin panel may live,
@@ -285,30 +306,70 @@ var adminPanelDirCandidates = []string{
 	filepath.Join(filepath.Dir(os.Args[0]), "web", "admin"),
 }
 
-// mountAdminPanel serves the static admin panel (web/admin) under BasePath.
-// It is registered AFTER all API routes so API paths win over the static
-// wildcard; GET <BasePath>/ returns index.html and <BasePath>/assets/* serves
-// the bundled resources. The panel is mounted even when platform.enabled=false.
-func mountAdminPanel(app *fiber.App) {
-	dir := ""
-	for _, candidate := range adminPanelDirCandidates {
+// findStaticIndexDir returns the first candidate directory that contains an
+// index.html, or "" when none does.
+func findStaticIndexDir(candidates []string) string {
+	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
 		}
 		if info, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && !info.IsDir() {
-			dir = candidate
-			break
+			return candidate
 		}
 	}
-	if dir == "" {
-		logrus.Warn("管理面板静态资源缺失(web/admin/index.html 未找到),面板将返回 404;API 不受影响")
-		return
+	return ""
+}
+
+// mountStaticPanels serves the two static panels (三期接线) under BasePath:
+//
+//	GET <BasePath>/console          → 301 <BasePath>/console/  (legacy bookmark)
+//	<BasePath>/console/*            → web/admin (管理控制台, assets 相对引用解析到 console/assets/*)
+//	GET <BasePath>/                 → web/site index.html (官网)
+//	<BasePath>/assets/*             → web/site assets
+//
+// Registration order is load-bearing with fiber v2: core API routes (built at
+// server construction), the platform /api/* + /v1/* groups and the MCP agent
+// plane are all registered BEFORE this call, so they win over the static
+// wildcards; console routes are registered before the site wildcard so the
+// site mount cannot swallow /console/* paths.
+func mountStaticPanels(app *fiber.App) {
+	// (1) Legacy no-slash console bookmark → canonical /console/. fiber's
+	// StrictRouting=false strips the trailing slash from the detection path,
+	// so this exact route ALSO matches <BasePath>/console/ — the handler must
+	// redirect only the bare form and fall through to the static route
+	// otherwise (otherwise the canonical URL would redirect to itself forever).
+	app.Get(core.BasePath+"/console", func(c *fiber.Ctx) error {
+		if c.Path() != core.BasePath+"/console" {
+			return c.Next()
+		}
+		return c.Redirect(core.BasePath+"/console/", fiber.StatusMovedPermanently)
+	})
+
+	// (2) Admin console (web/admin): GET <BasePath>/console/ serves index.html,
+	// <BasePath>/console/assets/* serves the bundled resources.
+	adminDir := findStaticIndexDir(adminPanelDirCandidates)
+	if adminDir == "" {
+		logrus.Warn("管理控制台静态资源缺失(web/admin/index.html 未找到)," + core.BasePath + "/console/ 将返回 404;API 不受影响")
+	} else {
+		app.Static(core.BasePath+"/console", adminDir)
+		logrus.WithFields(logrus.Fields{
+			"url": consoleURL(),
+			"dir": adminDir,
+		}).Info("管理控制台已挂载: " + consoleURL())
 	}
-	app.Static(core.BasePath, dir)
-	logrus.WithFields(logrus.Fields{
-		"url": panelURL(),
-		"dir": dir,
-	}).Info("管理面板已挂载: " + panelURL())
+
+	// (3) Marketing site (web/site) at the BasePath root — the entry users see
+	// first. Registered LAST so every earlier route (API/MCP/console) wins.
+	siteDir := findStaticIndexDir(siteDirCandidates)
+	if siteDir == "" {
+		logrus.Warn("官网静态资源缺失(web/site/index.html 未找到)," + core.BasePath + "/ 将返回 404;API 不受影响")
+	} else {
+		app.Static(core.BasePath, siteDir)
+		logrus.WithFields(logrus.Fields{
+			"url": panelURL(),
+			"dir": siteDir,
+		}).Info("官网已挂载: " + panelURL())
+	}
 }
 
 func buildFingerprintBrowserOptions() core.BrowserOpts {

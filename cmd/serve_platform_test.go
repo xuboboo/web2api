@@ -152,18 +152,33 @@ func TestPlatformAssemblyContract(t *testing.T) {
 	defer closePlat()
 	app := serv.FiberApp()
 
-	// ---- static panel + root emptiness ------------------------------------
+	// ---- static mounts: 官网 @ BasePath root, 管理控制台 @ BasePath/console/ ----
+	// GET <BasePath>/ serves the marketing site (web/site) — the console CTA
+	// keyword proves it is the site, not the admin panel.
 	status, body := platformRequest(t, app, http.MethodGet, core.BasePath+"/", "", nil)
-	if status != http.StatusOK || !strings.Contains(body, "Web2API") {
-		t.Fatalf("GET %s/ status=%d (want panel index.html), body head=%.80s", core.BasePath, status, body)
+	if status != http.StatusOK || !strings.Contains(body, "进入控制台") {
+		t.Fatalf("GET %s/ status=%d (want site index.html), body head=%.80s", core.BasePath, status, body)
 	}
 	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/assets/app.js", "", nil)
 	if status != http.StatusOK {
-		t.Fatalf("GET %s/assets/app.js status=%d, want 200", core.BasePath, status)
+		t.Fatalf("GET %s/assets/app.js status=%d, want 200 (site assets)", core.BasePath, status)
 	}
 	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/assets/style.css", "", nil)
 	if status != http.StatusOK {
-		t.Fatalf("GET %s/assets/style.css status=%d, want 200", core.BasePath, status)
+		t.Fatalf("GET %s/assets/style.css status=%d, want 200 (site assets)", core.BasePath, status)
+	}
+	// GET <BasePath>/console/ serves the admin console (web/admin).
+	status, body = platformRequest(t, app, http.MethodGet, core.BasePath+"/console/", "", nil)
+	if status != http.StatusOK || !strings.Contains(body, "管理控制台") {
+		t.Fatalf("GET %s/console/ status=%d (want console index.html), body head=%.80s", core.BasePath, status, body)
+	}
+	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/console/assets/app.js", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET %s/console/assets/app.js status=%d, want 200", core.BasePath, status)
+	}
+	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/console/assets/style.css", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET %s/console/assets/style.css status=%d, want 200", core.BasePath, status)
 	}
 	for _, rootPath := range []string{"/", "/health", "/ready", "/stats", "/v1/quota", "/api/auth/login"} {
 		status, _ = platformRequest(t, app, http.MethodGet, rootPath, "", nil)
@@ -466,7 +481,8 @@ func TestPlatformAssemblyContract(t *testing.T) {
 }
 
 // TestPlatformDisabledKeepsPanelAndHealth: platform.enabled=false unmounts
-// /api/* and /v1/* but the static panel and health endpoints stay reachable.
+// /api/* and /v1/* but the static panels (site + console) and health endpoints
+// stay reachable — only /api/* and /v1/* are gated by the switch.
 func TestPlatformDisabledKeepsPanelAndHealth(t *testing.T) {
 	serv, closeFn := assemblePlatformForTest(t, false)
 	defer closeFn()
@@ -485,7 +501,11 @@ func TestPlatformDisabledKeepsPanelAndHealth(t *testing.T) {
 	}
 	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/", "", nil)
 	if status != http.StatusOK {
-		t.Fatalf("panel with disabled platform status=%d, want 200", status)
+		t.Fatalf("site with disabled platform status=%d, want 200", status)
+	}
+	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/console/", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("console with disabled platform status=%d, want 200", status)
 	}
 	status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+"/health", "", nil)
 	if status != http.StatusOK {
@@ -509,6 +529,10 @@ func TestPanelAddressLogUnwrapsWildcardHost(t *testing.T) {
 		want := fmt.Sprintf("http://%s:7123%s/", wantHost, core.BasePath)
 		if got := panelURL(); got != want {
 			t.Fatalf("panelURL() with host=%q = %q, want %q", host, got, want)
+		}
+		wantConsole := fmt.Sprintf("http://%s:7123%s/console/", wantHost, core.BasePath)
+		if got := consoleURL(); got != wantConsole {
+			t.Fatalf("consoleURL() with host=%q = %q, want %q", host, got, wantConsole)
 		}
 	}
 }

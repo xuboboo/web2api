@@ -35,7 +35,8 @@ web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/
 │   ├── response*.go format_*.go                   # 响应构建与序列化
 │   └── enrichment_domain.go enrichment_domains.yaml
 ├── platform/                   # 收录查询平台：API key/配额/用量(bbolt)、JWT 管理端、/v1 /api 路由
-├── web/admin/                  # 管理面板（纯静态零依赖，由 serve 挂在 /web-tool/ 下）
+├── web/site/                   # 产品官网（纯静态零依赖，由 serve 挂在 /web-tool/ 根）
+├── web/admin/                  # 管理控制台（纯静态零依赖，由 serve 挂在 /web-tool/console/）
 ├── cmd/                        # CLI：search / serve，引擎注册表与装配
 ├── deploy/                     # Docker 编排、E2E/稳态脚本、运维文档
 └── docs/                       # 架构、配置、测试
@@ -144,12 +145,14 @@ APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1.
 
 ## 平台与装配（cmd/serve.go）
 
-- 所有路由（面板、`/v1/*`、`/api/*`、`/health /ready /stats`、`/{engine}/search`）统一挂载在
+- 所有路由（官网、控制台、`/v1/*`、`/api/*`、`/health /ready /stats`、`/{engine}/search`）统一挂载在
   固定前缀 `core.BasePath = "/web-tool"` 之下，根路径 404；前缀不是配置项。
 - `cmd.mountPlatformAndPanel`：`platform.New(config.Platform, serv.EngineStatusSnapshot)`
-  → `RegisterAdmin`/`RegisterPublic`（根在 BasePath 的路由组）→ 静态面板 `web/admin`
-  以 fiber Static 挂在 BasePath（API 路由先注册，优先于静态通配）。
-- `platform.enabled=false` 只卸下 `/api/*` 与 `/v1/*`，面板静态页与健康端点保留。
+  → `RegisterAdmin`/`RegisterPublic`（根在 BasePath 的路由组）→ MCP Agent 平面 →
+  静态挂载（`cmd.mountStaticPanels`）：官网 `web/site` 以 fiber Static 挂在 BasePath 根，
+  管理控制台 `web/admin` 挂在 BasePath+`/console`（`GET <BasePath>/console` 301 到 `/console/`；
+  API 路由先注册，优先于静态通配）。
+- `platform.enabled=false` 只卸下 `/api/*` 与 `/v1/*`，官网与控制台静态页与健康端点保留。
 - 引擎清单/熔断状态的可复用数据源是 `Server.EngineStatusSnapshot()`，同时供给
   `/web-tool/v1/engines` 与 `/web-tool/api/engines`。
 - 优雅关闭：`listenWithGracefulShutdown` 的 onClose 依次关闭浏览器池与 platform 存储。

@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web2API 网站收录查询开放平台</title>
+<meta name="description" content="Web2API 网站收录查询开放平台:一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;附四引擎原始搜索、MCP 与 OpenAPI 双入口 Agent 接入、引擎风控冷却自愈;单二进制 + bbolt 自托管,MIT 开源。">
+<meta property="og:title" content="Web2API 网站收录查询开放平台">
+<meta property="og:description" content="一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;自托管、Agent 双入口(MCP + OpenAPI)。">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Web2API 网站收录查询开放平台">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23ED5B20'/%3E%3Cpath d='M14 22L22 46L32 26L42 46L50 22' fill='none' stroke='%23141413' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+/* 主题预置:在 CSS 生效前读取 localStorage(w2a_site_theme),避免暗色闪白 */
+(function () {
+  try {
+    if (localStorage.getItem('w2a_site_theme') === 'dark') {
+      document.documentElement.classList.add('dark');
+    }
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="assets/style.css">
+<noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+
+<!-- ======================== 顶部导航 ======================== -->
+<header class="site-nav" id="siteNav">
+  <div class="container nav-inner">
+    <a class="brand" href="#top" aria-label="Web2API 网站收录查询开放平台 · 返回顶部">
+      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><path d="M14 22L22 46L32 26L42 46L50 22" fill="none" stroke="#141413" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="brand-name">Web2API</span>
+      <span class="brand-sub">网站收录查询开放平台</span>
+    </a>
+    <nav class="nav-links" id="navLinks" aria-label="页面导航">
+      <a href="#capabilities" data-section="capabilities">能力</a>
+      <a href="#architecture" data-section="architecture">架构</a>
+      <a href="#agents" data-section="agents">Agent 接入</a>
+      <a href="#quickstart" data-section="quickstart">快速开始</a>
+      <a class="nav-github" href="https://github.com/xuboboo/web2api" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库(新窗口打开)">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </nav>
+    <div class="nav-actions">
+      <button class="icon-btn" id="themeToggle" type="button" aria-label="切换到深色主题" aria-pressed="false">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+      <a class="btn btn-primary btn-nav" href="/web-tool/console/">进入控制台</a>
+      <button class="icon-btn menu-btn" id="menuToggle" type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="navLinks">
+        <span class="bar"></span>
+        <span class="bar"></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ======================== Hero ======================== -->
+  <section class="hero" id="top">
+    <div class="container">
+      <div class="hero-head">
+        <span class="hero-eyebrow reveal-hero">网站收录查询开放平台</span>
+        <h1 class="hero-title reveal-hero" style="--reveal-delay:240ms">一次 API 调用<br>判定四大引擎收录</h1>
+      </div>
+      <div class="hero-grid">
+        <div>
+          <p class="hero-lead reveal-hero" style="--reveal-delay:480ms">提交一批 URL,一次调用判定是否被百度、搜狗、360 搜索、必应收录。以 URL 为查询词检索前 10 条结果,跳转还原 + 归一化匹配;单二进制自托管,数据不出内网。</p>
+          <div class="hero-ctas reveal-hero" style="--reveal-delay:720ms">
+            <a class="btn btn-primary" href="/web-tool/console/">进入控制台
+              <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            </a>
+            <a class="btn btn-secondary" href="#quickstart">查看快速开始</a>
+          </div>
+        </div>
+        <div class="diagram reveal-hero" style="--reveal-delay:480ms" id="demoDiagram">
+        <div class="diag-req">
+          <div class="diag-tag"><span class="diag-dot"></span>请求</div>
+          <code>GET /web-tool/v1/index/check<br><span class="muted">?url=…&amp;engines=baidu,bing</span></code>
+        </div>
+        <div class="diag-stem" aria-hidden="true"></div>
+        <div class="diag-hub" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#141413" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/></svg>
+        </div>
+        <div class="diag-stem2" aria-hidden="true"></div>
+        <div class="fan-wires" aria-hidden="true">
+          <span class="rail"></span>
+          <span class="stub s1"></span>
+          <span class="stub s2"></span>
+          <span class="stub s3"></span>
+          <span class="stub s4"></span>
+        </div>
+        <div class="fan-grid">
+          <div class="exit-card" title="POST /web-tool/v1/index/check">
+            <h3>收录判定</h3>
+            <code>/v1/index/check</code>
+          </div>
+          <div class="exit-card" title="GET /web-tool/{engine}/search">
+            <h3>四引擎搜索</h3>
+            <code>/{engine}/search</code>
+          </div>
+          <div class="exit-card" title="GET /web-tool/v1/quota">
+            <h3>用量配额</h3>
+            <code>/v1/quota</code>
+          </div>
+          <div class="exit-card" title="POST /web-tool/mcp">
+            <h3>MCP 接入</h3>
+            <code>/mcp</code>
+          </div>
+        </div>
+        <div class="diag-tools">
+          <button class="demo-toggle" id="demoToggle" type="button" aria-pressed="false">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+            <span class="demo-label">暂停演示</span>
+          </button>
+        </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 数据源跑马灯 ======================== -->
+  <section class="marquee-band" aria-label="收录数据源">
+    <div class="container">
+      <span class="eyebrow">聚合权威收录数据源</span>
+    </div>
+    <div class="marquee">
+      <div class="marquee-track">
+        <div class="marquee-group">
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+        </div>
+        <div class="marquee-group" aria-hidden="true">
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
+          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
+          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
+          <span class="mq-item"><b>必应</b><i>Bing</i></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 统计条 ======================== -->
+  <section class="stats-band">
+    <div class="container">
+      <div class="stats reveal">
+        <div class="stat">
+          <div class="stat-line"><span class="stat-num" data-count="4">4</span><span class="stat-unit">引擎</span></div>
+          <div class="stat-label">百度 / 搜狗 / 360 搜索 / 必应</div>
+        </div>
+        <div class="stat">
+          <div class="stat-line"><span class="stat-num" data-count="1">1</span><span class="stat-unit">次调用</span></div>
+          <div class="stat-label">批量判定,单请求最多 20 条 URL</div>
+        </div>
+        <div class="stat">
+          <div class="stat-line"><span class="stat-num" data-count="3">3</span><span class="stat-unit">行 curl</span></div>
+          <div class="stat-label">复制即可发起首个收录判定</div>
+        </div>
+        <div class="stat">
+          <div class="stat-line"><span class="stat-num" data-count="100">100</span><span class="stat-unit">%</span></div>
+          <div class="stat-label">可自托管 · MIT 开源 · 数据不出内网</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 收录判定能力区 ======================== -->
+  <section class="section" id="capabilities">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">核心优势</span>
+        <h2>为什么选 Web2API</h2>
+      </div>
+      <div class="card-grid cols-4">
+        <div class="f-card reveal">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><polyline points="8.2 11.2 10.4 13.4 14.2 9"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>一次调用,判定四引擎</h3>
+            <p>POST /v1/index/check 一次提交最多 20 条 URL,逐引擎返回 indexed 与匹配详情;1 URL × 1 引擎 = 1 unit,计费口径清晰。</p>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:240ms">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/><path d="M9 12a3 3 0 0 1 5.4-1.8M15 12a3 3 0 0 1-5.4 1.8"/><path d="M14.6 9v1.6H13M9.4 15v-1.6H11"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>引擎风控,冷却自愈</h3>
+            <p>连续拦截按 10 / 30 / 120 分钟三档自动冷却,240 分钟无拦截计数归零;冷却期零真实请求,到期探测恢复。</p>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:480ms">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><polyline points="7 9 10 12 7 15"/><line x1="12" y1="15" x2="16" y2="15"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>Agent 一等公民</h3>
+            <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口,内置 llms.txt 能力清单;Claude / Dify / Coze / n8n / LangChain 直接导入。</p>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:720ms">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><line x1="7" y1="7" x2="7" y2="7.01"/><line x1="7" y1="17" x2="7" y2="17.01"/><line x1="11" y1="7" x2="15" y2="7"/><line x1="11" y1="17" x2="15" y2="17"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>单二进制,可自托管</h3>
+            <p>纯 Go 单二进制 + bbolt 单文件存储,零外部依赖;固定挂载 /web-tool 子路径,数据始终留在你的机器上。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 左:三步接入 / 右:代码暗窗 -->
+      <div class="split">
+        <div class="reveal">
+          <h3 class="split-title">三步发起一次收录判定</h3>
+          <p class="split-lede">判定语义:以 URL 为查询词检索引擎前 10 条结果,跳转链接还原后归一化匹配。</p>
+          <div class="steps">
+            <div class="step">
+              <span class="step-num">1</span>
+              <div>
+                <h4>创建 API Key</h4>
+                <p>控制台「API 密钥」页创建,完整 key 仅在创建响应中返回一次。</p>
+              </div>
+            </div>
+            <div class="step-arrow" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="step">
+              <span class="step-num">2</span>
+              <div>
+                <h4>POST /web-tool/v1/index/check</h4>
+                <p>提交 <code>urls</code> 与 <code>engines</code>,单请求最多 20 条 URL。</p>
+              </div>
+            </div>
+            <div class="step-arrow" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="step">
+              <span class="step-num">3</span>
+              <div>
+                <h4>读 results[].engines[name].indexed</h4>
+                <p>match="exact" 即已收录;对同一 URL 多引擎交叉验证更准。</p>
+              </div>
+            </div>
+          </div>
+          <div class="split-ctas">
+            <a class="btn btn-primary" href="/web-tool/console/">进入控制台创建 API Key
+              <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            </a>
+            <a class="btn btn-secondary" href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>
+          </div>
+        </div>
+
+        <div class="code-window reveal" style="--reveal-delay:240ms">
+          <div class="cw-head">
+            <div class="cw-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="cw-tabs" role="tablist" aria-label="代码示例语言">
+              <button class="code-tab active" role="tab" id="tab-curl" data-tab="curl" aria-controls="panel-curl" aria-selected="true" type="button">cURL</button>
+              <button class="code-tab" role="tab" id="tab-python" data-tab="python" aria-controls="panel-python" aria-selected="false" tabindex="-1" type="button">Python</button>
+              <button class="code-tab" role="tab" id="tab-node" data-tab="node" aria-controls="panel-node" aria-selected="false" tabindex="-1" type="button">Node</button>
+              <button class="code-tab" role="tab" id="tab-mcp" data-tab="mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1" type="button">MCP</button>
+            </div>
+            <button class="copy-btn" type="button" data-copy-panel aria-label="复制当前示例代码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <span class="copy-label">复制</span>
+            </button>
+          </div>
+
+          <div class="code-panel active" data-panel="curl" role="tabpanel" id="panel-curl" aria-labelledby="tab-curl">
+            <div class="block-label">请求 · REQUEST</div>
+            <pre class="code-block"><span class="tk-cmd">curl</span> <span class="tk-flag">-X POST</span> <span class="tk-str">http://127.0.0.1:7000/web-tool/v1/index/check</span> <span class="tk-punc">\</span>
+  <span class="tk-flag">-H</span> <span class="tk-str">"X-API-Key: sk-w2a-…"</span> <span class="tk-flag">-H</span> <span class="tk-str">"Content-Type: application/json"</span> <span class="tk-punc">\</span>
+  <span class="tk-flag">-d</span> <span class="tk-str">'{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'</span></pre>
+            <div class="code-gap"></div>
+            <div class="block-label">响应 · RESPONSE</div>
+            <pre class="code-block">{
+  <span class="tk-key">"id"</span>: <span class="tk-str">"01936d3a-8f2e-7d4a-9c1b-2e6f8a0b3c5d"</span>,
+  <span class="tk-key">"created_at"</span>: <span class="tk-str">"2026-11-15T08:00:00Z"</span>,
+  <span class="tk-key">"results"</span>: [
+    {
+      <span class="tk-key">"url"</span>: <span class="tk-str">"https://example.com/post-1"</span>,
+      <span class="tk-key">"engines"</span>: {
+        <span class="tk-key">"baidu"</span>: {
+          <span class="tk-key">"indexed"</span>: <span class="tk-bool">true</span>,
+          <span class="tk-key">"match"</span>: <span class="tk-str">"exact"</span>,
+          <span class="tk-key">"matched_result_url"</span>: <span class="tk-str">"https://example.com/post-1"</span>,
+          <span class="tk-key">"total_results"</span>: <span class="tk-num">9</span>,
+          <span class="tk-key">"took_ms"</span>: <span class="tk-num">2393</span>
+        },
+        <span class="tk-key">"bing"</span>: {
+          <span class="tk-key">"indexed"</span>: <span class="tk-bool">false</span>,
+          <span class="tk-key">"match"</span>: <span class="tk-str">"none"</span>,
+          <span class="tk-key">"total_results"</span>: <span class="tk-num">4</span>,
+          <span class="tk-key">"took_ms"</span>: <span class="tk-num">1812</span>
+        }
+      }
+    }
+  ],
+  <span class="tk-key">"meta"</span>: {
+    <span class="tk-key">"request_id"</span>: <span class="tk-str">"01936d3a-8f2e-7d4a-9c1b-2e6f8a0b3c5d"</span>,
+    <span class="tk-key">"took_ms"</span>: <span class="tk-num">2501</span>,
+    <span class="tk-key">"units"</span>: <span class="tk-num">2</span>
+  }
+}</pre>
+          </div>
+
+          <div class="code-panel" data-panel="python" role="tabpanel" id="panel-python" aria-labelledby="tab-python" hidden>
+            <div class="block-label">请求 · REQUEST</div>
+            <pre class="code-block"><span class="tk-cmd">import</span> requests
+
+res = requests.post(
+    <span class="tk-str">"http://127.0.0.1:7000/web-tool/v1/index/check"</span>,
+    headers={<span class="tk-str">"X-API-Key"</span>: <span class="tk-str">"sk-w2a-…"</span>},
+    json={<span class="tk-str">"urls"</span>: [<span class="tk-str">"https://example.com/post-1"</span>],
+          <span class="tk-str">"engines"</span>: [<span class="tk-str">"baidu"</span>, <span class="tk-str">"bing"</span>]},
+)
+data = res.json()
+unit = data[<span class="tk-str">"results"</span>][<span class="tk-num">0</span>][<span class="tk-str">"engines"</span>]
+<span class="tk-cmd">print</span>(<span class="tk-str">"baidu indexed:"</span>, unit[<span class="tk-str">"baidu"</span>][<span class="tk-str">"indexed"</span>])</pre>
+            <div class="code-gap"></div>
+            <div class="block-label">响应 · RESPONSE</div>
+            <pre class="code-block">{ <span class="tk-com">/* 同 cURL 标签页,results[].engines 逐引擎返回
+   indexed / match / matched_result_url / took_ms */</span> }</pre>
+          </div>
+
+          <div class="code-panel" data-panel="node" role="tabpanel" id="panel-node" aria-labelledby="tab-node" hidden>
+            <div class="block-label">请求 · REQUEST</div>
+            <pre class="code-block"><span class="tk-cmd">const</span> res = <span class="tk-cmd">await</span> fetch(<span class="tk-str">"http://127.0.0.1:7000/web-tool/v1/index/check"</span>, {
+  method: <span class="tk-str">"POST"</span>,
+  headers: { <span class="tk-str">"X-API-Key"</span>: <span class="tk-str">"sk-w2a-…"</span>, <span class="tk-str">"Content-Type"</span>: <span class="tk-str">"application/json"</span> },
+  body: JSON.stringify({ urls: [<span class="tk-str">"https://example.com/post-1"</span>], engines: [<span class="tk-str">"baidu"</span>, <span class="tk-str">"bing"</span>] }),
+});
+<span class="tk-cmd">const</span> data = <span class="tk-cmd">await</span> res.json();
+console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);</pre>
+            <div class="code-gap"></div>
+            <div class="block-label">响应 · RESPONSE</div>
+            <pre class="code-block">{ <span class="tk-com">/* 同 cURL 标签页,results[].engines 逐引擎返回
+   indexed / match / matched_result_url / took_ms */</span> }</pre>
+          </div>
+
+          <div class="code-panel" data-panel="mcp" role="tabpanel" id="panel-mcp" aria-labelledby="tab-mcp" hidden>
+            <div class="block-label">接入 · SETUP</div>
+            <pre class="code-block"><span class="tk-com"># Claude Code / CLI:一条命令注册</span>
+<span class="tk-cmd">claude</span> mcp add web2api <span class="tk-str">http://127.0.0.1:7000/web-tool/mcp</span>
+
+<span class="tk-com"># Claude Desktop:claude_desktop_config.json</span>
+{
+  <span class="tk-key">"mcpServers"</span>: {
+    <span class="tk-key">"web2api"</span>: {
+      <span class="tk-key">"url"</span>: <span class="tk-str">"http://127.0.0.1:7000/web-tool/mcp"</span>,
+      <span class="tk-key">"headers"</span>: { <span class="tk-key">"X-API-Key"</span>: <span class="tk-str">"sk-w2a-…"</span> }
+    }
+  }
+}
+
+<span class="tk-com"># 内置 4 个工具:web_search / check_indexed / get_quota / list_engines</span></pre>
+          </div>
+
+          <div class="cw-foot">
+            <span>POST /web-tool/v1/index/check</span>
+            <span class="cw-ok">200 OK</span>
+            <span class="cw-units">1 URL × 2 引擎 = 2 units</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 三平面架构区 ======================== -->
+  <section class="section" id="architecture">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">架构</span>
+        <h2>三个平面,一套部署</h2>
+      </div>
+      <div class="card-grid cols-3">
+        <div class="f-card reveal">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>数据平面</h3>
+            <p>收录判定 + 四引擎原始搜索 + 配额查询,配额 / 限流 / 冷却内建。</p>
+            <div class="route-list">
+              <div class="route"><code>POST /web-tool/v1/index/check</code><span>批量收录判定(1..20 URL × 引擎)</span></div>
+              <div class="route"><code>GET /web-tool/v1/quota</code><span>当前 key 的配额查询</span></div>
+              <div class="route"><code>GET /web-tool/{engine}/search</code><span>四引擎原始搜索,实际形如 /web-tool/baidu/search、/web-tool/360/search</span></div>
+              <div class="route"><code>GET /web-tool/stats</code><span>运行统计(免鉴权)</span></div>
+            </div>
+            <div class="plane-auth">鉴权:<code>X-API-Key</code>(search 免鉴权)</div>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:240ms">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>Agent 平面</h3>
+            <p>AI Agent 一等公民:MCP Server 与 OpenAPI 规范双入口,自动可发现。</p>
+            <div class="route-list">
+              <div class="route"><code>POST /web-tool/mcp</code><span>MCP streamable HTTP,内置 4 个工具</span></div>
+              <div class="route"><code>GET /web-tool/openapi.yaml</code><span>OpenAPI 3.1 全端点规范</span></div>
+              <div class="route"><code>GET /web-tool/llms.txt</code><span>Agent 能力清单</span></div>
+            </div>
+            <div class="plane-auth">鉴权:<code>X-API-Key</code> 或 JWT</div>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:480ms">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>控制平面</h3>
+            <p>风控与用量治理台:密钥、配额、用量日志、引擎冷却看板、在线调试。</p>
+            <div class="route-list">
+              <div class="route"><code>/web-tool/api/*</code><span>管理 API:JWT 登录、密钥、配额、用量、冷却状态机</span></div>
+              <div class="route"><code>/web-tool/console/</code><span>管理面板:总览 / 引擎状态 / 密钥 / 日志 / 调试 / 集成 / 文档 / 设置</span></div>
+            </div>
+            <div class="plane-auth">鉴权:JWT(管理员登录)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== Agent 接入区 ======================== -->
+  <section class="section" id="agents">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Agent 接入</span>
+        <h2>为 Agent 而生的三个入口</h2>
+      </div>
+      <div class="card-grid cols-2">
+        <div class="dark-card reveal">
+          <span class="dk-eyebrow">MCP · STREAMABLE HTTP</span>
+          <h3>Claude 直连 MCP Server</h3>
+          <p class="dk-desc">Claude / Claude Desktop 一条命令接入。协议为 MCP streamable HTTP、JSON-RPC 2.0,内置 <strong>web_search、check_indexed、get_quota、list_engines</strong> 四个工具,配额与冷却语义与 API 完全一致。</p>
+          <div class="mini-term">
+            <code id="mcpCmd">claude mcp add web2api http://127.0.0.1:7000/web-tool/mcp</code>
+            <button class="copy-btn" type="button" data-copy-target="#mcpCmd" aria-label="复制 MCP 接入命令">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <span class="copy-label">复制</span>
+            </button>
+          </div>
+          <div class="chip-row" aria-label="MCP 内置工具">
+            <span class="chip">web_search</span>
+            <span class="chip">check_indexed</span>
+            <span class="chip">get_quota</span>
+            <span class="chip">list_engines</span>
+          </div>
+        </div>
+        <div class="dark-card reveal" style="--reveal-delay:240ms">
+          <span class="dk-eyebrow">OPENAPI · LLMS.TXT</span>
+          <h3>四大平台,导入即用</h3>
+          <ul class="platform-list">
+            <li><b>Dify</b><span>「自定义工具 → 导入 OpenAPI」</span></li>
+            <li><b>Coze</b><span>「资源库 → 插件 → 导入」</span></li>
+            <li><b>n8n</b><span>「HTTP Request 节点 → 导入 cURL / OpenAPI」(选 Header Auth)</span></li>
+            <li><b>LangChain</b><span>「OpenAPI toolkit」</span></li>
+          </ul>
+          <div class="pill-row">
+            <a class="pill-white" href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档
+              <span class="eco-mono">GET /web-tool/openapi.yaml</span>
+            </a>
+            <a class="pill-dark" href="/web-tool/llms.txt" target="_blank" rel="noopener noreferrer">Agent 能力清单
+              <span class="eco-mono">llms.txt</span>
+            </a>
+          </div>
+          <p class="dk-auth">鉴权统一配 Header 型 API Key,Header 名 <code>X-API-Key</code>;spec 地址 <code>http://127.0.0.1:7000/web-tool/openapi.yaml</code>。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 引擎风控冷却亮点区 ======================== -->
+  <section class="section" id="cooldown">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">引擎风控</span>
+        <h2>冷却不是故障,是自愈</h2>
+      </div>
+      <div class="cooldown-grid">
+        <div class="f-card reveal">
+          <div class="f-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 5 13 19 16 12 22 12"/></svg>
+          </div>
+          <div class="f-body">
+            <h3>三档冷却,自动恢复</h3>
+            <p>连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求,成功恢复、失败进下一档。</p>
+            <p class="cool-sub">冷却期内该引擎零接触:search / check 快速失败(HTTP 503 <code>engine_cooldown</code> 信封 + <code>Retry-After</code>),不发真实请求、不消耗配额;批量判定自动绕行,响应 <code>meta.engines_cooldown</code> 会列出冷却中的引擎,客户端据此跳过,并在 <code>Retry-After</code> 后重试。</p>
+          </div>
+        </div>
+        <div class="engine-panel reveal" style="--reveal-delay:240ms">
+          <div class="engine-row">
+            <div class="eng-top">
+              <span class="eng-name">baidu</span><span class="eng-cn">百度</span>
+              <span class="st-pill st-ok">正常</span>
+            </div>
+            <div class="seg-bar" aria-hidden="true">
+              <span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span>
+            </div>
+          </div>
+          <div class="engine-row">
+            <div class="eng-top">
+              <span class="eng-name">sogou</span><span class="eng-cn">搜狗</span>
+              <span class="st-pill st-cool">冷却</span>
+              <span class="st-count">剩余 09:42</span>
+            </div>
+            <div class="seg-bar" aria-hidden="true">
+              <span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg on-warn"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+            </div>
+          </div>
+          <div class="engine-row">
+            <div class="eng-top">
+              <span class="eng-name">so360</span><span class="eng-cn">360 搜索</span>
+              <span class="st-pill st-ok">正常</span>
+            </div>
+            <div class="seg-bar" aria-hidden="true">
+              <span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span><span class="seg on-ok"></span>
+            </div>
+          </div>
+          <div class="engine-row">
+            <div class="eng-top">
+              <span class="eng-name">bing</span><span class="eng-cn">必应</span>
+              <span class="st-pill st-cb">熔断</span>
+            </div>
+            <div class="seg-bar" aria-hidden="true">
+              <span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span><span class="seg on-err"></span>
+            </div>
+          </div>
+          <p class="viz-note">示意状态,用于说明「正常 / 冷却 / 熔断」三种语义;实时倒计时与运维操作见控制台「引擎状态」页(10 秒自动刷新)。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 快速开始 ======================== -->
+  <section class="section" id="quickstart">
+    <div class="container">
+      <div class="sec-head reveal">
+        <span class="eyebrow">快速开始</span>
+        <h2>Docker 一条命令,自托管上线</h2>
+      </div>
+      <div class="qs-grid">
+        <div class="cmd-card reveal">
+          <div class="cmd-head">
+            <span class="cmd-step">1</span>
+            <span>启动服务并检查健康</span>
+            <button class="copy-btn" type="button" data-copy-target="#cmdUp" aria-label="复制启动命令">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <span class="copy-label">复制</span>
+            </button>
+          </div>
+          <pre id="cmdUp">docker compose -f deploy/docker-compose.yml up -d --build
+curl http://127.0.0.1:7000/web-tool/health</pre>
+        </div>
+        <div class="cmd-card reveal" style="--reveal-delay:240ms">
+          <div class="cmd-head">
+            <span class="cmd-step">2</span>
+            <span>发起首个收录判定</span>
+            <button class="copy-btn" type="button" data-copy-target="#cmdCheck" aria-label="复制收录判定 curl 示例">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              <span class="copy-label">复制</span>
+            </button>
+          </div>
+          <pre id="cmdCheck">curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
+  -H "X-API-Key: sk-w2a-…" -H "Content-Type: application/json" \
+  -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'</pre>
+        </div>
+      </div>
+      <div class="qs-notes reveal" style="--reveal-delay:480ms">
+        <p class="qs-note">部署完成后,浏览器打开 <a href="http://127.0.0.1:7000/web-tool/">http://127.0.0.1:7000/web-tool/</a> 进入官网(即本页);需要本机装有 Chrome / Chromium / Edge,浏览器模式默认开启。</p>
+        <p class="qs-note">管理面板位于 <a href="/web-tool/console/">/web-tool/console/</a>,默认管理员 <span class="inline-code">admin / admin123</span> —— 部署后立即在面板「系统设置」页修改密码。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 生态 CTA ======================== -->
+  <section class="eco">
+    <div class="container">
+      <div class="sec-head center reveal" style="margin-bottom:0">
+        <span class="eyebrow">开放生态</span>
+        <h2>加入 Web2API 生态</h2>
+        <div class="eco-sub">
+          <p>自托管、MIT 开源、Agent 双入口 —— 把收录判定接进你的工作流。</p>
+          <p>控制台创建密钥,一条命令接入 MCP;数据始终留在你自己的机器上。</p>
+        </div>
+        <div class="eco-btns">
+          <a class="pill-white" href="/web-tool/console/">进入控制台
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+          </a>
+          <a class="pill-dark" href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>
+          <a class="pill-dark" href="/web-tool/mcp" target="_blank" rel="noopener noreferrer">MCP Server</a>
+          <a class="pill-dark" href="https://github.com/xuboboo/web2api" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ======================== 页脚 ======================== -->
+<footer class="footer">
+  <div class="container">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a class="brand" href="#top" aria-label="Web2API 网站收录查询开放平台 · 返回顶部">
+          <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><path d="M14 22L22 46L32 26L42 46L50 22" fill="none" stroke="#141413" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="brand-name">Web2API</span>
+        </a>
+        <p class="foot-tagline">自托管的网站收录查询开放平台 —— 收录判定、四引擎搜索、Agent 双入口(MCP + OpenAPI)。</p>
+      </div>
+      <nav class="foot-links" aria-label="页脚链接">
+        <a href="/web-tool/console/">控制台</a>
+        <a href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>
+        <a href="/web-tool/mcp" target="_blank" rel="noopener noreferrer">MCP</a>
+        <a href="https://github.com/xuboboo/web2api" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Web2API 网站收录查询开放平台 · 基于 MIT 协议开源</span>
+    </div>
+  </div>
+  <div class="watermark-wrap" aria-hidden="true">
+    <div class="watermark">Web2API</div>
+  </div>
+</footer>
+
+<script src="assets/app.js" defer></script>
+</body>
+</html>

@@ -5,7 +5,8 @@
  * 覆盖固定 /web-tool 子路径下的契约面:
  *   - 前缀与根路径:根路径无任何路由(404),/web-tool/* 才是全部端点
  *   - 健康端点:/web-tool/health /ready /stats
- *   - 管理面板:/web-tool/ 返回 index.html,/web-tool/assets/* 静态资源
+ *   - 静态挂载:官网 /web-tool/ 返回 index.html;管理控制台 /web-tool/console/
+ *     返回 index.html(no-slash 301 → /console/),各自 assets 静态资源可达
  *   - 管理 API:登录(成功/失败)、/api/me、/api/keys 生命周期、统计端点
  *   - 公网 API:401/429/400 错误信封、/v1/quota、/v1/engines、/v1/index/check
  *   - Agent 平面:MCP initialize→initialized→tools/list→tools/call 握手链、
@@ -25,7 +26,7 @@
  *
  * ⚠ 登录锁定测试会在套件末尾对 admin@<本机IP> 连续输错密码,触发 15 分钟锁定
  *   (security.login_lockout 默认值),套件跑完后该 用户名+IP 在锁定窗口内无法
- *   登录面板。CI/无人值守环境可放心;人工环境可设 E2E_SKIP_LOCKOUT=1 跳过。
+ *   登录控制台。CI/无人值守环境可放心;人工环境可设 E2E_SKIP_LOCKOUT=1 跳过。
  *
  *   node deploy/e2e.mjs [baseUrl]
  *   WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
@@ -103,13 +104,22 @@ await test('infra', '/web-tool/ready 与 /web-tool/stats', async () => {
   assert(stats.status === 200, `stats=${stats.status}`);
 });
 
-await test('infra', '管理面板 /web-tool/ 与静态资源', async () => {
+await test('infra', '官网 /web-tool/ 与控制台 /web-tool/console/ 静态挂载', async () => {
   const r = await fetch(ROOT + '/', { redirect: 'manual' });
   const html = await r.text();
-  assert(r.status === 200, `panel status=${r.status}`);
-  assert(html.includes('Web2API'), 'panel html missing product name');
+  assert(r.status === 200, `site status=${r.status}`);
+  assert(html.includes('Web2API'), 'site html missing product name');
   const asset = await fetch(ROOT + '/assets/app.js');
   assert(asset.status === 200, `assets/app.js status=${asset.status}`);
+  // 管理控制台挂在 /web-tool/console/(no-slash 旧书签 301 → /console/)
+  const redir = await fetch(ROOT + '/console', { redirect: 'manual' });
+  assert(redir.status === 301, `console no-slash status=${redir.status}, want 301`);
+  const panel = await fetch(ROOT + '/console/');
+  const panelHtml = await panel.text();
+  assert(panel.status === 200, `console status=${panel.status}`);
+  assert(panelHtml.includes('管理控制台'), 'console html missing marker');
+  const panelAsset = await fetch(ROOT + '/console/assets/app.js');
+  assert(panelAsset.status === 200, `console/assets/app.js status=${panelAsset.status}`);
 });
 
 // ---------------------------------------------------------------------------

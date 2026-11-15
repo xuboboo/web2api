@@ -6,14 +6,17 @@ package cmd
 // CheckIndexed implementation. All offline (mock engines, no network).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/xuboboo/web2api/core"
 	"github.com/xuboboo/web2api/platform"
 	"golang.org/x/time/rate"
@@ -387,5 +390,70 @@ func TestRawEngineCheckIndexedShapes(t *testing.T) {
 	engine = &rawEngine{name: "bing"} // resolveEngineSpec("bing") has no rawSearchFn
 	if _, err := engine.CheckIndexed(context.Background(), "https://a.example.com/one", core.Query{}); !errors.Is(err, core.ErrNotImplemented) {
 		t.Fatalf("expected ErrNotImplemented, got %v", err)
+	}
+}
+
+// requestWithLocation performs one request and returns status, body and the
+// Location header (platformRequest deliberately stays header-blind, so the
+// 301 contract gets its own narrow helper).
+func requestWithLocation(t *testing.T, app *fiber.App, method, path string) (int, string, string) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		t.Fatalf("%s %s: read body: %v", method, path, err)
+	}
+	return resp.StatusCode, buf.String(), resp.Header.Get("Location")
+}
+
+// TestStaticMountContract locks the 三期 static mount layout through the real
+// assembly: the marketing site (web/site) at the BasePath root, the admin
+// console (web/admin) at BasePath+"/console/", the legacy no-slash console
+// bookmark 301-ing to the canonical URL, and the bare root staying empty.
+// API/agent-plane routes keep priority by registration order.
+func TestStaticMountContract(t *testing.T) {
+	serv, _, _ := assembleCooldownTest(t)
+	app := serv.FiberApp()
+
+	// 官网: GET /web-tool/ → 200 site index.html (console CTA keyword).
+	status, body := platformRequest(t, app, http.MethodGet, core.BasePath+"/", "", nil)
+	if status != http.StatusOK || !strings.Contains(body, "进入控制台") {
+		t.Fatalf("GET %s/ status=%d (want site index.html), body head=%.120s", core.BasePath, status, body)
+	}
+
+	// Legacy bookmark: GET /web-tool/console → 301 Location /web-tool/console/.
+	status, body, loc := requestWithLocation(t, app, http.MethodGet, core.BasePath+"/console")
+	if status != http.StatusMovedPermanently || loc != core.BasePath+"/console/" {
+		t.Fatalf("GET %s/console status=%d location=%q body=%.80s, want 301 → %s/console/",
+			core.BasePath, status, loc, body, core.BasePath)
+	}
+
+	// 管理控制台: GET /web-tool/console/ → 200 panel index.html.
+	status, body = platformRequest(t, app, http.MethodGet, core.BasePath+"/console/", "", nil)
+	if status != http.StatusOK || !strings.Contains(body, "管理控制台") {
+		t.Fatalf("GET %s/console/ status=%d (want console index.html), body head=%.120s", core.BasePath, status, body)
+	}
+
+	// Console static assets resolve under the new mount point.
+	for _, asset := range []string{"/console/assets/app.js", "/console/assets/style.css"} {
+		status, _ = platformRequest(t, app, http.MethodGet, core.BasePath+asset, "", nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET %s%s status=%d, want 200", core.BasePath, asset, status)
+		}
+	}
+
+	// Root paths stay empty: nothing outside the fixed prefix.
+	status, _ = platformRequest(t, app, http.MethodGet, "/", "", nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("bare root status=%d, want 404", status)
+	}
+	status, _ = platformRequest(t, app, http.MethodGet, "/console/assets/app.js", "", nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("bare /console/assets/app.js status=%d, want 404", status)
 	}
 }

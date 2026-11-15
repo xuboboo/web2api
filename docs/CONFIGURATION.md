@@ -52,14 +52,14 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `max_processes` | `4` | `6` | 并发 Chrome 进程上限 |
 | `idle_ttl` | `10m` | `5m` | 空闲 Chrome 回收时间 |
 
-## platform（收录查询平台：管理面板 + /v1/* 公网 API + /api/* 管理 API）
+## platform（收录查询平台：管理控制台 + /v1/* 公网 API + /api/* 管理 API）
 
 | 键 | 默认值 | 本仓库 | 说明 |
 | --- | --- | --- | --- |
-| `enabled` | `true` | `true` | 关闭后不挂载 `/api/*` 与 `/v1/*`，面板静态页与健康端点仍可用 |
+| `enabled` | `true` | `true` | 关闭后不挂载 `/api/*` 与 `/v1/*`，官网与控制台静态页与健康端点仍可用 |
 | `data_dir` | `./data` | `./data` | bbolt 数据库 `web2api.db`、JWT 密钥 `secret.key` 的存放目录 |
-| `admin_username` | `admin` | `admin` | 面板管理员登录名 |
-| `admin_password` | `admin123` | `admin123` | 面板管理员密码（生产环境务必修改） |
+| `admin_username` | `admin` | `admin` | 控制台管理员登录名 |
+| `admin_password` | `admin123` | `admin123` | 控制台管理员密码（生产环境务必修改） |
 | `jwt_expire_hours` | `24` | `24` | 管理员 JWT 有效期（小时） |
 
 说明:存储主路径为 bbolt(纯 Go 无 CGO),打开失败时自动回退等价 JSON 文件存储

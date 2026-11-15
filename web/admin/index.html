@@ -6,48 +6,77 @@
   <meta name="referrer" content="same-origin">
   <meta name="color-scheme" content="light">
   <title>Web2API 网站收录查询开放平台 · 管理控制台</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232e55a5'/%3E%3Cpath d='M18.2 3.5 8.6 17h5.2l-1.4 11.5L22 15h-5.2l1.4-11.5z' fill='%23ffffff'/%3E%3C/svg%3E">
+  <!-- 主题预置:CSS 绘制前同步 w2a_theme,避免暗色闪白(失败时保持亮色默认) -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('w2a_theme') === 'dark') {
+          document.documentElement.classList.add('dark');
+          var m = document.querySelector('meta[name="color-scheme"]');
+          if (m) m.setAttribute('content', 'dark');
+        }
+      } catch (e) { /* 忽略 */ }
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141413'/%3E%3Cpath d='M18.2 3.5 8.6 17h5.2l-1.4 11.5L22 15h-5.2l1.4-11.5z' fill='%23ff8a3d'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
-  <!-- ========== 登录视图 ========== -->
-  <div id="view-login" class="login-wrap hidden">
-    <div class="login-card">
-      <div class="login-logo" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"></path>
-        </svg>
+  <!-- ========== 登录视图:左 45% 品牌区(两主题恒暗)+ 右表单区 ========== -->
+  <div id="view-login" class="login hidden">
+    <div class="login-brand">
+      <h1 class="login-wordmark">Web2API</h1>
+      <p class="login-brand-sub">网站收录查询开放平台 · 管理控制台</p>
+      <div class="login-brand-rule" aria-hidden="true"></div>
+      <div class="login-stats">
+        <div class="login-stat">
+          <b class="ls-accent">4</b>
+          <span>收录引擎(baidu / sogou / so360 / bing)</span>
+        </div>
+        <div class="login-stat">
+          <b>1 URL × 1 引擎 = 1 unit</b>
+          <span>统一计费口径,按天配额</span>
+        </div>
+        <div class="login-stat">
+          <b>24×7</b>
+          <span>单二进制自托管,冷却与熔断自动治理</span>
+        </div>
       </div>
-      <h1 class="login-title">Web2API 网站收录查询开放平台</h1>
-      <p class="login-sub">管理控制台 · 风控与用量治理</p>
-      <form id="login-form" autocomplete="off" novalidate>
-        <div class="field">
-          <label class="field-label" for="login-username">用户名</label>
-          <input id="login-username" name="username" class="input" type="text" placeholder="请输入用户名" maxlength="64">
+    </div>
+    <div class="login-panel">
+      <button id="btn-login-theme" class="icon-btn login-theme-btn" type="button" aria-label="切换深色 / 浅色主题">
+        <svg class="theme-ico-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        <svg class="theme-ico-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+      </button>
+      <div class="login-box">
+        <div class="login-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"></path>
+          </svg>
         </div>
-        <div class="field">
-          <label class="field-label" for="login-password">密码</label>
-          <input id="login-password" name="password" class="input" type="password" placeholder="请输入密码" maxlength="128">
-        </div>
-        <div id="login-error" class="login-error hidden" role="alert"></div>
-        <button id="login-submit" class="btn btn-primary btn-block" type="submit">登 录</button>
-      </form>
-      <p class="login-foot">管理员凭据由服务端配置提供(platform.admin_username / admin_password)</p>
+        <h2 class="login-title">登录</h2>
+        <p class="login-sub">Web2API 网站收录查询开放平台 · 管理控制台</p>
+        <form id="login-form" autocomplete="off" novalidate>
+          <div class="field">
+            <label class="field-label" for="login-username">用户名</label>
+            <input id="login-username" name="username" class="input" type="text" placeholder="请输入用户名" maxlength="64">
+          </div>
+          <div class="field">
+            <label class="field-label" for="login-password">密码</label>
+            <input id="login-password" name="password" class="input" type="password" placeholder="请输入密码" maxlength="128">
+          </div>
+          <div id="login-error" class="login-error hidden" role="alert"></div>
+          <button id="login-submit" class="btn btn-primary btn-block" type="submit">登 录</button>
+        </form>
+        <p class="login-foot">管理员凭据由服务端配置提供(platform.admin_username / admin_password)</p>
+      </div>
     </div>
   </div>
 
-  <!-- ========== 主框架 ========== -->
+  <!-- ========== 主框架:左导航 + 60px 顶栏(左品牌/右主题+用户,无页标题)+ 内容区页头块 ========== -->
   <div id="app" class="app hidden">
     <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-logo" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"></path>
-          </svg>
-        </span>
-        <span class="brand-text">Web2API<em class="brand-sub">网站收录查询开放平台</em></span>
-      </div>
       <nav class="nav" id="nav">
         <div class="nav-label">运行</div>
         <a class="nav-item" data-route="#/overview" href="#/overview">
@@ -91,8 +120,19 @@
 
     <div class="main">
       <header class="topbar">
-        <h1 id="page-title" class="topbar-title">总览</h1>
+        <a class="brand" href="#/overview">
+          <span class="brand-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"></path>
+            </svg>
+          </span>
+          <span class="brand-text">Web2API<em class="brand-sub">网站收录查询开放平台</em></span>
+        </a>
         <div class="topbar-right">
+          <button id="btn-theme" class="icon-btn" type="button" aria-label="切换深色 / 浅色主题">
+            <svg class="theme-ico-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+            <svg class="theme-ico-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          </button>
           <span class="topbar-user" title="当前管理员">
             <span class="user-avatar" id="user-avatar">A</span>
             <span id="topbar-username">admin</span>

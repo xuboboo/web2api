@@ -32,7 +32,7 @@ E2E_SKIP_LOCKOUT=1 node deploy/e2e.mjs
 
 | 分组 | 覆盖内容 |
 | --- | --- |
-| `infra` | 根路径无路由（404，含 `/mcp` 只在 `/web-tool` 下）、`/web-tool/health` 引擎清单、`/web-tool/ready` `/stats`、管理面板 `/web-tool/` 与静态资源 |
+| `infra` | 根路径无路由（404，含 `/mcp` 只在 `/web-tool` 下）、`/web-tool/health` 引擎清单、`/web-tool/ready` `/stats`、官网 `/web-tool/` 与管理控制台 `/web-tool/console/` 及各自静态资源 |
 | `admin` | 登录成功/失败（401）、`/web-tool/api/me`、统计端点与 `/web-tool/api/engines` |
 | `keys` | 创建（`sk-w2a-` 格式、完整 key 仅一次）、列表字段、停用→401、重启用、删除→401 |
 | `public` | 401 信封、429 配额（`daily_quota=1` 第二次超额，含 `Retry-After` 头）、400 `EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM`、`/web-tool/v1/engines`、别名 `360`、（可选）真实收录判定 |
@@ -70,7 +70,7 @@ node deploy/steady-check.mjs http://127.0.0.1:7000 3 30000
 | `429 captcha_detected` | 该引擎出口被判为机器人 | 触发引擎冷却（`stability.engine_cooldown`，第 1 档 10 分钟起）；等冷却解除或换代理 |
 | `503 engine_cooldown` | 引擎处于冷却期（快速失败，未发真实请求） | 读 `retry_after_seconds`/`Retry-After`；运维可 `POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复 |
 | `503 circuit_open` | 熔断保护中 | 等待 `circuit_breaker.recovery_seconds` 后自动半开 |
-| `401 unauthorized` | API key 无效/禁用/删除 | 面板检查密钥状态 |
+| `401 unauthorized` | API key 无效/禁用/删除 | 控制台检查密钥状态 |
 | `429 too_many_attempts` | 登录连续失败被锁定（默认 5 次锁 15 分钟） | 等 `Retry-After`；锁定期内正确凭据同样被拒 |
 | `429 quota_exceeded` | key 当日配额用尽 | 调高日配额或等次日清零 |
 | 全部引擎 `429` | 出口 IP 被多引擎同时封禁 | 配代理或长时间静默 |

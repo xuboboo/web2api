@@ -2,7 +2,7 @@
 
 本目录提供 Web2API 收录查询平台的独立部署编排、端到端测试脚本与运维说明。应用配置项见 [../docs/CONFIGURATION.md](../docs/CONFIGURATION.md)，测试设计见 [../docs/TESTING.md](../docs/TESTING.md)。
 
-> **子路径**:整个应用(管理面板、`/v1/*` 公网 API、`/api/*` 管理 API、`/health /ready /stats`、`/{engine}/search`)固定部署在 **`/web-tool`** 前缀之下(代码内常量,无配置项)。所有探针、反向代理统一使用 `/web-tool/health` 等带前缀路径。
+> **子路径**:整个应用(官网、管理控制台、`/v1/*` 公网 API、`/api/*` 管理 API、`/health /ready /stats`、`/{engine}/search`)固定部署在 **`/web-tool`** 前缀之下(代码内常量,无配置项)。所有探针、反向代理统一使用 `/web-tool/health` 等带前缀路径。
 
 ## 1. 目录内容
 
@@ -10,7 +10,7 @@
 | --- | --- |
 | `docker-compose.yml` | 独立部署编排：从仓库根构建镜像、映射 `127.0.0.1:7000`、挂载 `config.yaml`、内置健康检查与日志轮转 |
 | `docker-compose.local.yaml` | 覆盖层：复用根目录 `docker-compose.yaml` 时改用本地镜像（一般不单独使用） |
-| `e2e.mjs` | 平台 E2E 冒烟套件(前缀/面板/管理 API/公网 API 契约、MCP 握手链、冷却 force→503→reset、openapi.yaml/llms.txt、登录锁定;零依赖 Node 18+) |
+| `e2e.mjs` | 平台 E2E 冒烟套件(前缀/官网与控制台静态挂载/管理 API/公网 API 契约、MCP 握手链、冷却 force→503→reset、openapi.yaml/llms.txt、登录锁定;零依赖 Node 18+) |
 | `steady-check.mjs` | 低节流稳态观测脚本(对搜索引擎的持续可用性,冷却 503 单独标记) |
 | `run-e2e.ps1` | PowerShell 包装器 |
 | `e2e-results/` | 每次运行的 JSON 报告 |
@@ -29,7 +29,7 @@ curl.exe -s http://127.0.0.1:7000/web-tool/health
 部署形态：
 
 - 容器名 `serp`，镜像 `web2api:local`（构建自仓库 `Dockerfile`，运行时为 `chromedp/headless-shell`）
-- 入口 **`http://127.0.0.1:7000/web-tool/`**（管理面板；根路径无任何路由）
+- 官网入口 **`http://127.0.0.1:7000/web-tool/`**；管理控制台 **`http://127.0.0.1:7000/web-tool/console/`**（根路径 `/` 无任何路由）
 - 端口 `127.0.0.1:7000`（仅回环；需要外部访问时改 compose 里的映射或在前面加反向代理,见下文 nginx 示例）
 - `shm_size: 2gb`（Chrome 渲染必需）、`init: true`（tini 回收 Chrome 子进程）
 - 配置以只读方式挂载：`../config.yaml:/usr/src/app/config.yaml:ro`
@@ -92,7 +92,7 @@ proxies:
 ## 5. 测试
 
 ```powershell
-# 平台契约冒烟(前缀/面板/管理/公网 API + MCP 握手链 + 冷却 force→503→reset + 登录锁定;
+# 平台契约冒烟(前缀/官网与控制台/管理/公网 API + MCP 握手链 + 冷却 force→503→reset + 登录锁定;
 # E2E_LIVE_INDEX_CHECK=1 追加真实收录判定;E2E_SKIP_LOCKOUT=1 跳过锁定测试——
 # 该测试在套件末尾会锁定 admin@本机IP 默认 15 分钟)
 node deploy/e2e.mjs http://127.0.0.1:7000
@@ -133,11 +133,11 @@ docker compose -f deploy/docker-compose.yml down
 | `429 captcha_detected` | 引擎出口被反爬拦截 | 等冷却或换代理 |
 | `503 circuit_open` | 熔断中（默认 20s 后半开） | 等待；持续出现说明出口持续被封 |
 | `502 parser_failure` | SERP 结构变化导致解析失败 | 检查对应引擎 `selectors.go`,用引擎单元测试 + testdata 快照复现 |
-| `401 unauthorized` | API key 无效/被禁用/已删除 | 面板 `/web-tool/` → API 密钥页检查 |
+| `401 unauthorized` | API key 无效/被禁用/已删除 | 控制台 `/web-tool/console/` → API 密钥页检查 |
 | `429 quota_exceeded` | key 当日配额用尽 | 调高日配额或等次日清零 |
 | 端口冲突 | 宿主机 7000 被占用 | 改 compose 的端口映射，或清理残留容器 |
 | 容器不 healthy | 浏览器启动失败/配置错误 | `docker logs serp` 查看启动日志 |
 
-## 8. 上游与许可
+## 8. 许可证
 
-基于 [Web2API](https://github.com/xuboboo/web2api)（MIT）改造；上游 README 存档于 [../docs/UPSTREAM-README.md](../docs/UPSTREAM-README.md)。
+MIT，见 [../LICENSE](../LICENSE)。

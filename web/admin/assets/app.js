@@ -3,12 +3,14 @@
  * 原生 ES2018 JavaScript,零依赖、零构建。
  *
  * 结构:
- *   1. 常量与内联图标(API_BASE 与 core.BasePath 对齐)
+ *   1. 常量与内联图标(API_BASE 与 core.BasePath 对齐;PAGE_META 页头块)
  *   2. DOM 工具 / 格式化工具 / 骨架屏
  *   3. Toast / 剪贴板 / 按钮三态
+ *   3b. 双主题(html.dark + localStorage w2a_theme)
+ *   3c. 全局快捷键(/ 或 ⌘K 聚焦搜索,带输入守卫)
  *   4. 登录态与 fetch 统一封装(统一 /web-tool 前缀,401 自动回登录页)
  *   5. 弹窗 / 确认框
- *   6. Hash 路由与视图切换(未知路由渲染 404 视图)
+ *   6. Hash 路由与视图切换(页头块渲染进内容区;未知路由渲染 404 视图;页间过渡)
  *   7. 页面:总览 / 引擎状态 / API 密钥 / 使用日志
  *   8. 页面:在线调试 / Agent 集成 / API 文档 / 系统设置
  *   9. 启动
@@ -21,21 +23,23 @@
   var LS_TOKEN = 'w2a_token';
   var LS_TOKEN_EXP = 'w2a_token_exp';
   var LS_USERNAME = 'w2a_username';
+  var LS_THEME = 'w2a_theme'; // V2 新增:'light' | 'dark'(缺省 light)
 
   /* 所有管理 API 与公网 API 都挂在固定前缀 /web-tool 之下(与 core.BasePath
    * 常量一致;契约固定、不可配置)。api() 统一拼前缀,调用点保持 '/api/...'
    * 字面量,不再出现根绝对路径 fetch。 */
   var API_BASE = '/web-tool';
 
-  var PAGE_TITLES = {
-    '#/overview': '总览',
-    '#/engines': '引擎状态',
-    '#/keys': 'API 密钥',
-    '#/usage': '使用日志',
-    '#/playground': '在线调试',
-    '#/agents': 'Agent 集成',
-    '#/docs': 'API 文档',
-    '#/settings': '系统设置'
+  /* 页头块(在内容区,不在顶栏):title = h1 衬线,desc = 副标(只写真实功能) */
+  var PAGE_META = {
+    '#/overview': { title: '总览', desc: '平台调用统计、近 14 日用量趋势与引擎健康一览。' },
+    '#/engines': { title: '引擎状态', desc: '四大搜索引擎的运行、冷却与熔断状态,支持强制恢复与强制冷却。' },
+    '#/keys': { title: 'API 密钥', desc: '公网 API 鉴权密钥的创建、配额与启停管理。' },
+    '#/usage': { title: '使用日志', desc: '每次收录查询与搜索调用的明细记录,支持按密钥筛选。' },
+    '#/playground': { title: '在线调试', desc: '发起一次真实收录检测,响应结构与 /v1/index/check 完全一致。' },
+    '#/agents': { title: 'Agent 集成', desc: 'MCP 端点与 Claude / Dify / Coze / n8n / LangChain 的接入配置。' },
+    '#/docs': { title: 'API 文档', desc: '全部 REST 端点、MCP 工具与错误码的完整说明。' },
+    '#/settings': { title: '系统设置', desc: '管理员密码修改与平台安全机制说明。' }
   };
   var ROUTE_RE = /^#\/(overview|engines|keys|usage|playground|agents|docs|settings)$/;
 
@@ -290,6 +294,80 @@
     }
   }
 
+  /* ================= 3b. 双主题(html.dark + localStorage w2a_theme) ================= */
+
+  function currentTheme() {
+    return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  }
+
+  function applyTheme(theme) {
+    var dark = theme === 'dark';
+    document.documentElement.classList.toggle('dark', dark);
+    var meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.setAttribute('content', dark ? 'dark' : 'light');
+    // 两个切换钮(登录页 + 顶栏)同步无障碍状态
+    ['btn-theme', 'btn-login-theme'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    });
+  }
+
+  function initTheme() {
+    var stored = '';
+    try { stored = localStorage.getItem(LS_THEME) || ''; } catch (e) { /* 忽略 */ }
+    // head 内联脚本已按存储值预置 class;此处统一兜底并同步按钮状态
+    applyTheme(stored === 'dark' ? 'dark' : 'light');
+  }
+
+  function toggleTheme() {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem(LS_THEME, next); } catch (e) { /* 忽略 */ }
+    applyTheme(next);
+  }
+
+  function bindThemeButtons() {
+    ['btn-theme', 'btn-login-theme'].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.addEventListener('click', toggleTheme);
+    });
+  }
+
+  /* ================= 3c. 全局快捷键:/ 或 ⌘K 聚焦当前页搜索框 =================
+   * 输入守卫:事件目标为 INPUT/TEXTAREA/SELECT 或 isContentEditable 时,
+   * `/` 直接放行不抢焦点(保证 playground URL、密钥名称等输入框可正常键入 /);
+   * ⌘K / Ctrl+K 作为标准快捷键始终可用。 */
+  function isEditableTarget(t) {
+    if (!t) return false;
+    var tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable === true;
+  }
+
+  function focusPageSearch() {
+    var input = document.querySelector('#page .js-page-search');
+    if (!input) return false;
+    input.focus();
+    if (typeof input.select === 'function') {
+      try { input.select(); } catch (e) { /* 忽略 */ }
+    }
+    return true;
+  }
+
+  function bindSearchHotkey() {
+    document.addEventListener('keydown', function (e) {
+      var k = String(e.key || '').toLowerCase();
+      if ((e.metaKey || e.ctrlKey) && k === 'k') {
+        e.preventDefault();
+        focusPageSearch();
+        return;
+      }
+      if (isEditableTarget(e.target)) return; // 输入守卫
+      if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        focusPageSearch();
+      }
+    });
+  }
+
   /* ================= 4. 登录态与 fetch 统一封装 ================= */
 
   function getToken() {
@@ -539,17 +617,31 @@
     }
   }
 
-  /* 未知路由的 404 视图 */
+  /* 未知路由的 404 视图:点阵底纹 + 衬线标题 + mono 未知 hash + 反色返回钮 */
   function renderNotFound(root, hash) {
     var back = el('button', {
-      class: 'btn btn-secondary', type: 'button', text: '返回总览',
+      class: 'btn btn-primary', type: 'button', text: '返回总览',
       onclick: function () { location.hash = '#/overview'; }
     });
     root.appendChild(el('div', { class: 'notfound' },
       el('div', { class: 'nf-code', text: '404' }),
-      el('div', { class: 'nf-title', text: '页面不存在' }),
-      el('div', { class: 'nf-desc', text: '路由 ' + (hash || '(空)') + ' 没有对应的视图,请检查地址或从下方返回。' }),
+      el('h1', { class: 'nf-title', text: '页面不存在' }),
+      el('div', { class: 'nf-hash', text: hash || '(空 hash)' }),
+      el('div', { class: 'nf-desc', text: '该地址没有对应的控制台视图,请检查地址或从下方返回。' }),
       back));
+  }
+
+  /* 页头块:渲染进内容区(h1 衬线 30px/600 + 副标 14px muted + 页头动作区)。
+   * 返回动作区容器,页面把刷新/新建等按钮放进 .page-actions。 */
+  function renderPageHead(root, hash) {
+    var meta = PAGE_META[hash] || { title: '管理控制台', desc: '' };
+    var actions = el('div', { class: 'page-actions' });
+    root.appendChild(el('div', { class: 'page-head' },
+      el('div', { class: 'page-head-text' },
+        el('h1', { class: 'page-title', text: meta.title }),
+        meta.desc ? el('p', { class: 'page-desc', text: meta.desc }) : null),
+      actions));
+    return actions;
   }
 
   function renderRoute() {
@@ -561,30 +653,43 @@
     var hash = location.hash || '';
     var root = $('#page');
     if (!root) return;
+    if (hash === '' || hash === '#') {
+      /* 已登录会话从 canonical 地址(/web-tool/console/,无 hash)直入:
+       * 默认进总览,而不是渲染 404。未登录分支已在上方处理(登录后由 pendingHash 接管)。 */
+      location.hash = '#/overview';
+      return; // hashchange 会再次触发 renderRoute
+    }
     if (!ROUTE_RE.test(hash)) {
       showApp();
       setActiveNav('');
-      var t404 = $('#page-title');
-      if (t404) t404.textContent = '页面不存在';
       document.title = '页面不存在 · Web2API 管理控制台';
       root.innerHTML = '';
       renderNotFound(root, hash);
+      animatePage(root);
       return;
     }
     showApp();
     setActiveNav(hash);
-    var title = $('#page-title');
-    if (title) title.textContent = PAGE_TITLES[hash] || '';
-    document.title = (PAGE_TITLES[hash] || '管理控制台') + ' · Web2API 管理控制台';
+    var meta = PAGE_META[hash] || { title: '管理控制台' };
+    document.title = (meta.title || '管理控制台') + ' · Web2API 管理控制台';
     root.innerHTML = '';
-    if (hash === '#/overview') pageOverview(root);
-    else if (hash === '#/engines') pageEngines(root);
-    else if (hash === '#/keys') pageKeys(root);
-    else if (hash === '#/usage') pageUsage(root);
+    var actions = renderPageHead(root, hash);
+    if (hash === '#/overview') pageOverview(root, actions);
+    else if (hash === '#/engines') pageEngines(root, actions);
+    else if (hash === '#/keys') pageKeys(root, actions);
+    else if (hash === '#/usage') pageUsage(root, actions);
     else if (hash === '#/playground') pagePlayground(root);
     else if (hash === '#/agents') pageAgents(root);
     else if (hash === '#/settings') pageSettings(root);
     else pageDocs(root);
+    animatePage(root);
+  }
+
+  /* 页间切换过渡:fade + 8px 位移(180ms),重排触发以确保每次路由都重放 */
+  function animatePage(root) {
+    root.classList.remove('page-anim');
+    void root.offsetWidth;
+    root.classList.add('page-anim');
   }
 
   /* ================= 通用节点 ================= */
@@ -618,18 +723,20 @@
 
   /* ================= 7. 页面:总览 ================= */
 
-  function pageOverview(root) {
+  function pageOverview(root, actions) {
     var refreshBtn = el('button', {
       class: 'btn btn-secondary btn-sm', type: 'button',
       html: ICONS.refresh + '<span>手动刷新</span>',
-      onclick: function () { loadAll(); }
+      onclick: function () { loadAll(); loadRecent(); }
     });
-    root.appendChild(el('div', { class: 'page-toolbar' },
-      el('div', { class: 'toolbar-desc', text: '统计卡、近 14 日调用与引擎状态汇总。' }),
-      el('div', { class: 'toolbar-actions' }, refreshBtn)));
+    actions.appendChild(refreshBtn);
 
     var wrap = el('div', null);
     root.appendChild(wrap);
+
+    /* 最近日志:独立区块(数据 GET /api/usage?limit=5,只读端点) */
+    var recentCard = el('div', { class: 'card' });
+    root.appendChild(recentCard);
 
     function loadAll() {
       wrap.innerHTML = '';
@@ -643,7 +750,7 @@
         var stats = (res[0] && typeof res[0] === 'object') ? res[0] : {};
         var series = extractTimeseries(res[1]);
         var engines = normalizeEngines(res[2]);
-        wrap.appendChild(buildStatCards(stats));
+        wrap.appendChild(buildStatBand(stats));
         var grid = el('div', { class: 'grid-2' },
           buildChartCard(series),
           buildEngineCard(engines));
@@ -653,7 +760,53 @@
         wrap.appendChild(errorNode(e, function () { loadAll(); }));
       });
     }
+
+    function loadRecent() {
+      recentCard.innerHTML = '';
+      recentCard.appendChild(el('div', { class: 'card-head' },
+        el('h2', { class: 'card-title' }, '最近日志',
+          el('span', { class: 'card-head-sub', text: 'GET /web-tool/api/usage?limit=5' })),
+        el('a', { class: 'link-more', href: '#/usage', text: '查看全部 >' })));
+      var body = el('div', { class: 'card-body flush' });
+      recentCard.appendChild(body);
+      body.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      api('GET', '/api/usage?limit=5').then(function (data) {
+        data = data || {};
+        var items = Array.isArray(data.items) ? data.items : [];
+        body.innerHTML = '';
+        if (!items.length) {
+          body.appendChild(el('div', { class: 'empty' },
+            el('div', { class: 'empty-dot' },
+              el('div', { class: 'empty-title', text: '暂无调用记录' }),
+              el('div', { class: 'empty-desc', text: '发起一次 /v1/index/check 调用后,最近 5 条日志会显示在这里。' }))));
+          return;
+        }
+        var tbody = el('tbody');
+        items.forEach(function (it) {
+          it = it || {};
+          tbody.appendChild(el('tr', null,
+            el('td', { class: 'td-mono', text: fmtDateTime(it.time) }),
+            el('td', { class: 'td-strong', text: it.key_name || ('#' + it.key_id) }),
+            el('td', null, el('span', { class: 'chip', text: it.endpoint || '-' })),
+            el('td', null, statusPill(it.status))));
+        });
+        body.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
+          el('thead', null, el('tr', null,
+            el('th', { text: '时间' }),
+            el('th', { text: '密钥' }),
+            el('th', { text: '端点' }),
+            el('th', { text: '状态' }))),
+          tbody)));
+      }).catch(function (e) {
+        body.innerHTML = '';
+        body.appendChild(el('div', { class: 'empty' },
+          el('div', { class: 'empty-title', text: '最近日志加载失败' }),
+          el('div', { class: 'empty-desc', text: e && e.message ? e.message : '网络异常,请稍后重试' })));
+      });
+    }
+
     loadAll();
+    loadRecent();
   }
 
   function extractTimeseries(res) {
@@ -666,21 +819,22 @@
     return [];
   }
 
-  function buildStatCards(stats) {
+  /* 统计带:一个 hairline 容器内 4 格竖线分隔(§4.4),非独立卡 */
+  function buildStatBand(stats) {
     var defs = [
       { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
       { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
       { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
       { label: '24h 成功率', value: fmtPercent(stats.success_rate_24h), sub: '近 24 小时请求成功率' }
     ];
-    var grid = el('div', { class: 'stat-grid' });
+    var band = el('div', { class: 'stat-band' });
     defs.forEach(function (d) {
-      grid.appendChild(el('div', { class: 'stat-card' },
-        el('div', { class: 'stat-label', text: d.label }),
+      band.appendChild(el('div', { class: 'stat-cell' },
         el('div', { class: 'stat-value', text: d.value }),
+        el('div', { class: 'stat-label', text: d.label }),
         el('div', { class: 'stat-sub', text: d.sub })));
     });
-    return grid;
+    return band;
   }
 
   function buildChartCard(series) {
@@ -695,7 +849,7 @@
     }
     body.appendChild(barChart(series));
     var legend = el('div', { class: 'chart-legend' },
-      el('span', null, el('span', { class: 'dot', style: 'background:#2e55a5' }), '调用次数'),
+      el('span', null, el('span', { class: 'dot' }), '调用次数'),
       el('span', { class: 'muted', text: '悬停柱形可查看 units 与成功数' }));
     body.appendChild(legend);
     return card;
@@ -733,8 +887,9 @@
     for (var g = 0; g <= steps; g++) {
       var val = top * g / steps;
       var y = m.top + ih - (ih * g / steps);
-      svg.appendChild(s('line', { x1: m.left, y1: y, x2: W - m.right, y2: y, stroke: '#E8E8ED', 'stroke-width': 1 }));
-      var yt = s('text', { x: m.left - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#86868B', 'font-family': 'Roboto Mono, monospace' });
+      // SVG 呈现属性写进 style,使 var() 随主题切换
+      svg.appendChild(s('line', { x1: m.left, y1: y, x2: W - m.right, y2: y, style: 'stroke:var(--border);stroke-width:1' }));
+      var yt = s('text', { x: m.left - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 10, style: 'fill:var(--muted-fg);font-family:var(--mono)' });
       yt.textContent = chartTick(val);
       svg.appendChild(yt);
     }
@@ -754,19 +909,19 @@
 
       var rect;
       if (h > 0) {
-        rect = s('rect', { x: x, y: m.top + ih - h, width: bw, height: h, rx: 2, fill: '#2E55A5' });
+        rect = s('rect', { x: x, y: m.top + ih - h, width: bw, height: h, rx: 2, style: 'fill:var(--chart-1)' });
       } else {
-        rect = s('rect', { x: x, y: m.top + ih - 2, width: bw, height: 2, rx: 1, fill: '#D2D2D7' }); // 零值基线占位
+        rect = s('rect', { x: x, y: m.top + ih - 2, width: bw, height: 2, rx: 1, style: 'fill:var(--border)' }); // 零值基线占位
       }
       rect.appendChild(title);
       svg.appendChild(rect);
 
       if (v > 0 && slot >= 30) {
-        var vt = s('text', { x: x + bw / 2, y: m.top + ih - h - 6, 'text-anchor': 'middle', 'font-size': 10, fill: '#2E353F', 'font-family': 'Roboto Mono, monospace' });
+        var vt = s('text', { x: x + bw / 2, y: m.top + ih - h - 6, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:var(--fg);font-family:var(--mono)' });
         vt.textContent = v >= 10000 ? Math.round(v / 1000) + 'k' : String(v);
         svg.appendChild(vt);
       }
-      var xt = s('text', { x: x + bw / 2, y: H - m.bottom + 16, 'text-anchor': 'middle', 'font-size': 10, fill: '#86868B' });
+      var xt = s('text', { x: x + bw / 2, y: H - m.bottom + 16, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:var(--muted-fg)' });
       xt.textContent = dateStr.length >= 10 ? dateStr.slice(5) : dateStr;
       svg.appendChild(xt);
     });
@@ -888,50 +1043,142 @@
       }
       list.appendChild(el('div', { class: 'engine-row' },
         el('div', { class: 'engine-name' },
-          el('span', { class: 'chip chip-indigo', text: eng.name }),
+          el('span', { class: 'chip', text: eng.name }),
           el('span', { class: 'muted', text: ENGINE_LABEL[eng.name] || '' })),
         meta));
     });
     body.appendChild(list);
     var more = el('div', { style: 'padding:10px 0 0;' },
-      el('a', {
-        class: '', href: '#/engines', text: '查看冷却看板与运维操作 >',
-        style: 'color:var(--primary);text-decoration:none;font-size:13px;'
-      }));
+      el('a', { class: 'link-more', href: '#/engines', text: '查看冷却看板与运维操作 >' }));
     body.appendChild(more);
     return card;
   }
 
   /* ================= 7b. 页面:引擎状态(冷却看板) ================= */
 
-  function pageEngines(root) {
-    var toolbar = el('div', { class: 'page-toolbar' },
-      el('div', { class: 'toolbar-desc', text: '连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求,成功恢复、失败进下一档。每 10 秒自动刷新。' }),
-      el('div', { class: 'toolbar-actions' },
-        el('button', {
-          class: 'btn btn-secondary btn-sm', type: 'button',
-          html: ICONS.refresh + '<span>手动刷新</span>',
-          onclick: function () { load(false); }
-        })));
-    root.appendChild(toolbar);
+  function pageEngines(root, actions) {
+    var viewState = { view: 'cards' };
+    /* 引擎分组筛选(STYLE-v2 §5:工具栏含引擎分组 toggle-group):
+     * 平台引擎均为搜索类,按引擎粒度分组——全部 / 各引擎;选中组跨刷新保留。 */
+    var groupState = 'all';
+
+    var groupDefs = [['all', '全部']].concat(Object.keys(ENGINE_LABEL).map(function (name) {
+      return [name, ENGINE_LABEL[name]];
+    }));
+    var groupBtns = {};
+    var groupSeg = el('div', { class: 'seg', role: 'group', 'aria-label': '引擎分组筛选' });
+    groupDefs.forEach(function (pair) {
+      var b = el('button', {
+        class: pair[0] === groupState ? 'on' : '', type: 'button', text: pair[1],
+        onclick: function () {
+          if (groupState === pair[0]) return;
+          groupState = pair[0];
+          Object.keys(groupBtns).forEach(function (k) { groupBtns[k].classList.toggle('on', k === groupState); });
+          renderGrid(lastList);
+          tickCountdowns();
+        }
+      });
+      groupBtns[pair[0]] = b;
+      groupSeg.appendChild(b);
+    });
+
+    var segCards = el('button', { class: 'on', type: 'button', text: '卡片' });
+    var segTable = el('button', { type: 'button', text: '表格' });
+    var seg = el('div', { class: 'seg', role: 'group', 'aria-label': '卡片 / 表格视图切换' }, segCards, segTable);
+    segCards.addEventListener('click', function () { switchView('cards'); });
+    segTable.addEventListener('click', function () { switchView('table'); });
+    var refreshBtn = el('button', {
+      class: 'btn btn-secondary btn-sm', type: 'button',
+      html: ICONS.refresh + '<span>手动刷新</span>',
+      onclick: function () { load(false); }
+    });
+    actions.appendChild(groupSeg);
+    actions.appendChild(seg);
+    actions.appendChild(refreshBtn);
+
+    root.appendChild(el('p', {
+      class: 'page-note',
+      text: '连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求,成功恢复、失败进下一档。每 10 秒自动刷新。'
+    }));
 
     var wrap = el('div', null);
     root.appendChild(wrap);
     var lastList = [];
     var reloadQueued = false;
 
+    function switchView(v) {
+      if (viewState.view === v) return;
+      viewState.view = v;
+      segCards.className = v === 'cards' ? 'on' : '';
+      segTable.className = v === 'table' ? 'on' : '';
+      renderGrid(lastList);
+      tickCountdowns();
+    }
+
     function renderGrid(list) {
       wrap.innerHTML = '';
-      if (!list.length) {
-        wrap.appendChild(el('div', { class: 'card' },
-          emptyNode('暂无引擎状态', '服务端未返回引擎数据。请确认引擎已在 config.yaml 中启用。')));
+      var scoped = (groupState === 'all') ? list : list.filter(function (eng) {
+        return eng && eng.name === groupState;
+      });
+      if (!scoped.length) {
+        if (groupState !== 'all' && list.length) {
+          wrap.appendChild(el('div', { class: 'card' },
+            emptyNode('该分组暂无引擎',
+              '当前分组「' + (ENGINE_LABEL[groupState] || groupState) + '」没有返回引擎数据,可切换分组或确认引擎已在 config.yaml 中启用。')));
+        } else {
+          wrap.appendChild(el('div', { class: 'card' },
+            emptyNode('暂无引擎状态', '服务端未返回引擎数据。请确认引擎已在 config.yaml 中启用。')));
+        }
         return;
       }
-      var grid = el('div', { class: 'engine-grid' });
+      if (viewState.view === 'table') {
+        wrap.appendChild(buildEnginesTable(scoped));
+      } else {
+        var grid = el('div', { class: 'engine-grid' });
+        scoped.forEach(function (eng) {
+          grid.appendChild(engineCardNode(eng));
+        });
+        wrap.appendChild(grid);
+      }
+    }
+
+    /* 表格视图(§4.5 范式):列 = 快照实有字段 */
+    function buildEnginesTable(list) {
+      var tbody = el('tbody');
       list.forEach(function (eng) {
-        grid.appendChild(engineCardNode(eng));
+        var info = engineStateInfo(eng);
+        var btns = buildEngineButtons(eng);
+        var cdCell;
+        if (eng.state === 'cooldown' && eng.until) {
+          var left = eng.until.getTime() - Date.now();
+          cdCell = el('td', { class: 'td-num' },
+            el('span', { class: 'cd-value', 'data-cd-until': String(eng.until.getTime()), text: left > 0 ? fmtRemaining(left) : '等待恢复探测…' }));
+        } else if (eng.state === 'cooldown') {
+          cdCell = el('td', { class: 'td-num muted', text: '冷却中' });
+        } else {
+          cdCell = el('td', { class: 'td-num muted', text: '—' });
+        }
+        tbody.appendChild(el('tr', null,
+          el('td', null, el('b', { text: ENGINE_LABEL[eng.name] || eng.name }), ' ', el('span', { class: 'chip', text: eng.name })),
+          el('td', { class: 'td-mono', text: eng.endpoint || '—' }),
+          el('td', null, el('span', { class: 'pill ' + info.pill, text: info.label })),
+          cdCell,
+          el('td', { class: 'td-num', text: eng.consecutiveBlocks !== null ? String(eng.consecutiveBlocks) : '—' }),
+          el('td', { class: 'td-mono', text: eng.lastErrorAt ? fmtDateTime(eng.lastErrorAt) : '—' }),
+          el('td', { class: 'muted', text: eng.reason || '—' }),
+          el('td', null, el('div', { class: 'row-actions' }, btns.resetBtn, btns.forceBtn))));
       });
-      wrap.appendChild(grid);
+      return el('div', { class: 'card' }, el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
+        el('thead', null, el('tr', null,
+          el('th', { text: '引擎' }),
+          el('th', { text: '端点' }),
+          el('th', { text: '状态' }),
+          el('th', { class: 'td-num-h', text: '冷却剩余' }),
+          el('th', { class: 'td-num-h', text: '连续拦截' }),
+          el('th', { text: '最近错误' }),
+          el('th', { text: '冷却原因' }),
+          el('th', { text: '操作' }))),
+        tbody)));
     }
 
     /* 单秒倒计时:刷新所有 data-cd-until 元素;有冷却到期时触发一次静默刷新 */
@@ -971,47 +1218,8 @@
       });
     }
 
-    /* 每引擎一张状态卡 */
-    function engineCardNode(eng) {
-      var info = engineStateInfo(eng);
-      var cardCls = 'engine-card';
-      if (eng.state === 'cooldown') cardCls += ' is-cooldown';
-      if (eng.state === 'circuit_open') cardCls += ' is-circuit';
-
-      var head = el('div', { class: 'engine-card-head' },
-        el('div', { class: 'engine-card-title' },
-          el('b', { text: ENGINE_LABEL[eng.name] || eng.name }),
-          el('span', { class: 'chip', text: eng.name })),
-        el('span', { class: 'pill ' + info.pill, text: info.label }));
-
-      var body;
-      if (eng.state === 'cooldown' && eng.until) {
-        var left = eng.until.getTime() - Date.now();
-        body = el('div', null,
-          el('div', { class: 'cd-value', 'data-cd-until': String(eng.until.getTime()), text: left > 0 ? fmtRemaining(left) : '等待恢复探测…' }),
-          el('div', { class: 'cd-label', text: '冷却剩余(至 ' + fmtDateTime(eng.until) + ')' }));
-      } else if (eng.state === 'cooldown') {
-        body = el('div', null,
-          el('div', { class: 'cd-value done', text: '冷却' }),
-          el('div', { class: 'cd-label', text: '冷却中(服务端未返回恢复时间,等待下次刷新)' }));
-      } else if (eng.state === 'circuit_open') {
-        body = el('div', null,
-          el('div', { class: 'cd-value done', text: '熔断' }),
-          el('div', { class: 'cd-label', text: '熔断开启:连续失败达阈值,等待半开探测' + (eng.breaker === 'half-open' || eng.breaker === 'halfopen' || eng.breaker === 'half_open' ? '(当前半开)' : '') }));
-      } else {
-        body = el('div', null,
-          el('div', { class: 'cd-value done', text: eng.enabled === false ? '停用' : '正常' }),
-          el('div', { class: 'cd-label', text: eng.enabled === false ? '该引擎已在 config.yaml 中停用' : '运行正常,请求正常放行' }));
-      }
-
-      var facts = el('div', { class: 'engine-facts' });
-      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '冷却原因' }), el('span', { text: eng.reason || '—' })));
-      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '连续拦截' }), el('span', { text: eng.consecutiveBlocks !== null ? eng.consecutiveBlocks + ' 次' : '—' })));
-      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '最近错误' }), el('span', { text: eng.lastErrorAt ? fmtDateTime(eng.lastErrorAt) : '—' })));
-      if (eng.calls !== null || eng.ok !== null) {
-        facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '调用 / 成功' }), el('span', { text: fmtNumber(eng.calls) + ' / ' + fmtNumber(eng.ok) })));
-      }
-
+    /* 强制恢复 / 强制冷却按钮(卡片与表格视图共用;上下文敏感禁用) */
+    function buildEngineButtons(eng) {
       var resetBtn = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '强制恢复' });
       resetBtn.addEventListener('click', function () {
         confirmDialog({
@@ -1048,10 +1256,53 @@
         forceBtn.disabled = true;
         forceBtn.title = '冷却中,无需再次强制冷却';
       }
+      return { resetBtn: resetBtn, forceBtn: forceBtn };
+    }
 
-      var actions = el('div', { class: 'engine-actions' }, resetBtn, forceBtn);
+    /* 每引擎一张状态卡:字段仅限 /api/engines 快照
+     * (engine/endpoint/enabled/breaker/state/until/reason/consecutive_blocks/last_error_at) */
+    function engineCardNode(eng) {
+      var info = engineStateInfo(eng);
+      var cardCls = 'engine-card';
+      if (eng.state === 'cooldown') cardCls += ' is-cooldown';
+      if (eng.state === 'circuit_open') cardCls += ' is-circuit';
 
-      return el('div', { class: cardCls }, head, body, facts, actions);
+      var head = el('div', { class: 'engine-card-head' },
+        el('div', { class: 'engine-card-title' },
+          el('b', { text: ENGINE_LABEL[eng.name] || eng.name }),
+          el('span', { class: 'chip', text: eng.name })),
+        el('span', { class: 'pill ' + info.pill, text: info.label }));
+
+      var body;
+      if (eng.state === 'cooldown' && eng.until) {
+        var left = eng.until.getTime() - Date.now();
+        body = el('div', null,
+          el('div', { class: 'cd-value', 'data-cd-until': String(eng.until.getTime()), text: left > 0 ? fmtRemaining(left) : '等待恢复探测…' }),
+          el('div', { class: 'cd-label', text: '冷却剩余(至 ' + fmtDateTime(eng.until) + ')' }));
+      } else if (eng.state === 'cooldown') {
+        body = el('div', null,
+          el('div', { class: 'cd-value done', text: '冷却' }),
+          el('div', { class: 'cd-label', text: '冷却中(服务端未返回恢复时间,等待下次刷新)' }));
+      } else if (eng.state === 'circuit_open') {
+        body = el('div', null,
+          el('div', { class: 'cd-value done', text: '熔断' }),
+          el('div', { class: 'cd-label', text: '熔断开启:连续失败达阈值,等待半开探测' + (eng.breaker === 'half-open' || eng.breaker === 'halfopen' || eng.breaker === 'half_open' ? '(当前半开)' : '') }));
+      } else {
+        body = el('div', null,
+          el('div', { class: 'cd-value done', text: eng.enabled === false ? '停用' : '正常' }),
+          el('div', { class: 'cd-label', text: eng.enabled === false ? '该引擎已在 config.yaml 中停用' : '运行正常,请求正常放行' }));
+      }
+
+      var btns = buildEngineButtons(eng);
+      var facts = el('div', { class: 'engine-facts' });
+      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '端点' }), el('span', { text: eng.endpoint || '—' })));
+      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '冷却原因' }), el('span', { text: eng.reason || '—' })));
+      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '连续拦截' }), el('span', { text: eng.consecutiveBlocks !== null ? eng.consecutiveBlocks + ' 次' : '—' })));
+      facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '最近错误' }), el('span', { text: eng.lastErrorAt ? fmtDateTime(eng.lastErrorAt) : '—' })));
+
+      var cardActions = el('div', { class: 'engine-actions' }, btns.resetBtn, btns.forceBtn);
+
+      return el('div', { class: cardCls }, head, body, facts, cardActions);
     }
 
     /* 强制冷却弹窗:minutes 1–720 */
@@ -1114,41 +1365,85 @@
 
   /* ================= 7c. 页面:API 密钥 ================= */
 
-  function pageKeys(root) {
-    var toolbar = el('div', { class: 'page-toolbar' },
-      el('div', { class: 'toolbar-desc', text: '公网 API 使用 X-API-Key 鉴权;1 URL × 1 引擎 = 1 unit;日配额 0 表示不限。' }),
-      el('div', { class: 'toolbar-actions' },
-        el('button', {
-          class: 'btn btn-primary', type: 'button',
-          html: ICONS.plus + '<span>创建密钥</span>',
-          onclick: function () { openCreateKeyModal(loadAll); }
-        })));
-    root.appendChild(toolbar);
+  function pageKeys(root, actions) {
+    var searchInput = el('input', {
+      class: 'input js-page-search', type: 'search',
+      placeholder: '搜索名称或前缀…', 'aria-label': '搜索密钥'
+    });
+    var searchIcon = el('span', { class: 'search-icon', html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' });
+    var searchKbd = el('kbd', { text: isMacLike() ? '⌘K' : '/' });
+    var searchBox = el('div', { class: 'search-box' }, searchIcon, searchInput, searchKbd);
+    searchInput.addEventListener('input', function () { renderTable(); });
+
+    var createBtn = el('button', {
+      class: 'btn btn-primary', type: 'button',
+      html: ICONS.plus + '<span>创建密钥</span>',
+      onclick: function () { openCreateKeyModal(loadAll); }
+    });
+    actions.appendChild(searchBox);
+    actions.appendChild(createBtn);
+
     var card = el('div', { class: 'card' });
     root.appendChild(card);
+
+    var keys = [];
 
     function loadAll() {
       card.innerHTML = '';
       card.appendChild(skeletonBlock([{ w: 'w30' }, { w: 'w80' }, { w: 'w80' }, { w: 'w60' }]));
       api('GET', '/api/keys').then(function (data) {
-        var keys = Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : []);
+        keys = Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : []);
         state.keysCache = keys;
         card.innerHTML = '';
-        if (!keys.length) {
-          var createBtn = el('button', {
-            class: 'btn btn-primary btn-sm', type: 'button', text: '创建第一个密钥',
-            onclick: function () { openCreateKeyModal(loadAll); }
-          });
-          card.appendChild(emptyNode('还没有 API 密钥', '创建一个密钥,即可开始调用收录查询 API。', createBtn));
-          return;
-        }
-        card.appendChild(buildKeysTable(keys, loadAll));
+        renderTable(true);
       }).catch(function (e) {
         card.innerHTML = '';
         card.appendChild(errorNode(e, loadAll));
       });
     }
+
+    /* 前端过滤:GET /api/keys 为全量返回,搜索只过滤已加载列表(不改请求) */
+    function filteredKeys() {
+      var q = searchInput.value.trim().toLowerCase();
+      if (!q) return keys;
+      return keys.filter(function (k) {
+        k = k || {};
+        return String(k.name || '').toLowerCase().indexOf(q) >= 0 ||
+          String(k.prefix || '').toLowerCase().indexOf(q) >= 0;
+      });
+    }
+
+    function renderTable(fresh) {
+      card.innerHTML = '';
+      if (!keys.length) {
+        var emptyCreate = el('button', {
+          class: 'btn btn-primary btn-sm', type: 'button', text: '创建第一个密钥',
+          onclick: function () { openCreateKeyModal(loadAll); }
+        });
+        card.appendChild(emptyNode('还没有 API 密钥', '创建一个密钥,即可开始调用收录查询 API。', emptyCreate));
+        return;
+      }
+      var list = filteredKeys();
+      if (!list.length) {
+        card.appendChild(el('div', { class: 'empty' },
+          el('div', { class: 'empty-dot' },
+            el('div', { class: 'empty-title', text: '没有匹配的密钥' }),
+            el('div', { class: 'empty-desc', text: '试试更换关键词,或清空搜索框查看全部密钥。' }))));
+        return;
+      }
+      card.appendChild(buildKeysTable(list, loadAll));
+      if (!fresh && list.length !== keys.length) {
+        var info = el('div', { class: 'pagination', style: 'border-top:none;padding-top:0;' },
+          el('span', { class: 'page-info', text: '匹配 ' + list.length + ' / 共 ' + keys.length + ' 条(前端过滤,不改请求)' }));
+        card.appendChild(info);
+      }
+    }
     loadAll();
+  }
+
+  /* 平台判定(仅用于 ⌘K kbd 帽文案,不改变快捷键行为:两种都注册) */
+  function isMacLike() {
+    return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
   }
 
   function buildKeysTable(keys, reload) {
@@ -1212,11 +1507,26 @@
         });
       });
 
+      // 今日用量 + 配额进度细条(daily_quota=0 不限,不渲染进度)
+      var usedNum = Number(k.used_today) || 0;
+      var quotaNum = Number(k.daily_quota) || 0;
+      var usedCell;
+      if (quotaNum > 0) {
+        var pct = Math.min(100, Math.round(usedNum / quotaNum * 100));
+        var barCls = 'qbar' + (pct >= 100 ? ' full' : (pct >= 80 ? ' hot' : ''));
+        usedCell = el('td', { class: 'td-num' },
+          el('div', { text: fmtNumber(k.used_today) }),
+          el('div', { class: barCls, title: '今日 ' + fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' units(' + pct + '%)' },
+            el('i', { style: 'width:' + pct + '%' })));
+      } else {
+        usedCell = el('td', { class: 'td-num', text: fmtNumber(k.used_today) });
+      }
+
       tbody.appendChild(el('tr', null,
         el('td', { class: 'td-strong', text: k.name || '未命名' }),
         el('td', null, el('span', { class: 'chip', text: k.prefix || '-' })),
         el('td', null, el('span', { class: 'pill ' + (isActive ? 'pill-green' : 'pill-gray'), text: isActive ? '启用' : '停用' })),
-        el('td', { class: 'td-num', text: fmtNumber(k.used_today) }),
+        usedCell,
         el('td', { class: 'td-num', text: fmtNumber(k.used_total) }),
         el('td', { class: 'td-num', text: fmtQuota(k.daily_quota) }),
         el('td', { class: 'td-mono', text: fmtDateTime(k.created_at) }),
@@ -1224,7 +1534,8 @@
         el('td', null, el('div', { class: 'row-actions' }, sw, del))));
     });
 
-    return el('div', { class: 'table-wrap' }, el('table', { class: 'table' }, thead, tbody));
+    // keys 页无分页:GET /api/keys 全量返回;行多时容器内纵向滚动,不伪造分页控件
+    return el('div', { class: 'table-scroll' }, el('table', { class: 'table' }, thead, tbody));
   }
 
   function fmtQuota(v) {
@@ -1236,7 +1547,7 @@
   function openCreateKeyModal(onCreated) {
     var nameInput = el('input', { class: 'input', type: 'text', maxlength: '64', placeholder: '例如:生产服务 / 测试环境' });
     var quotaInput = el('input', { class: 'input', type: 'number', min: '0', step: '1', placeholder: '0 表示不限' });
-    var err = el('div', { class: 'login-error hidden' });
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
     var body = el('div', { class: 'modal-body' },
       el('div', { class: 'field' },
         el('label', { class: 'field-label', text: '名称' }),
@@ -1328,8 +1639,14 @@
 
   /* ================= 7d. 页面:使用日志 ================= */
 
-  function pageUsage(root) {
+  function pageUsage(root, actions) {
     var st = state.usage;
+    /* 级别 / 时间筛选:GET /api/usage 仅有 limit/offset/key_id 参数,
+     * 无级别与时间过滤——这两组筛选在当前页数据上前端过滤(下方如实提示),不改请求。 */
+    var localFilter = { level: 'all', range: 'all' };
+    /* 列排序:作用于当前页已加载并经筛选的数据(接口无排序参数,不改请求/分页契约);
+     * 默认 时间 ↓,与接口返回的新→旧原始顺序一致。 */
+    var sortState = { key: 'time', dir: 'desc' };
 
     var filterSelect = el('select', { class: 'inline-select', 'aria-label': '按密钥筛选' });
     filterSelect.appendChild(el('option', { value: '', text: '全部密钥' }));
@@ -1343,16 +1660,51 @@
       html: ICONS.refresh + '<span>刷新</span>',
       onclick: function () { loadKeysForFilter(); loadList(); }
     });
+
+    // 级别 chip:全部 / 2xx / 4xx / 5xx(前端过滤当前页)
+    var levelChips = {};
+    var levelBox = el('div', { class: 'toolbar-actions', role: 'group', 'aria-label': '按状态级别筛选' });
+    [['all', '全部'], ['2xx', '2xx'], ['4xx', '4xx'], ['5xx', '5xx']].forEach(function (pair) {
+      var b = el('button', { class: 'fchip' + (pair[0] === 'all' ? ' on' : ''), type: 'button', text: pair[1] });
+      b.addEventListener('click', function () {
+        localFilter.level = pair[0];
+        Object.keys(levelChips).forEach(function (k) { levelChips[k].classList.toggle('on', k === pair[0]); });
+        renderTable();
+      });
+      levelChips[pair[0]] = b;
+      levelBox.appendChild(b);
+    });
+
+    // 时间 underline tabs:今天 / 7 天 / 30 天(前端过滤当前页)
+    var rangeTabs = {};
+    var rangeBox = el('div', { class: 'utabs', role: 'group', 'aria-label': '按时间范围筛选' });
+    [['all', '全部时间'], ['today', '今天'], ['7d', '7 天'], ['30d', '30 天']].forEach(function (pair) {
+      var b = el('button', { class: pair[0] === 'all' ? 'on' : '', type: 'button', text: pair[1] });
+      b.addEventListener('click', function () {
+        localFilter.range = pair[0];
+        Object.keys(rangeTabs).forEach(function (k) { rangeTabs[k].classList.toggle('on', k === pair[0]); });
+        renderTable();
+      });
+      rangeTabs[pair[0]] = b;
+      rangeBox.appendChild(b);
+    });
+
     var toolbar = el('div', { class: 'page-toolbar' },
-      el('div', { class: 'toolbar-desc', text: '每次 /v1/index/check 与 MCP 工具调用都会记录一条使用日志。' }),
       el('div', { class: 'toolbar-actions' },
-        el('span', { class: 'muted', text: '按密钥筛选:' }),
+        el('span', { class: 'muted', text: '密钥' }),
         filterSelect,
-        refreshBtn));
+        el('span', { class: 'muted', text: '级别' }),
+        levelBox,
+        rangeBox),
+      el('div', { class: 'toolbar-actions' }, refreshBtn));
     root.appendChild(toolbar);
+    root.appendChild(el('p', { class: 'page-note', text: '级别与时间筛选作用于当前页已加载的数据(接口仅支持密钥筛选与分页);每次 /v1/index/check 与 MCP 工具调用都会记录一条使用日志。' }));
 
     var card = el('div', { class: 'card' });
     root.appendChild(card);
+
+    var lastItems = [];
+    var lastTotal = 0;
 
     function currentUrl() {
       var q = '?limit=' + st.limit + '&offset=' + st.offset;
@@ -1360,30 +1712,74 @@
       return '/api/usage' + q;
     }
 
+    function inRange(timeStr) {
+      if (localFilter.range === 'all') return true;
+      var d = parseWhen(timeStr);
+      if (!d) return false;
+      var now = new Date();
+      if (localFilter.range === 'today') {
+        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      }
+      var days = localFilter.range === '7d' ? 7 : 30;
+      return d.getTime() >= now.getTime() - days * 86400000;
+    }
+
+    function inLevel(status) {
+      if (localFilter.level === 'all') return true;
+      var n = Number(status);
+      if (isNaN(n)) return false;
+      if (localFilter.level === '2xx') return n >= 200 && n < 300;
+      if (localFilter.level === '4xx') return n >= 400 && n < 500;
+      return n >= 500;
+    }
+
     function loadList() {
       card.innerHTML = '';
       card.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w80' }, { w: 'w60' }]));
       api('GET', currentUrl()).then(function (data) {
         data = data || {};
-        var total = (typeof data.total === 'number') ? data.total : Number(data.total) || 0;
-        var items = Array.isArray(data.items) ? data.items : [];
-        if (!items.length && st.offset > 0 && total > 0) {
-          st.offset = Math.max(0, Math.floor((total - 1) / st.limit) * st.limit); // offset 越界回调
+        lastTotal = (typeof data.total === 'number') ? data.total : Number(data.total) || 0;
+        lastItems = Array.isArray(data.items) ? data.items : [];
+        if (!lastItems.length && st.offset > 0 && lastTotal > 0) {
+          st.offset = Math.max(0, Math.floor((lastTotal - 1) / st.limit) * st.limit); // offset 越界回调
           loadList();
           return;
         }
-        card.innerHTML = '';
-        if (!items.length) {
-          card.appendChild(emptyNode('暂无调用记录',
-            st.keyId ? '当前筛选条件下还没有日志,试试切换密钥或点击刷新。' : '发起一次 /v1/index/check 调用后,这里会出现日志。'));
-          return;
-        }
-        card.appendChild(buildUsageTable(items));
-        card.appendChild(buildPagination(total, items.length, loadList));
+        renderTable();
       }).catch(function (e) {
         card.innerHTML = '';
         card.appendChild(errorNode(e, loadList));
       });
+    }
+
+    function renderTable() {
+      card.innerHTML = '';
+      if (!lastItems.length) {
+        card.appendChild(emptyNode('暂无调用记录',
+          st.keyId ? '当前筛选条件下还没有日志,试试切换密钥或点击刷新。' : '发起一次 /v1/index/check 调用后,这里会出现日志。'));
+        return;
+      }
+      var visible = lastItems.filter(function (it) {
+        it = it || {};
+        return inLevel(it.status) && inRange(it.time);
+      });
+      if (!visible.length) {
+        card.appendChild(el('div', { class: 'empty' },
+          el('div', { class: 'empty-dot' },
+            el('div', { class: 'empty-title', text: '当前筛选条件下无记录' }),
+            el('div', { class: 'empty-desc', text: '级别与时间筛选仅作用于当前页数据,可切换筛选或翻页查看。' }))));
+        return;
+      }
+      card.appendChild(buildUsageTable(sortItems(visible, sortState), sortState, function (key) {
+        if (sortState.key === key) {
+          sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          sortState.key = key;
+          sortState.dir = 'asc';
+        }
+        renderTable();
+      }));
+      card.appendChild(buildPagination(lastTotal, lastItems.length, loadList));
     }
 
     function loadKeysForFilter() {
@@ -1414,20 +1810,69 @@
     loadList();
   }
 
-  function buildUsageTable(items) {
-    var thead = el('thead', null, el('tr', null,
-      el('th', { text: '时间' }),
-      el('th', { text: '密钥' }),
-      el('th', { text: '端点' }),
-      el('th', { text: '引擎' }),
-      el('th', { class: 'td-num-h', text: 'URL 数' }),
-      el('th', { class: 'td-num-h', text: 'Units' }),
-      el('th', { text: 'HTTP 状态' }),
-      el('th', { class: 'td-num-h', text: '耗时' })));
+  /* 使用日志表:全部列保留(时间/密钥/端点/引擎/URL 数/Units/HTTP 状态/耗时);行点击展开详情 */
+  /* 使用日志列定义:8 列全部可排序(§4.5 可排序列名后置 ⇅ 图标)。
+   * val() 取排序键:时间/数字取数值,文本列取展示字符串。 */
+  var USAGE_COLS = [
+    { key: 'time', label: '时间', num: false, val: function (it) { var d = parseWhen(it.time); return d ? d.getTime() : 0; } },
+    { key: 'key', label: '密钥', num: false, val: function (it) { return String(it.key_name || ('#' + it.key_id) || ''); } },
+    { key: 'endpoint', label: '端点', num: false, val: function (it) { return String(it.endpoint || ''); } },
+    { key: 'engines', label: '引擎', num: false, val: function (it) { return fmtEngines(it.engines); } },
+    { key: 'urls', label: 'URL 数', num: true, val: function (it) { return Number(it.urls) || 0; } },
+    { key: 'units', label: 'Units', num: true, val: function (it) { return Number(it.units) || 0; } },
+    { key: 'status', label: 'HTTP 状态', num: true, val: function (it) { return Number(it.status) || 0; } },
+    { key: 'took_ms', label: '耗时', num: true, val: function (it) { return Number(it.took_ms) || 0; } }
+  ];
+
+  function usageColByKey(key) {
+    for (var i = 0; i < USAGE_COLS.length; i++) {
+      if (USAGE_COLS[i].key === key) return USAGE_COLS[i];
+    }
+    return null;
+  }
+
+  function sortItems(items, st) {
+    var col = usageColByKey(st && st.key);
+    if (!col) return items.slice();
+    var dir = (st.dir === 'asc') ? 1 : -1;
+    return items.slice().sort(function (a, b) {
+      var va = col.val(a || {});
+      var vb = col.val(b || {});
+      var r = (typeof va === 'number' && typeof vb === 'number')
+        ? (va - vb)
+        : String(va).localeCompare(String(vb), 'zh-Hans-CN');
+      if (r === 0) r = (parseWhen((a || {}).time) || 0) - (parseWhen((b || {}).time) || 0);
+      return r * dir;
+    });
+  }
+
+  function buildUsageTable(items, sortState, onSort) {
+    var headCells = USAGE_COLS.map(function (col) {
+      var active = sortState && sortState.key === col.key;
+      var dir = active ? sortState.dir : null;
+      var ic = active ? (dir === 'asc' ? '↑' : '↓') : '⇅';
+      var th = el('th', {
+        class: 'th-sort' + (col.num ? ' td-num-h' : ''),
+        'aria-sort': active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none',
+        tabindex: '0',
+        title: '点击按「' + col.label + '」排序',
+        onclick: function () { if (typeof onSort === 'function') onSort(col.key); },
+        onkeydown: function (ev) {
+          if (ev && (ev.key === 'Enter' || ev.key === ' ')) {
+            ev.preventDefault();
+            if (typeof onSort === 'function') onSort(col.key);
+          }
+        }
+      },
+        el('span', { text: col.label }),
+        el('span', { class: 'sort-ic', 'aria-hidden': 'true', text: ic }));
+      return th;
+    });
+    var thead = el('thead', null, el('tr', null, headCells));
     var tbody = el('tbody');
     items.forEach(function (it) {
       it = it || {};
-      tbody.appendChild(el('tr', null,
+      var tr = el('tr', { class: 'row-click', title: '点击展开请求详情' },
         el('td', { class: 'td-mono', text: fmtDateTime(it.time) }),
         el('td', { class: 'td-strong', text: it.key_name || ('#' + it.key_id) }),
         el('td', null, el('span', { class: 'chip', text: it.endpoint || '-' })),
@@ -1435,9 +1880,64 @@
         el('td', { class: 'td-num', text: fmtNumber(it.urls) }),
         el('td', { class: 'td-num', text: fmtNumber(it.units) }),
         el('td', null, statusPill(it.status)),
-        el('td', { class: 'td-num', text: fmtDuration(it.took_ms) })));
+        el('td', { class: 'td-num', text: fmtDuration(it.took_ms) }));
+      var detailTr = el('tr', { class: 'detail-row hidden' },
+        el('td', { colspan: '8' }));
+      tr.addEventListener('click', function () {
+        var open = detailTr.classList.contains('hidden');
+        detailTr.classList.toggle('hidden', !open);
+        tr.classList.toggle('row-open', open);
+        if (open && !detailTr.firstChild.firstChild) {
+          detailTr.firstChild.appendChild(buildUsageDetail(it));
+        }
+      });
+      tbody.appendChild(tr);
+      tbody.appendChild(detailTr);
     });
     return el('div', { class: 'table-wrap' }, el('table', { class: 'table' }, thead, tbody));
+  }
+
+  /* 行展开详情:终端卡呈现该条日志记录的全部契约字段(§4.6) */
+  function buildUsageDetail(it) {
+    var record = {
+      time: it.time || null,
+      key_id: it.key_id || '',
+      key_name: it.key_name || '',
+      endpoint: it.endpoint || '',
+      engines: Array.isArray(it.engines) ? it.engines : [],
+      urls: Number(it.urls) || 0,
+      units: Number(it.units) || 0,
+      status: Number(it.status) || 0,
+      took_ms: Number(it.took_ms) || 0
+    };
+    var statusCls = 'term-status';
+    var n = Number(it.status);
+    if (!isNaN(n)) {
+      if (n >= 200 && n < 300) statusCls += ' ok';
+      else if (n >= 400) statusCls += ' err';
+    }
+    return el('div', { class: 'term detail-term' },
+      el('div', { class: 'term-head' },
+        el('div', { class: 'term-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
+        el('span', { class: 'code-lang', text: 'JSON · 日志记录' })),
+      el('pre', { class: 'term-pre', html: highlightJson(JSON.stringify(record, null, 2)) }),
+      el('div', { class: 'term-foot' },
+        el('span', { text: String(it.endpoint || '/v1/index/check') }),
+        el('span', { class: statusCls }, el('i'), el('span', { text: isNaN(n) ? '—' : n + ' ' + httpReason(n) }))));
+  }
+
+  function httpReason(n) {
+    if (n >= 200 && n < 300) return 'OK';
+    if (n === 400) return 'Bad Request';
+    if (n === 401) return 'Unauthorized';
+    if (n === 403) return 'Blocked';
+    if (n === 404) return 'Not Found';
+    if (n === 429) return 'Too Many Requests';
+    if (n === 500) return 'Internal Server Error';
+    if (n === 502) return 'Bad Gateway';
+    if (n === 503) return 'Service Unavailable';
+    if (n === 504) return 'Gateway Timeout';
+    return '';
   }
 
   function statusPill(v) {
@@ -1476,11 +1976,32 @@
       nextBtn);
   }
 
+  /* JSON 语法高亮:先转义 HTML 再包 span(数据来自 JSON.stringify,无注入面) */
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function highlightJson(json) {
+    var escaped = escapeHtml(json);
+    // 字符串(键名后置冒号区分 key/value)/ 数字 / 字面量
+    escaped = escaped.replace(/&quot;(?:[^&]|&(?!quot;))*&quot;(\s*:)?/g, function (m, colon) {
+      if (colon) return '<span class="jx-key">' + m + '</span>';
+      return '<span class="jx-str">' + m + '</span>';
+    });
+    escaped = escaped.replace(/\b(-?\d+(?:\.\d+)?)\b/g, '<span class="jx-num">$1</span>');
+    escaped = escaped.replace(/\b(true|false)\b/g, '<span class="jx-bool">$1</span>');
+    escaped = escaped.replace(/\bnull\b/g, '<span class="jx-null">null</span>');
+    return escaped;
+  }
+
   /* ================= 8. 页面:在线调试 ================= */
 
   function pagePlayground(root) {
-    var pgState = { view: 'table', lastData: null, lastReq: null };
+    var pgState = { view: 'table', lastData: null, lastReq: null, lastStatus: null };
 
+    /* 左:参数表单(仅真实控件:urls + engines,请求体 { urls, engines }) */
     var urlsTa = el('textarea', {
       class: 'input pg-textarea',
       'aria-label': 'URL 列表',
@@ -1517,7 +2038,7 @@
     checksBox.addEventListener('change', updateCount);
     updateCount();
 
-    var formErr = el('div', { class: 'form-err hidden' });
+    var formErr = el('div', { class: 'form-err hidden', role: 'alert' });
     function showFormErr(msg) {
       formErr.textContent = msg;
       formErr.classList.remove('hidden');
@@ -1530,7 +2051,7 @@
       class: 'btn btn-primary btn-block', type: 'button', text: '开始检测'
     });
     var curlBtn = el('button', {
-      class: 'btn btn-secondary btn-block', type: 'button',
+      class: 'btn btn-outline btn-block', type: 'button',
       html: ICONS.copy + '<span>复制等价 curl</span>'
     });
 
@@ -1550,27 +2071,43 @@
         el('div', { style: 'height:8px;' }),
         curlBtn));
 
-    /* 右侧:结果区 */
-    var segTable = el('button', { class: 'on', type: 'button', text: '表格' });
-    var segJson = el('button', { type: 'button', text: 'JSON' });
-    var seg = el('div', { class: 'seg' }, segTable, segJson);
+    /* 右:终端卡(§4.6:三圆点 + pill Tab + 主体 + 底部状态条) */
+    var segTable = el('button', { class: 'term-tab on', type: 'button', text: '表格' });
+    var segJson = el('button', { class: 'term-tab', type: 'button', text: 'JSON' });
     segTable.addEventListener('click', function () { switchView('table'); });
     segJson.addEventListener('click', function () { switchView('json'); });
 
-    var resultHead = el('div', { class: 'card-head' },
-      el('h2', { class: 'card-title', text: '检测结果' }),
-      seg);
-    var resultBody = el('div', { class: 'card-body' });
-    var resultCard = el('div', { class: 'card' }, resultHead, resultBody);
-    resultBody.appendChild(emptyNode('尚未发起检测', '在左侧填写 URL 并勾选引擎,点击「开始检测」。查询会真实访问各引擎的搜索结果页,单次 1–20 条 URL。'));
+    var termHead = el('div', { class: 'term-head' },
+      el('div', { style: 'display:flex;align-items:center;gap:12px;' },
+        el('div', { class: 'term-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
+        el('span', { class: 'code-lang', text: '检测结果' })),
+      el('div', { class: 'term-tabs' }, segTable, segJson));
+    var termBody = el('div', { class: 'card-body' });
+    var footPath = el('span', { text: 'POST /web-tool/api/playground/check' });
+    var footStatus = el('span', { class: 'term-status' }, el('i'), el('span', { text: '待发起' }));
+    var termFoot = el('div', { class: 'term-foot' }, footPath, footStatus);
+    var resultCard = el('div', { class: 'term' }, termHead, termBody, termFoot);
+    termBody.appendChild(emptyNode('尚未发起检测', '在左侧填写 URL 并勾选引擎,点击「开始检测」。查询会真实访问各引擎的搜索结果页,单次 1–20 条 URL。'));
 
     var layout = el('div', { class: 'pg-layout' }, formCard, resultCard);
     root.appendChild(layout);
 
+    function setFootStatus(status) {
+      var cls = 'term-status';
+      if (status === 200) cls += ' ok';
+      else if (typeof status === 'number') cls += ' err';
+      footStatus.className = cls;
+      footStatus.innerHTML = '';
+      footStatus.appendChild(el('i'));
+      footStatus.appendChild(el('span', {
+        text: typeof status === 'number' ? (status + ' ' + httpReason(status)) : '待发起'
+      }));
+    }
+
     function switchView(v) {
       pgState.view = v;
-      segTable.className = v === 'table' ? 'on' : '';
-      segJson.className = v === 'json' ? 'on' : '';
+      segTable.className = 'term-tab' + (v === 'table' ? ' on' : '');
+      segJson.className = 'term-tab' + (v === 'json' ? ' on' : '');
       if (pgState.lastData) renderResult();
     }
 
@@ -1623,18 +2160,22 @@
         return;
       }
       pgState.lastReq = { urls: urls, engines: engines.slice() };
-      resultCard.style.display = '';
-      resultBody.innerHTML = '';
-      resultBody.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w50' }, { w: 'w80' }, { w: 'w70' }]));
+      termBody.innerHTML = '';
+      termBody.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w50' }, { w: 'w80' }, { w: 'w70' }]));
+      setFootStatus(null);
       setBtnLoading(submitBtn, true, '检测中…');
       api('POST', '/api/playground/check', { urls: urls, engines: engines })
         .then(function (data) {
           pgState.lastData = data || {};
+          pgState.lastStatus = 200;
+          setFootStatus(200);
           renderResult();
         })
         .catch(function (e) {
-          resultBody.innerHTML = '';
-          resultBody.appendChild(errorNode(e, function () { submitBtn.click(); }));
+          pgState.lastStatus = typeof e.status === 'number' ? e.status : 0;
+          setFootStatus(pgState.lastStatus);
+          termBody.innerHTML = '';
+          termBody.appendChild(errorNode(e, function () { submitBtn.click(); }));
         })
         .then(function () {
           setBtnLoading(submitBtn, false);
@@ -1644,7 +2185,8 @@
     /* 结果渲染:表格 / JSON 双视图 */
     function renderResult() {
       var data = pgState.lastData || {};
-      resultBody.innerHTML = '';
+      termBody.innerHTML = '';
+      termBody.style.padding = '';
 
       var metaBits = [];
       if (data.meta) {
@@ -1664,15 +2206,20 @@
           text: (ENGINE_LABEL[cd.engine] || cd.engine) + ' 冷却中 · 至 ' + fmtDateTime(cd.until)
         }));
       });
-      resultBody.appendChild(metaRow);
+      if (metaBits.length || cdList.length) termBody.appendChild(metaRow);
 
       var results = Array.isArray(data.results) ? data.results : [];
       if (pgState.view === 'json') {
-        resultBody.appendChild(codeBlock('JSON · 响应', JSON.stringify(data, null, 2)));
+        termBody.innerHTML = '';
+        termBody.style.padding = '0';
+        termBody.appendChild(el('pre', {
+          class: 'term-pre', style: 'max-height:560px;border-radius:0 0 var(--radius-xl) var(--radius-xl);',
+          html: highlightJson(JSON.stringify(data, null, 2))
+        }));
         return;
       }
       if (!results.length) {
-        resultBody.appendChild(emptyNode('无结果', '服务端返回了空结果列表。'));
+        termBody.appendChild(emptyNode('无结果', '服务端返回了空结果列表。'));
         return;
       }
 
@@ -1696,7 +2243,7 @@
           var o = enginesMap[name] || {};
           var urlTd = el('td', { class: 'td-mono', title: r.url || '', text: truncate(r.url || '', 46) });
           if (idx > 0) urlTd.setAttribute('style', 'color:transparent;user-select:none;');
-          var engineTd = el('td', null, el('span', { class: 'chip chip-indigo', text: name }));
+          var engineTd = el('td', null, el('span', { class: 'chip', text: name }));
 
           var statusTd, matchTd, hitTd, totalTd, tookTd;
           var errObj = (o.error && typeof o.error === 'object') ? o.error : null;
@@ -1730,7 +2277,7 @@
           tbody.appendChild(el('tr', null, urlTd, engineTd, statusTd, matchTd, hitTd, totalTd, tookTd));
         });
       });
-      resultBody.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' }, thead, tbody)));
+      termBody.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' }, thead, tbody)));
     }
 
     function truncate(s, n) {
@@ -1749,15 +2296,27 @@
 
   function pageAgents(root) {
     var ORIGIN = pageOrigin();
+    var BASE = ORIGIN + '/web-tool';
     var DEMO_KEY = 'sk-w2a-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
     var MCP_URL = ORIGIN + '/web-tool/mcp';
     var OPENAPI_URL = ORIGIN + '/web-tool/openapi.yaml';
     var LLMS_URL = ORIGIN + '/web-tool/llms.txt';
     var HOST_NOTE = '若 Agent 与面板不在同一台机器,请将地址中的主机名替换为本服务器的公网地址(域名或 IP)。';
 
+    /* 卡头 ghost 钮:复制该卡接入所需的 base_url */
+    function copyUrlBtn(label, url) {
+      return el('button', {
+        class: 'btn btn-ghost btn-sm', type: 'button',
+        html: ICONS.copy + '<span>' + label + '</span>',
+        onclick: function () { copyText(url); }
+      });
+    }
+
     /* ---- 概述与鉴权 ---- */
     root.appendChild(el('div', { class: 'card' },
-      el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: 'MCP 接入' })),
+      el('div', { class: 'card-head' },
+        el('h2', { class: 'card-title' }, 'MCP 接入'),
+        copyUrlBtn('复制 base_url', BASE)),
       el('div', { class: 'card-body' },
         p('Web2API 内置 <strong>MCP(Model Context Protocol)Streamable HTTP</strong> 端点,AI Agent(Claude Desktop / Claude Code / Dify / Coze / n8n / LangChain 等)可作为一等公民直接调用收录查询与搜索能力,无需自行封装 HTTP。'),
         p('端点:<code>' + MCP_URL + '</code>(JSON-RPC 2.0;协议版本 <code>2025-06-18</code>;支持 <code>initialize / notifications/initialized / tools/list / tools/call / ping</code>,服务端返回的 <code>Mcp-Session-Id</code> 响应头需在后续请求中原样带回)。'),
@@ -1794,7 +2353,7 @@
       }
     }
   }
-}`));
+}`, MCP_URL));
 
     /* ---- Dify ---- */
     root.appendChild(agentCard('Dify', [
@@ -1807,7 +2366,7 @@
 #    名称(Key):X-API-Key
 #    值(Value):${DEMO_KEY}
 # 3. 导入后可用工具:web_search / check_indexed / get_quota / list_engines
-# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`));
+# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`, OPENAPI_URL));
 
     /* ---- Coze ---- */
     root.appendChild(agentCard('Coze', [
@@ -1818,7 +2377,7 @@
 #    (本平台 openapi.yaml 的 servers 为 ${ORIGIN},接口路径统一带 /web-tool 前缀)
 # 3. 鉴权:插件「授权方式」选择 API Key
 #    位置:Header;名称:X-API-Key;值:${DEMO_KEY}
-# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`));
+# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`, OPENAPI_URL));
 
     /* ---- n8n ---- */
     root.appendChild(agentCard('n8n', [
@@ -1840,7 +2399,7 @@ JSON Body:
 #   Endpoint:      ${MCP_URL}
 #   Transport:     HTTP Streamable
 #   Authentication: Header Auth → Name: X-API-Key,Value: 同上
-# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`));
+# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`, BASE));
 
     /* ---- LangChain Python ---- */
     root.appendChild(agentCard('LangChain / Python', [
@@ -1875,18 +2434,18 @@ async def run():
                 "check_indexed",
                 {"urls": ["https://example.com/blog/post-1"], "engines": ["baidu"]},
             )
-            print(result)`));
+            print(result)`, BASE));
 
-    function agentCard(title, steps, lang, code) {
+    function agentCard(title, steps, lang, code, copyUrl) {
       var list = el('ol', { class: 'agent-steps' });
       steps.forEach(function (s) {
         var li = el('li');
         li.innerHTML = s; // 受控静态文案
         list.appendChild(li);
       });
-      return el('div', { class: 'card' },
-        el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: title })),
-        el('div', { class: 'card-body' }, list, codeBlock(lang, code)));
+      var head = el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: title }));
+      if (copyUrl) head.appendChild(copyUrlBtn('复制 base_url', copyUrl));
+      return el('div', { class: 'card' }, head, el('div', { class: 'card-body' }, list, codeBlock(lang, code)));
     }
   }
 
@@ -1980,16 +2539,20 @@ async def run():
       onclick: function () { copyText(code); }
     });
     return el('div', { class: 'code-block' },
-      el('div', { class: 'code-head' }, el('span', { class: 'code-lang', text: lang }), copy),
+      el('div', { class: 'code-head' },
+        el('span', { class: 'code-lang' },
+          el('span', { class: 'term-dots', 'aria-hidden': 'true' }, el('i'), el('i'), el('i')),
+          el('span', { text: lang })),
+        copy),
       pre);
   }
 
-  function pageDocs(root) {
+  function pageDocs(pageRoot) {
     var ORIGIN = pageOrigin();
     var BASE = ORIGIN + '/web-tool';
     var DEMO_KEY = 'sk-w2a-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
 
-    /* 快速跳转 pill 行 */
+    /* 两栏:左目录(激活=--fg + --accent 底)+ 右 prose;目录锚点滚动 + scrollspy */
     var NAVS = [
       ['docs-overview', '概述'],
       ['docs-auth', '鉴权'],
@@ -2003,18 +2566,48 @@ async def run():
       ['docs-errors', '错误码'],
       ['docs-assets', 'Agent 静态资源']
     ];
-    var nav = el('div', { class: 'docs-nav' });
+    var tocLinks = [];
+    var toc = el('nav', { class: 'docs-toc', 'aria-label': '文档目录' });
     NAVS.forEach(function (n) {
-      nav.appendChild(el('a', {
+      var a = el('a', {
         href: 'javascript:void(0)',
         text: n[1],
         onclick: function () {
+          setActiveToc(a);
           var target = document.getElementById(n[0]);
-          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // 瞬时定位:平滑滚动在部分环境/长文档下会被截断,锚点跳转取即时语义
+          if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
         }
-      }));
+      });
+      tocLinks.push({ link: a, id: n[0] });
+      toc.appendChild(a);
     });
-    root.appendChild(nav);
+
+    function setActiveToc(active) {
+      tocLinks.forEach(function (t) { t.link.classList.toggle('on', t.link === active); });
+    }
+    function syncTocScroll() {
+      var best = null;
+      var bestTop = -Infinity;
+      tocLinks.forEach(function (t) {
+        var node = document.getElementById(t.id);
+        if (!node) return;
+        var top = node.getBoundingClientRect().top;
+        if (top <= 120 && top > bestTop) {
+          bestTop = top;
+          best = t;
+        }
+      });
+      if (best) best.link.classList.add('on');
+      tocLinks.forEach(function (t) {
+        if (t !== best) t.link.classList.remove('on');
+      });
+    }
+    setPageInterval(syncTocScroll, 400); // 轻量 scrollspy,离开页面时随 pageTimers 清理
+
+    var main = el('div', { class: 'docs-main' });
+    pageRoot.appendChild(el('div', { class: 'docs-layout' }, toc, main));
+    var root = main; // 章节统一注入右栏
 
     /* ---- 概述 ---- */
     root.appendChild(docSection({
@@ -2346,7 +2939,7 @@ async def run():
       strengthLabel.textContent = v ? ('密码强度:' + (s === 0 ? '过弱(不足 8 位或过于简单)' : s === 1 ? '弱' : s === 2 ? '中' : '强')) : '密码强度:—';
     });
 
-    var err = el('div', { class: 'login-error hidden' });
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
     function showErr(msg) {
       err.textContent = msg;
       err.classList.remove('hidden');
@@ -2433,6 +3026,21 @@ async def run():
     var errBox = $('#login-error');
     var submitBtn = $('#login-submit');
 
+    /* 错误态输入框:aria-invalid=true 命中样式表 .input[aria-invalid="true"] 的 destructive 边框;
+     * 用户重新输入或重新提交时清除。 */
+    function setFieldInvalid(input, bad) {
+      if (!input) return;
+      if (bad) input.setAttribute('aria-invalid', 'true');
+      else input.removeAttribute('aria-invalid');
+    }
+    function clearFieldInvalid() {
+      setFieldInvalid(userInput, false);
+      setFieldInvalid(pwdInput, false);
+    }
+    [userInput, pwdInput].forEach(function (inp) {
+      if (inp) inp.addEventListener('input', function () { setFieldInvalid(inp, false); });
+    });
+
     function showErr(msg) {
       if (!errBox) return;
       errBox.textContent = msg;
@@ -2445,7 +3053,10 @@ async def run():
       var u = userInput.value.trim();
       var pwd = pwdInput.value;
       if (errBox) errBox.classList.add('hidden');
+      clearFieldInvalid();
       if (!u || !pwd) {
+        setFieldInvalid(userInput, !u);
+        setFieldInvalid(pwdInput, !pwd);
         showErr('请输入用户名和密码');
         return;
       }
@@ -2463,6 +3074,9 @@ async def run():
         })
         .catch(function (e) {
           if (e.status === 401) {
+            /* 凭据错误:用户名与密码成对校验,两个输入框都标记错误态(destructive 边框) */
+            setFieldInvalid(userInput, true);
+            setFieldInvalid(pwdInput, true);
             showErr('用户名或密码错误(同一用户名+IP 连续 5 次失败将锁定 15 分钟)');
           } else if (e.status === 429 && e.data && e.data.error === 'too_many_attempts') {
             showErr('尝试次数过多,登录已被临时锁定' +
@@ -2492,8 +3106,11 @@ async def run():
   }
 
   function boot() {
+    initTheme();
+    bindThemeButtons();
     bindLogin();
     bindLogout();
+    bindSearchHotkey();
     window.addEventListener('hashchange', renderRoute);
 
     if (!isLoggedIn()) {

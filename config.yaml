@@ -3,7 +3,7 @@
 # 环境变量命名:WEB2API_ + 键名大写、. 换 _(例:platform.admin_password → WEB2API_PLATFORM_ADMIN_PASSWORD)。
 # serve 可用 --config/-c 指定任意配置文件路径(或 WEB2API_SERVER_CONFIG_PATH)。
 # 全部端点固定挂在 /web-tool 前缀下(代码常量 core.BasePath,无配置项):
-#   面板 /web-tool/  ·  数据平面 /web-tool/v1/*  ·  Agent 平面 /web-tool/mcp
+#   官网 /web-tool/  ·  控制台 /web-tool/console/  ·  数据平面 /web-tool/v1/*  ·  Agent 平面 /web-tool/mcp
 #   管理平面 /web-tool/api/*  ·  健康 /web-tool/health
 # 逐键完整说明见 docs/CONFIGURATION.md。
 
@@ -74,7 +74,7 @@ circuit_breaker:
 # 到期放行一个探测请求,成功恢复、失败进下一档。运维可调:
 #   POST /web-tool/api/engines/{name}/cooldown/reset  强制恢复
 #   POST /web-tool/api/engines/{name}/cooldown/force  {"minutes":N} 强制冷却(维护窗口)
-# 面板「引擎状态」页(#/engines)提供冷却倒计时与同款按钮。
+# 控制台「引擎状态」页(#/engines)提供冷却倒计时与同款按钮。
 # ---------------------------------------------------------------------------
 stability:
   engine_cooldown:
@@ -122,20 +122,21 @@ security:
 # ---------------------------------------------------------------------------
 # 收录查询平台(platform)
 #
-# 管理面板 + 公网 API(/v1/index/check 等)+ 管理 API(/api/*)的后端开关与
+# 管理控制台 + 公网 API(/v1/index/check 等)+ 管理 API(/api/*)的后端开关与
 # 存储/凭据配置。整个应用固定部署在 /web-tool 子路径之下(代码内常量,无配置项):
-#   面板     http://127.0.0.1:7000/web-tool/
+#   官网      http://127.0.0.1:7000/web-tool/
+#   控制台    http://127.0.0.1:7000/web-tool/console/
 #   公网API   http://127.0.0.1:7000/web-tool/v1/...
 #   Agent平面 http://127.0.0.1:7000/web-tool/mcp(+ /web-tool/openapi.yaml、/web-tool/llms.txt)
 #   管理API   http://127.0.0.1:7000/web-tool/api/...
-# enabled=false 时不挂载 /api/* 与 /v1/*,面板静态页与健康端点仍可用。
+# enabled=false 时不挂载 /api/* 与 /v1/*,官网与控制台静态页与健康端点仍可用。
 # 计费口径:1 URL × 1 引擎 = 1 unit;HTTP 200 完成即全额扣费(200 信封内引擎级
 # 失败单元不退费);401/400/429 配额预检/503 冷却不扣费。详见 docs/API.md §9。
 # ---------------------------------------------------------------------------
 platform:
   enabled: true # 是否启用平台 API(密钥/配额/用量/管理端点)
   data_dir: "./data" # bbolt 数据库(web2api.db)、JWT 密钥(secret.key)存放目录
-  admin_username: "admin" # 管理员登录名(面板登录用)
+  admin_username: "admin" # 管理员登录名(控制台登录用)
   admin_password: "admin123" # 管理员登录密码——生产环境务必修改!
   jwt_expire_hours: 24 # 管理员 JWT 有效期(小时)
   usage_retention_days: 30 # 用量日志滚动保留天数,0=不限(默认 30)

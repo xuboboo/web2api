@@ -67,7 +67,7 @@
 - 其余 5 条 finding 处置：#2 空结果误判超时 → 实测请求级超时兜底 ~31s 存在，改核心等待循环有漏结果风险，**记录为已知行为 P2 不改**；#3 baidu raw 路径缺 limit 截断 → **已修**（对齐 sogou/so360 模式，limit<=0 语义核实安全）；#4/#5/#6 均为 P2（批次超时/Transport churn/防御性断言）→ 记录延后
 
 ### 第 12-14 轮（16:25）— 【修复部署漂移 + 全量回归 + 重新部署】
-- 发现：docker-compose.yaml 与实际容器漂移（image `karust/web2api:latest` vs 实际 `web2api:local`；端口 `0.0.0.0:7000` vs 实际 `127.0.0.1` 绑定；baidu 限流 env 覆盖 vs config.yaml 12；`serve -l` vs `serve`）→ 任何人 `docker compose up` 会得到无认证 API 暴露 0.0.0.0 的部署，**P1 运维风险**
+- 发现：docker-compose.yaml 与实际容器漂移（image 旧命名 vs 实际 `web2api:local`；端口 `0.0.0.0:7000` vs 实际 `127.0.0.1` 绑定；baidu 限流 env 覆盖 vs config.yaml 12；`serve -l` vs `serve`）→ 任何人 `docker compose up` 会得到无认证 API 暴露 0.0.0.0 的部署，**P1 运维风险**
 - 修复：compose 对齐实际部署（`build: .` + `web2api:local` + `127.0.0.1:7000:7000` + `serve` + `restart: unless-stopped` + 移除限流覆盖，config.yaml 为唯一事实源）
 - 全量 `go test ./... -count=1` 14 包全绿后重建镜像 `web2api:local`（sha256:fe5ae3c2…）
 - 容器经 compose 重建：Up healthy，127.0.0.1 绑定不变

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web2API 三期验收截图画廊 · gallery-v2</title>
+<style>
+  :root {
+    --ink: #1d1d1f; --ink-2: #515154; --ink-3: #86868b; --line: #e8e8ed;
+    --brand: #ed5b20; --brand-soft: #fdf1ea;
+    --ok: #2e7d46; --defect: #b3590f;
+    --bg: #f7f7f8; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.6; padding: 48px 24px 80px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+  header.hero { padding: 8px 0 28px; border-bottom: 1px solid var(--line); margin-bottom: 40px; }
+  .kicker { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .12em; color: var(--brand); text-transform: uppercase; }
+  h1 { font-size: 34px; font-weight: 700; margin: 10px 0 6px; letter-spacing: -.01em; }
+  .sub { color: var(--ink-2); font-size: 15px; }
+  .notice {
+    margin-top: 20px; background: var(--brand-soft); border: 1px solid #f0c9ad;
+    border-radius: 10px; padding: 14px 18px; font-size: 13.5px; color: var(--ink-2);
+  }
+  .notice b { color: var(--ink); }
+  section.group { margin-bottom: 56px; }
+  .group-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+  .group-head h2 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+  .group-head .cnt { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 12px; color: var(--ink-3); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; }
+  figure.shot {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column;
+    transition: box-shadow .18s ease, transform .18s ease;
+  }
+  figure.shot:hover { box-shadow: 0 6px 24px rgba(29,29,31,.10); transform: translateY(-2px); }
+  figure.shot a { display: block; background: #101010; }
+  figure.shot img { display: block; width: 100%; height: 218px; object-fit: cover; object-position: top; }
+  figcaption { padding: 14px 16px 16px; border-top: 1px solid var(--line); }
+  figcaption h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .meta { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--ink-3); margin-bottom: 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .meta .who { color: var(--brand); }
+  .summary { font-size: 13px; color: var(--ink-2); }
+  .summary.ok::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+  .summary.defect::before { content: "▲ "; color: var(--defect); font-weight: 700; }
+  .summary.na { color: var(--ink-3); font-style: italic; }
+  footer { border-top: 1px solid var(--line); padding-top: 20px; font-size: 12.5px; color: var(--ink-3); }
+  footer code { font-family: "Roboto Mono", ui-monospace, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">Web2API · QA Acceptance Gallery v2</div>
+  <h1>三期验收截图画廊(官网 + 面板)</h1>
+  <p class="sub">三期契约 · 新增官网 web/site/ + 面板重构 · 独立实例 127.0.0.1:7751(config-qa7751)· 生成于 2026-11-15</p>
+  <div class="notice">
+    <b>来源说明:</b>「官网验收员」各图摘要取自其最终 QAResult(第三轮复测,verdict=pass,12 项检查全部通过,唯一历史缺陷——快速开始区 .qs-note 390px 破版——已修复关闭,无未决缺陷)。
+    <b>「面板验收员B」的最终 QAResult 未在工作目录留存(qa/ 下无结果 JSON 文件),面板组各图结论无法引用,摘要栏如实标注缺失,未做编造;</b>仅按文件名将截图归入对应页面组;c-defect-console-nohash-404.png 按文件名标注为缺陷存档(控制台无 hash 访问 → 404),详细结论以 B 的 QAResult 为准。
+  </div>
+</header>
+
+<!-- ======================== 官网组 ======================== -->
+<section class="group">
+  <div class="group-head"><h2>官网(web/site/,挂载 /web-tool/)</h2><span class="cnt">32 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="s-hero-1366.png" target="_blank"><img src="s-hero-1366.png" alt="官网首屏 1366" loading="lazy"></a>
+      <figcaption><h3>官网首屏 Hero · 1366×768</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">全区块逐屏截图检查通过:导航栏(Logo+锚点+主题+进入控制台+GitHub)、大标题、双 CTA、Hero 动效示意图完整渲染;title=Web2API 网站收录查询开放平台。</p></figcaption></figure>
+    <figure class="shot"><a href="s-能力区.png" target="_blank"><img src="s-能力区.png" alt="能力区" loading="lazy"></a>
+      <figcaption><h3>收录判定能力区 · 四特性卡片</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">「为什么选 Web2API」四卡片完整(一次调用判定四引擎/引擎风控冷却自愈/Agent 一等公民/单二进制自托管),导航「能力」链接 active 态正确。</p></figcaption></figure>
+    <figure class="shot"><a href="s-能力区-代码窗.png" target="_blank"><img src="s-能力区-代码窗.png" alt="能力区代码窗" loading="lazy"></a>
+      <figcaption><h3>能力区 · 三步接入 + 代码暗窗</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">三步(创建 API Key → POST /v1/index/check → 读 results[].engines[name].indexed)+ cURL/JSON 示例与真实 API 语义逐字段一致(对照 core/index_check.go:88-91,154-160 与真实密钥实测响应),代码窗页脚 1 URL × 2 引擎 = 2 units 与 meta.units 吻合。</p></figcaption></figure>
+    <figure class="shot"><a href="s-架构区.png" target="_blank"><img src="s-架构区.png" alt="架构区" loading="lazy"></a>
+      <figcaption><h3>三平面架构区</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">数据平面/Agent 平面/控制平面三卡片及路由清单完整渲染,锚点落位精确(#architecture 视口顶=88px)。</p></figcaption></figure>
+    <figure class="shot"><a href="s-agent区.png" target="_blank"><img src="s-agent区.png" alt="Agent 接入区" loading="lazy"></a>
+      <figcaption><h3>Agent 接入区 · MCP + OpenAPI 双入口</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">Claude 直连 MCP Server 卡片(claude mcp add 命令+四工具 chips)与四大平台导入卡(Dify/Coze/n8n/LangChain)+ openapi.yaml/llms.txt pill 完整;链接实测 200。</p></figcaption></figure>
+    <figure class="shot"><a href="s-冷却区.png" target="_blank"><img src="s-冷却区.png" alt="引擎风控冷却区" loading="lazy"></a>
+      <figcaption><h3>引擎风控冷却区</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">三档冷却文案与四引擎示意面板(正常/冷却 剩余 09:42/熔断)完整,语义与 503 engine_cooldown 信封一致。</p></figcaption></figure>
+    <figure class="shot"><a href="s-快速开始.png" target="_blank"><img src="s-快速开始.png" alt="快速开始" loading="lazy"></a>
+      <figcaption><h3>快速开始区 · 1366</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">docker compose 启动+curl 两命令卡与两条说明(含 admin/admin123 提示)完整,桌面端 .qs-note 连通文本正常。</p></figcaption></figure>
+    <figure class="shot"><a href="s-eco-cta.png" target="_blank"><img src="s-eco-cta.png" alt="生态 CTA" loading="lazy"></a>
+      <figcaption><h3>生态 CTA 暗色带</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">「加入 Web2API 生态」四按钮(进入控制台/API 文档/MCP Server/GitHub)完整;MCP Server 为 GET 直开 405 属协议正确行为(附注,不判失败)。</p></figcaption></figure>
+    <figure class="shot"><a href="s-footer.png" target="_blank"><img src="s-footer.png" alt="页脚" loading="lazy"></a>
+      <figcaption><h3>页脚</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">品牌+文档链接四组+落款「© 2026 Web2API 网站收录查询开放平台 · 基于 MIT 协议开源」;官方名称正确、全页无「收录情报」。</p></figcaption></figure>
+    <figure class="shot"><a href="s-nav-scrolled.png" target="_blank"><img src="s-nav-scrolled.png" alt="导航滚动状态" loading="lazy"></a>
+      <figcaption><h3>导航栏滚动状态</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768 · y=1132</span></div>
+      <p class="summary ok">滚动后 siteNav scrolled=true(border-bottom-color 加深,style.css:238),「能力」链接 active pill 高亮;顶部态 scrolled=false 已对照验证。</p></figcaption></figure>
+    <figure class="shot"><a href="s-nav-anchor-architecture.png" target="_blank"><img src="s-nav-anchor-architecture.png" alt="锚点平滑滚动" loading="lazy"></a>
+      <figcaption><h3>导航锚点平滑滚动落位</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">点击锚点滚动采样 0→618→2538→2681(渐进=smooth,CSS scroll-behavior:smooth),落位 #architecture 视口顶=88px、active=true、hash 更新。</p></figcaption></figure>
+    <figure class="shot"><a href="s-reveal-before-1366.png" target="_blank"><img src="s-reveal-before-1366.png" alt="渐显前" loading="lazy"></a>
+      <figcaption><h3>滚动渐显 · 前(能力区卡片未显现)</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768 · y=520</span></div>
+      <p class="summary ok">IntersectionObserver 触发前 #capabilities .f-card opacity=0、is-visible 类缺失——渐显前状态实证。</p></figcaption></figure>
+    <figure class="shot"><a href="s-reveal-after-1366.png" target="_blank"><img src="s-reveal-after-1366.png" alt="渐显后" loading="lazy"></a>
+      <figcaption><h3>滚动渐显 · 后(卡片完全显现)</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768 · y=900</span></div>
+      <p class="summary ok">滚至 y=900 触发 IO 后 opacity=1、is-visible=true,统计条计数完成;与上图中同一区块形成滚动前后对比。</p></figcaption></figure>
+    <figure class="shot"><a href="s-hero-390.png" target="_blank"><img src="s-hero-390.png" alt="官网首屏 390" loading="lazy"></a>
+      <figcaption><h3>官网首屏 Hero · 390×844</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">移动端首屏:汉堡导航+纵排 CTA+示意卡完整;scrollWidth=375≤390 无横向滚动。</p></figcaption></figure>
+    <figure class="shot"><a href="s-能力区-390.png" target="_blank"><img src="s-能力区-390.png" alt="能力区 390" loading="lazy"></a>
+      <figcaption><h3>能力区 · 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">卡片纵排不破版,scrollWidth=375≤390。</p></figcaption></figure>
+    <figure class="shot"><a href="s-架构区-390.png" target="_blank"><img src="s-架构区-390.png" alt="架构区 390" loading="lazy"></a>
+      <figcaption><h3>架构区 · 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">三平面卡片纵排完整,scrollWidth=375≤390。</p></figcaption></figure>
+    <figure class="shot"><a href="s-agent区-390.png" target="_blank"><img src="s-agent区-390.png" alt="Agent 接入区 390" loading="lazy"></a>
+      <figcaption><h3>Agent 接入区 · 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">MCP 暗卡与平台导入卡纵排完整,scrollWidth=375≤390。</p></figcaption></figure>
+    <figure class="shot"><a href="s-冷却区-390.png" target="_blank"><img src="s-冷却区-390.png" alt="冷却区 390" loading="lazy"></a>
+      <figcaption><h3>引擎风控冷却区 · 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">冷却文案+四引擎示意面板纵排完整,scrollWidth=375≤390。</p></figcaption></figure>
+    <figure class="shot"><a href="s-快速开始-390.png" target="_blank"><img src="s-快速开始-390.png" alt="快速开始 390" loading="lazy"></a>
+      <figcaption><h3>快速开始区 · 390(修复后)</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">两条 .qs-note 说明连通文本正常排布(修复后),命令卡内部 pre 受控横向滚动;scrollWidth=375≤390。</p></figcaption></figure>
+    <figure class="shot"><a href="s-footer-390.png" target="_blank"><img src="s-footer-390.png" alt="页脚 390" loading="lazy"></a>
+      <figcaption><h3>页脚 · 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">生态 CTA+页脚纵排完整,scrollWidth=375≤390。</p></figcaption></figure>
+    <figure class="shot"><a href="s-mobile-menu-390.png" target="_blank"><img src="s-mobile-menu-390.png" alt="移动端菜单" loading="lazy"></a>
+      <figcaption><h3>移动端汉堡菜单展开</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">menuToggle 点击后 menu-open=true、aria-expanded=true,玻璃拟态菜单纵排(能力/架构/Agent 接入/快速开始/GitHub)。</p></figcaption></figure>
+    <figure class="shot"><a href="s-mobile-menu-jump-quickstart.png" target="_blank"><img src="s-mobile-menu-jump-quickstart.png" alt="菜单跳转" loading="lazy"></a>
+      <figcaption><h3>菜单锚点跳转落位(快速开始)</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">点击菜单「快速开始」后 menu-open=false、落位视口顶=88px、active=true、hash=#quickstart;落点即修复后说明区。</p></figcaption></figure>
+    <figure class="shot"><a href="s-hero-390-dark.png" target="_blank"><img src="s-hero-390-dark.png" alt="暗色首屏 390" loading="lazy"></a>
+      <figcaption><h3>暗色主题首屏 · 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">html.dark=true、localStorage w2a_site_theme=dark;暗底橙 accent 完整渲染,切回浅色正确持久化。</p></figcaption></figure>
+    <figure class="shot"><a href="s-hero-1366-dark.png" target="_blank"><img src="s-hero-1366-dark.png" alt="暗色首屏 1366" loading="lazy"></a>
+      <figcaption><h3>暗色主题首屏 · 1366</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">暗色两视口同验,主题切换循环 dark↔light 无报错。</p></figcaption></figure>
+    <figure class="shot"><a href="s-copy-mcp-copied.png" target="_blank"><img src="s-copy-mcp-copied.png" alt="MCP 复制" loading="lazy"></a>
+      <figcaption><h3>MCP 接入命令复制(已复制态)</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">劫持 clipboard.writeText 捕获载荷与 #mcpCmd textContent 逐字符相等,按钮标签变「已复制」;mcpCmd/cmdUp/cmdCheck 三处逐一独立断言全部 match=true。</p></figcaption></figure>
+    <figure class="shot"><a href="s-copy-quickstart.png" target="_blank"><img src="s-copy-quickstart.png" alt="快速开始复制" loading="lazy"></a>
+      <figcaption><h3>快速开始命令复制(已复制态)</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">cmdUp/cmdCheck 载荷与宿主 textContent 完全一致;说明区两条 .qs-note 连通文本正常(修复后)。</p></figcaption></figure>
+    <figure class="shot"><a href="s-console-login.png" target="_blank"><img src="s-console-login.png" alt="控制台登录页" loading="lazy"></a>
+      <figcaption><h3>控制台登录页(/web-tool/console/)</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">新设计语言登录页,品牌副标「Web2API 网站收录查询开放平台 · 管理控制台」;「进入控制台」按钮 href 命中本页。</p></figcaption></figure>
+    <figure class="shot"><a href="s-console-after-login.png" target="_blank"><img src="s-console-after-login.png" alt="登录成功总览" loading="lazy"></a>
+      <figcaption><h3>登录成功 · 控制台</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">admin/admin123 提交 → toast「登录成功,欢迎回来」→ 落地 #/keys(本轮)与 #/overview(前两轮),登录闭环完整。</p></figcaption></figure>
+    <figure class="shot"><a href="s-legacy-hash-keys.png" target="_blank"><img src="s-legacy-hash-keys.png" alt="旧书签跳转" loading="lazy"></a>
+      <figcaption><h3>旧书签兼容:/web-tool/#/keys 自动跳转</h3><div class="meta"><span class="who">官网验收员</span><span>1366×768</span></div>
+      <p class="summary ok">about:blank 隔离后 goto → app.js:13-15 location.replace 中断初始导航(ERR_ABORTED)→ 最终 URL=/web-tool/console/#/keys,书签闭环成立(落地页会话过期显示登录页属正常鉴权)。</p></figcaption></figure>
+    <figure class="shot"><a href="s-qs-note-fixed-390.png" target="_blank"><img src="s-qs-note-fixed-390.png" alt="qs-note 修复验证" loading="lazy"></a>
+      <figcaption><h3>缺陷修复验证 · qs-note 390 布局</h3><div class="meta"><span class="who">官网验收员</span><span>390×844</span></div>
+      <p class="summary ok">修复后实测:display=block/position:relative(style.css:955-956),文本块宽 [143,304]/[88,73,302] 正常行宽,inline-code 正常内联——历史 medium 缺陷关闭。</p></figcaption></figure>
+    <figure class="shot"><a href="s-bug-qs-note-390.png" target="_blank"><img src="s-bug-qs-note-390.png" alt="qs-note 破版存档" loading="lazy"></a>
+      <figcaption><h3>缺陷存档 · qs-note 390 破版(已修复)</h3><div class="meta"><span class="who">官网验收员</span><span>390×844 · 第二轮发现</span></div>
+      <p class="summary defect">medium(已修复关闭):.qs-note 原 display:flex 使裸文本与 &lt;a&gt; 成 squeezed flex item,390px 下竖排一字一行(文本块宽 17/92 与 14/14/30px);修复于 style.css:955-956。</p></figcaption></figure>
+    <figure class="shot"><a href="s-bug-qs-note-390-fixed.png" target="_blank"><img src="s-bug-qs-note-390-fixed.png" alt="qs-note 修复对照" loading="lazy"></a>
+      <figcaption><h3>缺陷修复后对照 · qs-note 390</h3><div class="meta"><span class="who">官网验收员</span><span>390×844 · 第二轮修复验证</span></div>
+      <p class="summary ok">修复后同视角对照:两条说明连通排布,与存档图对比可见缺陷关闭。</p></figcaption></figure>
+  </div>
+</section>
+
+<!-- ======================== 面板组 ======================== -->
+<section class="group">
+  <div class="group-head"><h2>面板(web/admin/,挂载 /web-tool/console/)</h2><span class="cnt">35 张</span></div>
+  <div class="grid">
+    <figure class="shot"><a href="c-entry-site.png" target="_blank"><img src="c-entry-site.png" alt="入口" loading="lazy"></a>
+      <figcaption><h3>面板 · 入口视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-login.png" target="_blank"><img src="c-login.png" alt="登录页" loading="lazy"></a>
+      <figcaption><h3>登录页 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-login-toast.png" target="_blank"><img src="c-login-toast.png" alt="登录 toast" loading="lazy"></a>
+      <figcaption><h3>登录页 · 成功 toast</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-login-error.png" target="_blank"><img src="c-login-error.png" alt="登录错误" loading="lazy"></a>
+      <figcaption><h3>登录页 · 错误提示</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-login-locked.png" target="_blank"><img src="c-login-locked.png" alt="登录锁定" loading="lazy"></a>
+      <figcaption><h3>登录页 · 连续失败锁定</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-final-overview.png" target="_blank"><img src="c-final-overview.png" alt="总览终态" loading="lazy"></a>
+      <figcaption><h3>总览 · 终态视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-overview.png" target="_blank"><img src="c-overview.png" alt="总览" loading="lazy"></a>
+      <figcaption><h3>总览 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-overview-dark.png" target="_blank"><img src="c-overview-dark.png" alt="总览暗色" loading="lazy"></a>
+      <figcaption><h3>总览 · 暗色主题</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-overview-log.png" target="_blank"><img src="c-overview-log.png" alt="总览日志" loading="lazy"></a>
+      <figcaption><h3>总览 · 最近日志区</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-engines.png" target="_blank"><img src="c-engines.png" alt="引擎状态" loading="lazy"></a>
+      <figcaption><h3>引擎状态页 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-engines-cooldown.png" target="_blank"><img src="c-engines-cooldown.png" alt="引擎冷却" loading="lazy"></a>
+      <figcaption><h3>引擎状态页 · 冷却看板</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-engines-table.png" target="_blank"><img src="c-engines-table.png" alt="引擎表格" loading="lazy"></a>
+      <figcaption><h3>引擎状态页 · 表格视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-engines-modal.png" target="_blank"><img src="c-engines-modal.png" alt="引擎弹窗" loading="lazy"></a>
+      <figcaption><h3>引擎状态页 · 运维弹窗</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-engines-group-all.png" target="_blank"><img src="c-engines-group-all.png" alt="引擎分组" loading="lazy"></a>
+      <figcaption><h3>引擎状态页 · 分组视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="s-fix1-engines-group-1366.png" target="_blank"><img src="s-fix1-engines-group-1366.png" alt="引擎分组修复" loading="lazy"></a>
+      <figcaption><h3>引擎状态页 · 分组修复验证(1366)</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名为 B 侧修复验证截图,归组于面板引擎状态页。</p></figcaption></figure>
+    <figure class="shot"><a href="c-keys.png" target="_blank"><img src="c-keys.png" alt="API 密钥" loading="lazy"></a>
+      <figcaption><h3>API 密钥页 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-keys-empty.png" target="_blank"><img src="c-keys-empty.png" alt="密钥空态" loading="lazy"></a>
+      <figcaption><h3>API 密钥页 · 空态</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-keys-btn-hover.png" target="_blank"><img src="c-keys-btn-hover.png" alt="密钥按钮 hover" loading="lazy"></a>
+      <figcaption><h3>API 密钥页 · 按钮 hover 微交互</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-keys-created.png" target="_blank"><img src="c-keys-created.png" alt="密钥创建" loading="lazy"></a>
+      <figcaption><h3>API 密钥页 · 创建密钥</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-keys-modal.png" target="_blank"><img src="c-keys-modal.png" alt="密钥弹窗" loading="lazy"></a>
+      <figcaption><h3>API 密钥页 · 创建弹窗</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-keys-final.png" target="_blank"><img src="c-keys-final.png" alt="密钥终态" loading="lazy"></a>
+      <figcaption><h3>API 密钥页 · 终态视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-usage.png" target="_blank"><img src="c-usage.png" alt="使用日志" loading="lazy"></a>
+      <figcaption><h3>使用日志页 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-usage-empty.png" target="_blank"><img src="c-usage-empty.png" alt="日志空态" loading="lazy"></a>
+      <figcaption><h3>使用日志页 · 空态</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-usage-filter.png" target="_blank"><img src="c-usage-filter.png" alt="日志筛选" loading="lazy"></a>
+      <figcaption><h3>使用日志页 · 筛选</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-usage-page2-detail.png" target="_blank"><img src="c-usage-page2-detail.png" alt="日志翻页" loading="lazy"></a>
+      <figcaption><h3>使用日志页 · 翻页明细</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="s-fix2-login-error-1366.png" target="_blank"><img src="s-fix2-login-error-1366.png" alt="登录错误修复" loading="lazy"></a>
+      <figcaption><h3>登录页 · 错误提示修复验证(1366)</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名为 B 侧修复验证截图,归组于面板登录页。</p></figcaption></figure>
+    <figure class="shot"><a href="s-fix3-usage-sort-1366.png" target="_blank"><img src="s-fix3-usage-sort-1366.png" alt="日志排序修复" loading="lazy"></a>
+      <figcaption><h3>使用日志页 · 排序修复验证(1366)</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名为 B 侧修复验证截图,归组于面板使用日志页。</p></figcaption></figure>
+    <figure class="shot"><a href="c-playground.png" target="_blank"><img src="c-playground.png" alt="在线调试" loading="lazy"></a>
+      <figcaption><h3>在线调试页 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-playground-result.png" target="_blank"><img src="c-playground-result.png" alt="调试结果" loading="lazy"></a>
+      <figcaption><h3>在线调试页 · 请求结果</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-agents.png" target="_blank"><img src="c-agents.png" alt="Agent 集成" loading="lazy"></a>
+      <figcaption><h3>Agent 集成页</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-docs.png" target="_blank"><img src="c-docs.png" alt="API 文档" loading="lazy"></a>
+      <figcaption><h3>API 文档页</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-settings.png" target="_blank"><img src="c-settings.png" alt="系统设置" loading="lazy"></a>
+      <figcaption><h3>系统设置页 · 默认视图</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-settings-err.png" target="_blank"><img src="c-settings-err.png" alt="设置错误态" loading="lazy"></a>
+      <figcaption><h3>系统设置页 · 错误态</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-404.png" target="_blank"><img src="c-404.png" alt="404 页" loading="lazy"></a>
+      <figcaption><h3>404 页</h3><div class="meta"><span class="who">面板验收员B</span><span>摘要缺失</span></div>
+      <p class="summary na">B 的最终 QAResult 未在工作目录留存,结论无法引用;按文件名归组。</p></figcaption></figure>
+    <figure class="shot"><a href="c-defect-console-nohash-404.png" target="_blank"><img src="c-defect-console-nohash-404.png" alt="缺陷存档" loading="lazy"></a>
+      <figcaption><h3>缺陷存档 · 控制台无 hash 访问 404</h3><div class="meta"><span class="who">面板验收员B</span><span>按文件名标注</span></div>
+      <p class="summary defect">按文件名为缺陷存档(控制台无 hash 访问 → 404);B 的最终 QAResult 未在工作目录留存,缺陷定级与结论细节无法引用,以 B 的 QAResult 为准。</p></figcaption></figure>
+  </div>
+</section>
+
+<footer>
+  <p>画廊由官网验收员按三期契约生成 · 纯静态零依赖 · 图片相对引用(与本文件同目录 qa/screenshots/)。</p>
+  <p>官网组摘要来源:官网验收员最终 QAResult(第三轮复测,verdict=pass)。面板组:面板验收员B 的最终 QAResult 未在工作目录留存(<code>qa/</code> 下无结果 JSON),摘要如实标注缺失,未编造。</p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -27,9 +27,11 @@ RUN apt-get update \
 
 COPY --from=builder /app/web2api /usr/local/bin/web2api
 COPY --chown=chrome:chrome config.yaml ./config.yaml
-# Admin panel static files, served by the serve command at /web-tool/ (fixed
-# sub-path, see core.BasePath). The platform package (bbolt keys/usage store,
-# JWT admin auth) is compiled into the binary above — no runtime files needed.
+# Static panels served by the serve command: the marketing site at /web-tool/
+# (BasePath root) and the admin console at /web-tool/console/ (fixed sub-paths,
+# see core.BasePath). The platform package (bbolt keys/usage store, JWT admin
+# auth) is compiled into the binary above — no runtime files needed.
+COPY --chown=chrome:chrome web/site ./web/site
 COPY --chown=chrome:chrome web/admin ./web/admin
 
 # Rod's launcher.LookPath does not know about /headless-shell/headless-shell.

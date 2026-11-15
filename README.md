@@ -1,6 +1,6 @@
 # Web2API —— 自托管的网站收录查询开放平台
 
-**提交一批 URL，判定它们是否被百度 / 搜狗 / 360 / 必应收录**；附带四引擎原始搜索、AI Agent 一等公民接入（MCP + OpenAPI）与一个管理面板（API 密钥、配额、用量、引擎风控看板）。单二进制、bbolt 单文件存储、零外部依赖，整站固定部署在 **`/web-tool`** 子路径下。
+**提交一批 URL，判定它们是否被百度 / 搜狗 / 360 / 必应收录**；附带四引擎原始搜索、AI Agent 一等公民接入（MCP + OpenAPI）与一个管理控制台（API 密钥、配额、用量、引擎风控看板），并自带产品官网。官网、管理控制台与全部 API 固定部署在 **`/web-tool`** 子路径下：官网即 `/web-tool/` 根，控制台在 `/web-tool/console/`。
 
 > 它**不是**通用 API 网关，也不是又一个 SerpAPI 平替。壁垒在两处：**国内四引擎的收录判定语义**（以 URL 为查询词检索 + 跳转链接还原 + 归一化匹配，这是 SerpAPI/Serper/博查都不提供的细分）与**引擎反爬对抗**（桌面指纹、双通道兜底、验证码门控、限速、熔断、IP 冷却状态机）。转发与编排只是外壳。
 
@@ -10,9 +10,9 @@
 | --- | --- | --- | --- |
 | 数据平面 | `/web-tool/v1/*`、`/web-tool/{engine}/search` | `X-API-Key`（search 免鉴权） | 收录判定 + 四引擎搜索，配额/限流/冷却内建 |
 | Agent 平面 | `/web-tool/mcp`、`/web-tool/openapi.yaml`、`/web-tool/llms.txt` | `X-API-Key` 或 JWT | AI Agent 一等公民：Claude/Dify/Coze/n8n/LangChain 双入口接入 |
-| 控制平面 | `/web-tool/api/*` + 面板 | JWT | 风控与用量治理台：密钥、配额、用量日志、引擎冷却看板、在线调试 |
+| 控制平面 | `/web-tool/api/*` + `/web-tool/console/` 控制台 | JWT | 风控与用量治理台：密钥、配额、用量日志、引擎冷却看板、在线调试 |
 
-反爬基座基于开源项目 [Web2API](https://github.com/xuboboo/web2api)（MIT）改造，完整保留四引擎搜索管道：桌面浏览器指纹、浏览器/HTTP 双通道兜底、CAPTCHA 门控、按引擎限速、熔断保护与代理策略。
+四引擎搜索管道内建：桌面浏览器指纹、浏览器/HTTP 双通道兜底、CAPTCHA 门控、按引擎限速、熔断保护与代理策略。
 
 ---
 
@@ -23,7 +23,8 @@
 ```bash
 go build -o web2api .
 ./web2api serve          # 默认读 ./config.yaml，监听 127.0.0.1:7000
-# 浏览器打开 http://127.0.0.1:7000/web-tool/
+# 浏览器打开官网 http://127.0.0.1:7000/web-tool/
+# 管理控制台入口 http://127.0.0.1:7000/web-tool/console/
 ```
 
 或 Docker Compose（详见 [deploy/README.md](deploy/README.md)）：
@@ -33,9 +34,9 @@ docker compose -f deploy/docker-compose.yml up -d --build
 curl http://127.0.0.1:7000/web-tool/health
 ```
 
-默认管理员 **`admin` / `admin123`** —— 首次部署后立即在面板「系统设置」页改密码，或修改 `config.yaml` 的 `platform.admin_password`。启动日志检测到默认弱密码时会给出告警；面板登录无验证码，切勿将管理端点暴露到公网。
+默认管理员 **`admin` / `admin123`** —— 首次部署后立即在控制台（`/web-tool/console/`）「系统设置」页改密码，或修改 `config.yaml` 的 `platform.admin_password`。启动日志检测到默认弱密码时会给出告警；控制台登录无验证码，切勿将管理端点暴露到公网。
 
-**第一个调用**（管理面板 `#/keys` 页创建一个 API key 后）：
+**第一个调用**（控制台 `#/keys` 页创建一个 API key 后）：
 
 ```bash
 curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
@@ -101,7 +102,7 @@ Agent 平面
   /web-tool/api/auth/login|password、/web-tool/api/keys、/web-tool/api/stats/*、
   /web-tool/api/usage、/web-tool/api/engines（冷却状态机）、
   /web-tool/api/engines/{name}/cooldown/reset|force、
-  /web-tool/api/playground/check（面板在线调试，不计费）
+  /web-tool/api/playground/check（控制台在线调试，不计费）
 
 健康观测（免鉴权）
   /web-tool/health、/ready、/stats、/stats/cache|proxy|cb
@@ -149,7 +150,7 @@ Agent 平面
    - **计数归零**：连续无拦截达 240 分钟（`reset_after_minutes`）后计数清零，重新从第 1 档起算。
    - **冷却期内**：该引擎所有 search/check **快速失败（HTTP 503 `engine_cooldown` 信封 + `Retry-After`），不发真实请求**——不消耗引擎配额、代理与浏览器资源。
    - **到期探测**：冷却到期放行一个探测请求，成功恢复，失败进下一档。
-   - **运维干预**：`POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}` 维护窗口强制冷却；面板「引擎状态」页（10 秒轮询）提供冷却倒计时与同款按钮。
+   - **运维干预**：`POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}` 维护窗口强制冷却；控制台「引擎状态」页（10 秒轮询）提供冷却倒计时与同款按钮。
 
 冷却与熔断是两套独立机制，冷却检查在前。`/v1` 与 search 响应的 `meta.engines_cooldown` 会列出当前冷却中的引擎，客户端应据此跳过并在 `Retry-After` 后重试。
 
@@ -162,7 +163,7 @@ Agent 平面
 - **凭据存储**：管理员密码 bcrypt 哈希（settings 桶，修改密码后覆盖 config 默认值）；API key 只存 SHA-256 哈希，完整 key 仅创建响应返回一次；JWT 签名密钥为随机 32 字节，存 `<data_dir>/secret.key`（0600）。
 - **登录防爆破**：同一 用户名+IP 连续 5 次失败锁定 15 分钟（`security.login_lockout.{fails:5,minutes:15}`），期间一律 `429 {"error":"too_many_attempts"}` + `Retry-After`。
 - **管理 API 限速**：默认 60 req/min（`security.admin_rate_per_minute`），超限 429 + `Retry-After`。
-- **token 版本化**：修改密码（`POST /web-tool/api/auth/password`，新密码 ≥ 8 位）后 `token_version` +1，**全部旧 JWT（面板与 MCP 的 Bearer 会话）立即失效**。
+- **token 版本化**：修改密码（`POST /web-tool/api/auth/password`，新密码 ≥ 8 位）后 `token_version` +1，**全部旧 JWT（控制台与 MCP 的 Bearer 会话）立即失效**。
 - **传输**：CORS 默认放开但非回环绑定 + 无鉴权组合会在启动日志给出告警；生产环境建议绑回环、收紧 `cors.allow_origins` 或前置 nginx + TLS。
 - **存储**：bbolt（纯 Go 无 CGO）单文件 `<data_dir>/web2api.db`，打开失败自动回退等价 JSON 文件存储（接口不变）。
 
@@ -176,7 +177,7 @@ Agent 平面
 
 ## 遗留资产声明
 
-`examples/` 与 `skills/web2api-search/` 是**上一代（上游 openserp 转向期）改造遗留**：其中的脚本指向 `/mega/search`、`/extract`、Google/DuckDuckGo 引擎等**当前 API 面已不存在的端点**，未随本期契约更新，不可直接运行。一切以本 README 与 [docs/API.md](docs/API.md) 为准（示例修复已列入后续清单）。阅读时请把它们当历史参考，不要复制其中的 URL 或字段。
+`examples/` 与 `skills/web2api-search/` 是**上一代改造遗留**：其中的脚本指向 `/mega/search`、`/extract`、Google/DuckDuckGo 引擎等**当前 API 面已不存在的端点**，未随本期契约更新，不可直接运行。一切以本 README 与 [docs/API.md](docs/API.md) 为准（示例修复已列入后续清单）。阅读时请把它们当历史参考，不要复制其中的 URL 或字段。
 
 ---
 
@@ -194,7 +195,7 @@ location /web-tool/ {
 }
 ```
 
-`proxy_pass` 末尾**不带斜杠**即不重写路径；面板自身用相对路径引用资源、hash 路由，无需任何额外配置。更多部署细节（探针、日志、排障）见 [deploy/README.md](deploy/README.md)。
+`proxy_pass` 末尾**不带斜杠**即不重写路径；官网与控制台自身用相对路径引用资源、hash 路由，无需任何额外配置。更多部署细节（探针、日志、排障）见 [deploy/README.md](deploy/README.md)。
 
 ---
 
@@ -204,7 +205,7 @@ location /web-tool/ {
 
 ```yaml
 platform:
-  enabled: true           # false 时不挂载 /api/* 与 /v1/*，面板静态页与健康端点仍可用
+  enabled: true           # false 时不挂载 /api/* 与 /v1/*，官网与控制台静态页与健康端点仍可用
   data_dir: "./data"      # bbolt 库 web2api.db + JWT 密钥 secret.key 的目录（.gitignore 已忽略 data/）
   admin_username: "admin"
   admin_password: "admin123"  # 部署后务必修改
@@ -246,13 +247,14 @@ core/                        HTTP 服务（全部路由挂 /web-tool）、收录
 mcp/                         MCP streamable HTTP 端点与 4 个工具（Agent 平面）
 platform/                    平台后端：API key/配额/用量（bbolt）、JWT 管理端、
                              /v1 与 /api 路由注册、计费与限速
-web/admin/                   管理面板（纯静态零依赖：总览/密钥/用量/文档/引擎状态/
-                             在线调试/Agent 集成/系统设置）
-cmd/                         CLI（search / serve）与装配（platform 挂载、面板静态、启动日志）
+web/site/                    产品官网（纯静态零依赖，由 serve 挂在 /web-tool/ 根）
+web/admin/                   管理控制台（纯静态零依赖，由 serve 挂在 /web-tool/console/：
+                             总览/密钥/用量/文档/引擎状态/在线调试/Agent 集成/系统设置）
+cmd/                         CLI（search / serve）与装配（platform 挂载、官网与控制台静态、启动日志）
 deploy/                      Docker 编排、E2E 冒烟与稳态脚本、运维文档
-docs/                        API 参考、Agent 接入、架构、配置、测试文档、上游 README 存档
+docs/                        API 参考、Agent 接入、架构、配置、测试文档
 ```
 
 ## 许可证
 
-MIT，见 [LICENSE](LICENSE)。上游项目：[karust/openserp](https://github.com/karust/openserp)。
+MIT，见 [LICENSE](LICENSE)。
