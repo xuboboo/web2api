@@ -150,6 +150,9 @@ code, pre { font-family: var(--font-mono); }
 
 .btn-primary { background: var(--brand); color: var(--brand-foreground); }
 .btn-primary:hover { filter: brightness(0.93); }
+/* 暗色主题主按钮:反色白底深字(Vercel/Linear 手法),高饱和绿块+白字过于廉价 */
+html.dark .btn-primary { background: #F5F8F5; color: #0B1210; }
+html.dark .btn-primary:hover { background: #FFFFFF; filter: none; }
 
 .btn-secondary { background: var(--card); color: var(--foreground); border-color: var(--border); }
 .btn-secondary:hover { border-color: var(--border-strong); background: var(--accent); }
