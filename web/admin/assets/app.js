@@ -2999,10 +2999,9 @@ async def run():
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '安全机制' })),
       el('div', { class: 'card-body' },
         el('ul', { class: 'info-list' },
-          el('li', null, el('b', { text: '登录锁定:' }), '同一「用户名 + IP」连续 5 次密码错误后锁定 15 分钟;期间登录一律返回 429 {"error":"too_many_attempts"} 与 Retry-After。配置:config.yaml security.login_lockout(fails: 5, minutes: 15)。'),
-          el('li', null, el('b', { text: '管理 API 限速:' }), '全部 /api/* 默认 60 次 / 分钟,超限返回 429 与 Retry-After。配置:security.admin_rate_per_minute。'),
-          el('li', null, el('b', { text: '密码存储:' }), 'bcrypt 哈希后写入存储(settings 桶),并覆盖 config.yaml 中的默认密码;配置文件仅作为首次初始化值。'),
-          el('li', null, el('b', { text: '会话失效:' }), '修改密码后 token_version + 1,全部已登录 token(含当前浏览器)立即失效。'),
+          el('li', null, el('b', { text: '登录锁定:' }), '同一「用户名 + IP」连续 5 次密码错误后锁定 15 分钟;期间登录一律返回 429 {"error":"too_many_attempts"} 与 Retry-After。'),
+          el('li', null, el('b', { text: '管理 API 限速:' }), '全部 /api/* 默认 60 次 / 分钟,超限返回 429 与 Retry-After。'),
+          el('li', null, el('b', { text: '会话失效:' }), '修改密码后全部已登录 token(含当前浏览器)立即失效,需要重新登录。'),
           el('li', null, el('b', { text: '公网鉴权:' }), '/v1/* 与 MCP 使用 X-API-Key(哈希存储,面板仅可见前缀);引擎冷却期间请求快速失败,不产生上游流量。'))));
 
     var grid = el('div', { class: 'settings-grid' }, pwdCard, infoCard);
