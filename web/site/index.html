@@ -538,7 +538,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
           <div class="f-body">
             <h3>三档冷却,自动恢复</h3>
             <p>连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求,成功恢复、失败进下一档。</p>
-            <p class="cool-sub">冷却期内该引擎零接触:search / check 快速失败(HTTP 503 <code>engine_cooldown</code> 信封 + <code>Retry-After</code>),不发真实请求、不消耗配额;批量判定自动绕行,响应 <code>meta.engines_cooldown</code> 会列出冷却中的引擎,客户端据此跳过,并在 <code>Retry-After</code> 后重试。</p>
+            <p class="cool-sub">冷却期内该引擎零接触:相关请求快速失败且不消耗配额,到期自动恢复,全程无需人工干预。客户端接入细节见「API 文档」。</p>
           </div>
         </div>
         <div class="engine-panel reveal" style="--reveal-delay:240ms">
