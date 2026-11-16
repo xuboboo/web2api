@@ -7,6 +7,15 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='32' cy='29' r='16' fill='%23F5F8F5'/%3E%3Cpath d='M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z' fill='%23E05A5A'/%3E%3Cpath d='M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z' fill='%23E05A5A' opacity='.85'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='27.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Ccircle cx='38' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='36.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Cpath d='M28 36 L32 58 L36 36 Z' fill='%23F0B429'/%3E%3Ccircle cx='18' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3Ccircle cx='46' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="../assets/style.css?v=20261116n">
 <script>
+/* 规范 URL 兜底:裸 /web-tool/status(无结尾斜杠)会把 ../assets/* 解析到站点根导致 404 裸页面。
+ * 服务端已 301,这里覆盖缓存/旧页面刷新场景。 */
+(function () {
+  if (location.pathname === '/web-tool/status') {
+    location.replace('/web-tool/status/' + location.search + location.hash);
+  }
+})();
+</script>
+<script>
 /* 主题预置:默认暗夜色;仅当用户显式选择过浅色(w2a_site_theme=light)才用浅色。
  * 在 CSS 生效前设置 class,避免主题闪变 */
 (function () {

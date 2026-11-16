@@ -357,6 +357,31 @@ func mountStaticPanels(app *fiber.App) {
 		return c.Redirect(core.BasePath+"/console/", fiber.StatusMovedPermanently)
 	})
 
+	// (1b) Same canonicalization for the bare site root (no trailing slash).
+	// Without this, <BasePath> is served the site index.html directly and its
+	// relative asset references (assets/style.css, assets/app.js) resolve against
+	// the server root — /assets/* — which is not mounted, yielding an unstyled
+	// page. StrictRouting=false means this exact route also matches <BasePath>/;
+	// redirect only the bare form (same guard as the console route above).
+	app.Get(core.BasePath, func(c *fiber.Ctx) error {
+		if c.Path() != core.BasePath {
+			return c.Next()
+		}
+		return c.Redirect(core.BasePath+"/", fiber.StatusMovedPermanently)
+	})
+
+	// (1c) Same canonicalization for the status page's bare path. Without it,
+	// <BasePath>/status is served the page directly and its ../assets/* relative
+	// references resolve to <BasePath>/assets/* — actually the site's assets —
+	// but with a wrong base for any future relative links; keep all bare forms
+	// canonical. Guard is the same StrictRouting=false pattern as above.
+	app.Get(core.BasePath+"/status", func(c *fiber.Ctx) error {
+		if c.Path() != core.BasePath+"/status" {
+			return c.Next()
+		}
+		return c.Redirect(core.BasePath+"/status/", fiber.StatusMovedPermanently)
+	})
+
 	// (2) Admin console (web/admin): GET <BasePath>/console/ serves index.html,
 	// <BasePath>/console/assets/* serves the bundled resources.
 	adminDir := findStaticIndexDir(adminPanelDirCandidates)
