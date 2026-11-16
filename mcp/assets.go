@@ -77,6 +77,11 @@ pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/
 .foot{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:20px;color:#73737A;font-size:12px}
 .hint{margin-top:14px;padding:12px 16px;border-radius:10px;background:rgba(62,207,142,.07);border:1px solid rgba(62,207,142,.16);color:#A1A1A6;font-size:12.5px}
 .hint code{font:500 12px/1 ui-monospace,monospace;color:#3ECF8E}
+.quick{margin-top:22px;padding:18px 20px;border-radius:14px;border:1px solid rgba(255,255,255,.09);background:#17171A}
+.quick h2{margin:0 0 12px;font-size:15px;color:#F5F5F7;font-weight:600}
+.quick ol{margin:0;padding-left:20px;color:#A1A1A6;font-size:13px;line-height:1.9}
+.quick code{font:500 12px/1 ui-monospace,monospace;color:#3ECF8E;background:rgba(62,207,142,.08);padding:2px 5px;border-radius:4px}
+.quick a{display:inline-block;margin-top:12px;color:#3ECF8E;font-size:12.5px}
 @media(max-width:640px){.topbar-in{padding:0 16px}.brand span,.topnav{display:none}.wrap{padding:28px 14px 48px}h1{font-size:24px}pre{padding:16px 14px;font-size:11.5px}.fname{font-size:11px}}
 /* 细滚动条(与官网 V3 同款):本页不加载 assets/style.css,此处内联同规格 */
 @supports (-moz-appearance: checkbox){html{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}pre{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}}
@@ -99,7 +104,17 @@ pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/
 <div class="card-head"><span class="dots"><i></i><i></i><i></i></span><span class="fname">` + html.EscapeString(title) + `</span><button class="btn" id="copyBtn" type="button">复制全文</button></div>
 <pre id="content">` + html.EscapeString(string(body)) + `</pre>
 </section>
-<p class="hint">程序化导入(Dify / n8n / curl / Agent)直接 <code>GET</code> 本地址即可获得原始规范字节;浏览器访问自动呈现此网页视图。</p>
+<section class="quick">
+<h2>5 分钟上手</h2>
+<ol>
+<li>登录:在<strong>控制台</strong>用管理员账号登录,取得 JWT(管理端点不在公开规范中列举)。</li>
+<li>建钥:在控制台「API 密钥」页创建密钥 —— 完整 key 只返回一次,存好。</li>
+<li>判定:<code>POST /v1/index/check</code>(带 <code>X-API-Key</code>)+ <code>{"urls":["https://example.com"],"engines":["baidu","bing"]}</code> 得到逐引擎收录结果。</li>
+<li>查量:<code>GET /v1/quota</code> 查配额,用量流水在控制台查看。</li>
+</ol>
+<a href="./#quickstart">官网完整实例与代码示例 →</a>
+</section>
+<p class="hint">程序化导入(Dify / n8n / curl / Agent)直接 <code>GET</code> 本地址即可获得原始规范字节;浏览器访问自动呈现此网页视图。带真实响应样例、Python/JS/curl 代码与排错表的完整教程见仓库 <code>docs/QUICKSTART.md</code>。</p>
 <div class="foot"><span>© Web2API 网站收录查询开放平台</span><a href="./">返回官网</a><a href="./console/">进入控制台</a></div>
 </main>
 <script>

@@ -2,6 +2,8 @@
 
 本文档是 **Web2API 网站收录查询开放平台** 的全量接口文档。整个应用固定部署在 **`/web-tool`** 子路径下（代码内常量 `core.BasePath`，根路径无任何路由），本文所有路径均已带前缀，可逐字拷贝使用。
 
+**第一次接入？先看 [QUICKSTART.md](QUICKSTART.md)** —— 5 分钟从零到第一个收录判定结果，含真实响应样例、Python/JS/curl 可复制代码与排错表。本文是逐端点的完整参考。
+
 配置、部署与架构分别见 [CONFIGURATION.md](CONFIGURATION.md)、[deploy/README.md](../deploy/README.md)、[ARCHITECTURE.md](ARCHITECTURE.md)；面向 Agent 开发者的 5 分钟接入指南见 [AGENT-README.md](AGENT-README.md)。
 
 ---

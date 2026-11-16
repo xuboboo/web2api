@@ -46,6 +46,8 @@ curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
   -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'
 ```
 
+**开发者第一次接入,先看 [docs/QUICKSTART.md](docs/QUICKSTART.md)**:5 分钟跑通「登录 → 建钥 → 第一次收录判定 → 查配额」,含真实响应样例、Python/JS/curl 可复制代码与常见错误排查表。
+
 全量端点、请求/响应示例、错误码表、限流与计费口径见 **[docs/API.md](docs/API.md)**；Agent 接入见 **[docs/AGENT-README.md](docs/AGENT-README.md)**。
 
 ---

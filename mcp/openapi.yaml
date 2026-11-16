@@ -14,6 +14,13 @@ info:
     * **Agent 平面** `/mcp` + 本 spec + `llms.txt` — AI Agent 一等公民(MCP streamable HTTP,JSON-RPC 2.0)。
     * **控制平面** `/api/*` — 管理面板后台(风控与用量治理台),仅限管理员;公开规范不枚举其端点。
 
+    ## 5 分钟上手(最短路径)
+    1. 先用管理员账号登录**控制台**,取得 JWT(管理面端点不在本公开规范中列举)。
+    2. 在控制台「API 密钥」页创建密钥 → **完整 key 只返回这一次**,存好。
+    3. `POST /v1/index/check` 带 `X-API-Key: <你的key>` + `{"urls":["https://example.com"],"engines":["baidu","bing"]}` → 得到逐引擎 `indexed` 判定。
+    4. `GET /v1/quota` 带同一 key 查配额;用量流水在控制台查看。
+    带**完整可复制示例、真实响应样例、Python/JS/curl 代码与排错表**的教程见仓库 `docs/QUICKSTART.md`(本文下方 endpoints 逐字段定义)。
+
     ## 三套错误信封
     1. **平台信封**(`/v1/*`、`/mcp` 鉴权与配额):`{"error":"unauthorized|quota_exceeded|..."}`,429/503 带 `Retry-After` 响应头。
     2. **数据面信封**(`/{engine}/search` 等核心端点):`{"error":"<code>","code":<http状态>,"request_id":"...","message":"...","reason":"...","meta":{}}`。
