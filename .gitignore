@@ -45,7 +45,10 @@ docs/demo.Dockerfile
 .mimosa/
 
 # 平台运行时数据(bbolt 数据库、JWT 密钥、JSON fallback)
+# 覆盖 data/ 及所有 data-<用途>/ 变体(如 data-panelv2/)——
+# JWT 签名密钥与数据库一旦被提交,可伪造任意管理员 JWT。
 data/
+data-*/
 
 # QA 运行时工作区(用后即弃的验证环境与一次性配置),不覆盖 qa/ 目录
 # —— qa/(验收证据、参考截图)保留在版本库
@@ -54,7 +57,11 @@ config-qa*
 deploy/e2e-results/
 server-*.log
 
-# QA 运行日志(上轮验收遗留)
+# QA 运行日志(含各端口验证实例遗留)
+logs-*.log
 logs-qa*.txt
 qa/serve-*.log
 qa/*.log
+
+# 一次性审计配置(如 config-audit.yaml)——避免误提交
+config-audit*.yaml

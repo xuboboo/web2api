@@ -326,7 +326,7 @@ curl "http://127.0.0.1:7000/web-tool/baidu/search?text=golang%20%E5%B9%B6%E5%8F%
 
 | 端点 | 说明 |
 | --- | --- |
-| `GET /web-tool/health` | 聚合健康：`{"status":"healthy\|degraded\|unhealthy","uptime":"2h13m","engines":[{"name":"baidu","initialized":true,"status":"ready\|not_initialized\|circuit_open"}],"system":{"goroutines":…,"memory_mb":…,"go_version":"…"}}`；`unhealthy` 时 HTTP 503 |
+| `GET /web-tool/health` | 聚合健康：`{"status":"healthy\|degraded\|unhealthy","uptime":"2h13m","engines":[{"name":"baidu","initialized":true,"status":"ready\|not_initialized\|circuit_open"}],"storage":"bolt\|json"}`；`unhealthy` 时 HTTP 503。运行指标（goroutines/memory_mb/go_version）已移至鉴权后的 `/api/runtime`，不再在此匿名端点暴露 |
 | `GET /web-tool/ready` | 就绪探针；停机排水期返回 503 + `status=draining` |
 | `GET /web-tool/stats` | 缓存 / 代理 / 熔断 / 验证码求解器指标聚合 |
 | `GET /web-tool/stats/cache` | 端点响应缓存命中统计 |
@@ -377,7 +377,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/mcp \
   "result": {
     "protocolVersion": "2025-06-18",
     "capabilities": { "tools": { "listChanged": false } },
-    "serverInfo": { "name": "web2api", "version": "2.0.0" }
+    "serverInfo": { "name": "web2api", "version": "0.8.19" }
   }
 }
 ```

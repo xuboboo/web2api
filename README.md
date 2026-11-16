@@ -10,7 +10,7 @@
 
 | 平面 | 端点 | 鉴权 | 一句话 |
 | --- | --- | --- | --- |
-| 数据平面 | `/web-tool/v1/*`、`/web-tool/{engine}/search` | `X-API-Key`（search 免鉴权） | 收录判定 + 四引擎搜索，配额/限流/冷却内建 |
+| 数据平面 | `/web-tool/v1/*`、`/web-tool/{engine}/search` | `X-API-Key`（search 仅当 `data_plane_auth:false` 时免鉴权，模板默认 true 需密钥） | 收录判定 + 四引擎搜索，配额/限流/冷却内建 |
 | Agent 平面 | `/web-tool/mcp`、`/web-tool/openapi.yaml`、`/web-tool/llms.txt` | `X-API-Key` 或 JWT | AI Agent 一等公民：Claude/Dify/Coze/n8n/LangChain 双入口接入 |
 | 控制平面 | `/web-tool/api/*` + `/web-tool/console/` 控制台 | JWT | 风控与用量治理台：密钥、配额、用量日志、引擎冷却看板、在线调试 |
 
@@ -93,7 +93,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
   GET  /web-tool/v1/index/check    单 URL 便捷版
   GET  /web-tool/v1/quota          配额查询
   GET  /web-tool/v1/engines        引擎与熔断状态
-  GET  /web-tool/{baidu|sogou|so360|bing}/search?text=…   四引擎原始搜索（免鉴权）
+  GET  /web-tool/{baidu|sogou|so360|bing}/search?text=…   四引擎原始搜索（data_plane_auth=false 时免鉴权）
 
 Agent 平面
   POST /web-tool/mcp               MCP streamable HTTP（initialize/tools，4 个工具）
@@ -223,7 +223,7 @@ security:                 # 二期：控制平面加固
     fails: 5              # 同一 用户名+IP 连续失败次数阈值
     minutes: 15           # 锁定时长
   admin_rate_per_minute: 60  # 管理 API 全局限速（超限 429 rate_limited）
-  data_plane_auth: false     # true 时数据平面也要求 X-API-Key（集成落地扩展键）
+  data_plane_auth: true      # true 时数据面 /{engine}/search 与 /stats/* 也要求 X-API-Key（本仓库模板默认;代码内置默认仍 false 以兼容既有部署）
 ```
 
 引擎与反爬参数（限速、指纹、熔断、代理、2captcha）说明见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 与 config.yaml 内注释。
