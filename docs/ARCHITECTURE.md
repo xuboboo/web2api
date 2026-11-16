@@ -1,6 +1,6 @@
 # Architecture
 
-web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/xuboboo/web2api) 的框架改造，重心在国内搜索引擎。
+web2api 是 Go 实现的自托管网站收录查询开放平台，重心在国内搜索引擎的收录判定与反爬对抗；由一套通用 SERP 框架改造而来，保留多引擎管道骨架。
 
 ## 执行模式
 
@@ -114,11 +114,11 @@ APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1.
 
 响应头：`X-Request-ID`、`X-Cache`、`X-Fallback-Engine`、`X-Proxy-Mode/Tag/Used`、`X-Network-Bytes`、`X-Browser-Profile-Id`。
 
-错误体：`{"error","code","request_id","message","reason"?,"meta"?}`。引擎级错误把机器码放 `error`；参数校验错误 `error=bad_request`，具体原因放 `reason`（`INVALID_LIMIT` 等）。完整状态码表见根 README。
+错误体：`{"error","code","request_id","message","reason"?,"meta"?}`。引擎级错误把机器码放 `error`；参数校验错误 `error=bad_request`，具体原因放 `reason`（`INVALID_LIMIT` 等）。完整状态码表见 [API.md §7](API.md)。
 
 ## 收录判定（index check）
 
-- 查询词：四引擎一致，直接把目标 URL 当作查询词检索（limit 10）。bing 早期使用的 `"url:<url>"` 语法于 2026-11 停用——实测 cn.bing.com 对该操作符返回无关结果，裸 URL 才是可靠形态。
+- 查询词：baidu/sogou/so360 用完整 URL，bing 去掉 scheme 后用 host+path 检索（实测 10 站对照：完整 URL 命中 4/10、去 scheme 命中 7/10）。bing 早期使用的 `"url:<url>"` 语法于 2026-11 停用——实测 cn.bing.com 对该操作符返回无关结果。
 - 候选跳转解析：sogou/so360 的 `/link` 在引擎内解析；漏网的 `baidu.com/link?url=`、`sogou.com/link`、`so.com/link` 由 core 复用 rawClickRequest 读 Location；bing 的 `/ck/a` 离线解码。
 - 归一化：协议与 host 小写、去默认端口、去 fragment、去尾部 `/`（根路径除外）、百分号解码；目标 URL 无 query 时忽略结果的 query，有 query 时参数排序后须相等。
 - 判定：host 与 path 相等 → `indexed=true, match="exact"`；否则 `indexed=false, match="none"`。

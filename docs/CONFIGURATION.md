@@ -66,7 +66,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 数据目录被第二个进程占用时启动直接失败(避免双实例分裂记账);JSON 文件回退
 (`<data_dir>/web2api.json`)仅覆盖非锁类打开失败,`/health` 的 `storage` 字段
 暴露实际存储类型。API key 只存 SHA-256 哈希,完整 key 仅在创建/轮换时返回一次。
-1 URL × 1 引擎 = 1 unit;`daily_quota=0` 为不限。管理员会话(sessions 桶)支持
+1 条 URL × 1 个引擎 = 1 次;`daily_quota=0` 为不限。管理员会话(sessions 桶)支持
 逐会话撤销与滑动续期,审计轨迹落 `<data_dir>/audit.log`(JSON Lines,与
 app.log_max_mb/log_backups 同轮转机制)。
 
@@ -123,6 +123,15 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `login_lockout.minutes` | `15` | `15` | 登录锁定时长 |
 | `password_policy.min_length` | `8` | `8` | S4-B-11: 改密最小长度 |
 | `password_policy.min_classes` | `0` | `0` | S4-B-11: 改密字符类数要求（内置常用密码黑名单始终生效） |
+
+## stability（引擎 IP 冷却状态机）
+
+| 键 | 默认值 | 本仓库 | 说明 |
+| --- | --- | --- | --- |
+| `engine_cooldown.steps_minutes` | `[10, 30, 120]` | 同默认 | 连续第 1/2/3+ 次被拦截（blocked 403 / 429 / captcha）的冷却分钟数（最后一个值向后延续） |
+| `engine_cooldown.reset_after_minutes` | `240` | 同默认 | 连续无拦截达此时长后连续计数归零，重新从第 1 档起算 |
+
+冷却期内该引擎所有 search/check 快速失败（503 `engine_cooldown` 信封 + `Retry-After`），不发真实请求；到期放行一个探测请求——成功即恢复，再次被拦截进下一档，其他失败（如超时）按当前档时长顺延重试。运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复、`cooldown/force {"minutes":N}` 强制冷却（维护窗口）。
 
 ## app 日志轮转（S4 新增键）
 

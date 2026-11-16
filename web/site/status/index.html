@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>服务状态 · Web2API 网站收录查询开放平台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='32' cy='29' r='16' fill='%23F5F8F5'/%3E%3Cpath d='M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z' fill='%23E05A5A'/%3E%3Cpath d='M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z' fill='%23E05A5A' opacity='.85'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='27.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Ccircle cx='38' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='36.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Cpath d='M28 36 L32 58 L36 36 Z' fill='%23F0B429'/%3E%3Ccircle cx='18' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3Ccircle cx='46' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="../assets/style.css?v=20261116r">
+<link rel="stylesheet" href="../assets/style.css?v=20261118b">
 <script>
 /* 规范 URL 兜底:裸 /web-tool/status(无结尾斜杠)会把 ../assets/* 解析到站点根导致 404 裸页面。
  * 服务端已 301,这里覆盖缓存/旧页面刷新场景。 */
@@ -105,7 +105,7 @@
 .st-cb { background: rgba(214, 69, 69, .12); color: var(--destructive); }
 html.dark .st-ok { background: rgba(62, 207, 142, .14); }
 html.dark .st-cool { background: rgba(240, 180, 65, .17); }
-html.dark .st-cb { background: rgba(229, 100, 92, .15); }
+html.dark .st-cb { background: rgba(229, 100, 92, .08); }
 .st-count { font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); font-variant-numeric: tabular-nums; margin-left: 4px; }
 .st-reason { font: 400 12px/1 var(--font-sans); color: var(--muted-foreground); }
 .seg-bar { display: flex; gap: 6px; flex-basis: 100%; margin-top: 12px; }
@@ -169,7 +169,7 @@ html.dark .st-cb { background: rgba(229, 100, 92, .15); }
   </div>
 
   <div class="apis-note">
-    <b>API 平面</b> —— 收录判定与四引擎搜索正常对外服务;接入方式、错误码与冷却语义见官网「API 文档」或 <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>。
+    <b>API 平面</b> —— 收录判定与四引擎搜索对外服务中;引擎风控冷却 / 熔断属设计内自愈行为。接入方式、错误码与冷却语义见官网「API 文档」或 <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>。
   </div>
 </main>
 
@@ -255,7 +255,8 @@ html.dark .st-cb { background: rgba(229, 100, 92, .15); }
       var extra = state === 'cooldown' && eng.until
         ? '<span class="st-count cd-remaining" data-until="' + esc(eng.until) + '">' + esc(remainingText(eng.until)) + '</span>'
         : '';
-      var reason = state === 'cooldown' && eng.reason ? '<span class="st-reason">' + esc(eng.reason) + '</span>' : '';
+      var REASON_CN = { FORCED: '计划内维护', COOLDOWN: '引擎风控' };
+      var reason = state === 'cooldown' && eng.reason ? '<span class="st-reason">' + esc(REASON_CN[eng.reason] || '') + '</span>' : '';
       html += '<div class="eng-row">'
         + '<span class="eng-name">' + esc(eng.engine) + '</span>'
         + '<span class="eng-cn">' + esc(CN[eng.engine] || eng.engine) + '</span>'

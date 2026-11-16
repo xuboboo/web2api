@@ -756,7 +756,7 @@ func TestStaticAssets(t *testing.T) {
 		t.Fatalf("embedded spec must be the 3.1 document, got prefix %q", firstLine(body))
 	}
 	// 审计 A-08:公开规范只含数据面 + Agent 面;/api/* 管理面整体移入
-	// docs/openapi-admin.yaml(内部文档,不 embed 不 serve)。
+	// docs/internal/openapi-admin.yaml(内部文档,不 embed 不 serve)。
 	for _, want := range []string{"/mcp", "/v1/index/check", "/v1/quota", "/{engine}/search"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("spec must document %s", want)
@@ -769,13 +769,13 @@ func TestStaticAssets(t *testing.T) {
 			t.Fatalf("public spec must not document admin endpoint %s* (审计 A-08)", banned)
 		}
 	}
-	adminSpec, adminErr := os.ReadFile(filepath.Join("..", "docs", "openapi-admin.yaml"))
+	adminSpec, adminErr := os.ReadFile(filepath.Join("..", "docs", "internal", "openapi-admin.yaml"))
 	if adminErr != nil {
 		t.Fatalf("internal admin spec must exist in repo: %v", adminErr)
 	}
 	for _, want := range []string{"/api/engines/{name}/cooldown/force", "/api/playground/check", "/api/auth/password"} {
 		if !strings.Contains(string(adminSpec), want) {
-			t.Fatalf("docs/openapi-admin.yaml must document %s", want)
+			t.Fatalf("docs/internal/openapi-admin.yaml must document %s", want)
 		}
 	}
 
@@ -828,7 +828,7 @@ func TestStaticAssets(t *testing.T) {
 // TestOpenAPISpecContractInvariants validates the spec structurally: unique
 // operationIds (OpenAPI 工具导入要求), a summary/description on every operation, and
 // the A-08 invariant that the public spec documents zero /api/* admin paths
-// (the full admin plane lives in docs/openapi-admin.yaml, not embedded).
+// (the full admin plane lives in docs/internal/openapi-admin.yaml, not embedded).
 func TestOpenAPISpecContractInvariants(t *testing.T) {
 	var spec struct {
 		OpenAPI string `yaml:"openapi"`

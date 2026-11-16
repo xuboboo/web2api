@@ -1,264 +1,359 @@
-<p align="center"><img src="logo.svg" alt="Web2API — 网站收录查询开放平台" width="640"></p>
+<p align="center"><img src="logo.svg" alt="Web2API Website Index-Check Open Platform" width="640"></p>
 
-# Web2API —— 自托管的网站收录查询开放平台
+# Web2API — Self-Hosted Website Index-Check Open Platform
 
-**提交一批 URL，判定它们是否被百度 / 搜狗 / 360 / 必应收录**；附带四引擎原始搜索、AI Agent 一等公民接入（MCP + OpenAPI）与一个管理控制台（API 密钥、配额、用量、引擎风控看板），并自带产品官网。官网、管理控制台与全部 API 固定部署在 **`/web-tool`** 子路径下：官网即 `/web-tool/` 根，控制台在 `/web-tool/console/`。
+**English** | [简体中文](README.zh-CN.md)
 
-> 它**不是**通用 API 网关，也不是又一个 SerpAPI 平替。壁垒在两处：**国内四引擎的收录判定语义**（以 URL 为查询词检索 + 跳转链接还原 + 归一化匹配，这是 SerpAPI/Serper/博查都不提供的细分）与**引擎反爬对抗**（桌面指纹、双通道兜底、验证码门控、限速、熔断、IP 冷却状态机）。转发与编排只是外壳。
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](go.mod)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](docs/CONFIGURATION.md)
 
-三个平面：
-
-| 平面 | 端点 | 鉴权 | 一句话 |
-| --- | --- | --- | --- |
-| 数据平面 | `/web-tool/v1/*`、`/web-tool/{engine}/search` | `X-API-Key`（search 仅当 `data_plane_auth:false` 时免鉴权，模板默认 true 需密钥） | 收录判定 + 四引擎搜索，配额/限流/冷却内建 |
-| Agent 平面 | `/web-tool/mcp`、`/web-tool/openapi.yaml`、`/web-tool/llms.txt` | `X-API-Key` 或 JWT | AI Agent 一等公民：Claude/Dify/Coze/n8n/LangChain 双入口接入 |
-| 控制平面 | `/web-tool/api/*` + `/web-tool/console/` 控制台 | JWT | 风控与用量治理台：密钥、配额、用量日志、引擎冷却看板、在线调试 |
-
-四引擎搜索管道内建：桌面浏览器指纹、浏览器/HTTP 双通道兜底、CAPTCHA 门控、按引擎限速、熔断保护与代理策略。
+A **self-hosted, MIT-licensed open platform** that checks whether URLs are indexed by Baidu, Sogou, 360 Search and Bing in one API call — with four-engine raw search, native MCP + OpenAPI agent entries, and a built-in admin console. The website, admin console and all API endpoints are served under a fixed **`/web-tool`** sub-path: the website is the `/web-tool/` root, the console lives at `/web-tool/console/`.
 
 ---
 
-## 快速开始
+## Table of Contents
 
-需要本机装有 Chrome/Chromium/Edge（浏览器模式默认）。
+- [1. Why Web2API](#1-why-web2api)
+- [2. How Index-Check Works](#2-how-index-check-works)
+- [3. Quick Start](#3-quick-start)
+- [4. Quick Start for Agents](#4-quick-start-for-agents)
+- [5. API Overview](#5-api-overview)
+- [6. Agent Integrations (MCP + OpenAPI)](#6-agent-integrations-mcp--openapi)
+- [7. IP Risk Control & Engine Cooldown](#7-ip-risk-control--engine-cooldown)
+- [8. Security Model](#8-security-model)
+- [9. Raw Mode (Honest Notes)](#9-raw-mode-honest-notes)
+- [10. Legacy Assets Notice](#10-legacy-assets-notice)
+- [11. Self-Hosting & Deployment](#11-self-hosting--deployment)
+- [12. Configuration](#12-configuration)
+- [13. Testing](#13-testing)
+- [14. Project Structure](#14-project-structure)
+- [15. License](#15-license)
+
+**Documentation**:
+
+| Document | Content |
+| --- | --- |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Full 5-minute walkthrough (Chinese): login → create key → first index check → read quota |
+| [docs/API.md](docs/API.md) | Full endpoint reference: requests/responses, error codes, rate limits, billing (Chinese) |
+| [docs/AGENT-README.md](docs/AGENT-README.md) | 5-minute agent integration guide: MCP / OpenAPI / REST (Chinese) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture: dual-channel, index-check pipeline, resilience & anti-scraping (Chinese) |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Configuration reference, key by key (Chinese) |
+| [docs/TESTING.md](docs/TESTING.md) | Testing design and usage (Chinese) |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributing guide (Chinese) |
+| [deploy/README.md](deploy/README.md) | Deployment & ops: Docker Compose, probes, troubleshooting (Chinese) |
+
+---
+
+## 1. Why Web2API
+
+This is **not** a general-purpose API gateway, nor another SerpAPI clone. The moat is in two places: the **index-check semantics for the four Chinese-market engines** (search with the URL itself as the query + redirect-link resolution + normalized matching — a niche SerpAPI/Serper/Bocha don't offer) and **engine anti-scraping countermeasures** (desktop fingerprints, dual-channel fallback, CAPTCHA gating, rate limiting, circuit breaking, and an IP cooldown state machine). Relaying and orchestration are just the shell.
+
+**Features at a glance**:
+
+- **Index-check API**: `POST /web-tool/v1/index/check` takes up to 20 URLs per request and returns per-engine `indexed` verdicts with match details; 1 URL × 1 engine = 1 unit.
+- **Four-engine raw search**: `GET /web-tool/{engine}/search` with `format=json|markdown|text|ndjson`.
+- **Dual agent entry points**: MCP streamable HTTP (4 tools) + OpenAPI 3.1 spec + an llms.txt capability list.
+- **Admin console**: API keys, quotas, usage logs, engine risk-control dashboard, playground, settings.
+- **Built-in IP risk control**: desktop browser fingerprints, browser/HTTP dual-channel fallback, CAPTCHA gating, per-engine rate limits, circuit breakers, and an engine cooldown state machine.
+- **No external storage dependencies**: a single bbolt file holds all state — no database, no message queue; the build is a single executable (`./web2api serve`; browser mode needs a local Chrome/Chromium/Edge).
+
+What we deliberately **don't** do: no global engine coverage, no Google vertical matrix, no location/language parameters, no async job archival, no reranker add-on layer. Two honest caveats: billing is **per successful unit** — after an HTTP 200 completes, the response envelope is inspected engine by engine and only successful units are charged; engine-level failed units (the `error` field, including raw-mode `not_implemented`) are not billed, and when the envelope cannot be parsed the full requested units are billed (fallback rule); 4xx / 429 / 503 are not billed. Batch index checks are synchronous, capped at 20 URLs per request.
+
+Capability matrix below (✓ = yes, ✗ = no, partial = yes with clear limits). **As of 2026-11, based on vendors' public docs; not independently re-verified**:
+
+| Capability | **Web2API** | SerpAPI | Serper.dev | BochaAI | 5118 | Aizhan | Link113 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Positioning | **Index check** + CN search | Global SERP API | Google SERP API | AI-native search | SEO big data | Site-level SEO data | Index check |
+| Four CN engines (baidu/sogou/so360/bing) SERP | ✓ | Partial (Baidu/Yandex etc., 100+ engines) | ✗ (Google only) | Partial (Web Search covers Chinese web, not engine-parity) | ✗ | ✗ | ✗ |
+| **URL index-check API (core semantics)** | **✓** | ✗ | ✗ | ✗ | ✗ (web tool only, 200 URLs per batch, no API) | ✗ | ✓ |
+| Self-hosted (keys/logs stored locally) | **✓** (single executable) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| MCP server (direct client connection) | ✓ (built in) | ✓ (official) | ✗ | ✓ | ✗ | ✗ | ✗ |
+| Public OpenAPI spec (Dify/n8n/LangChain import) | ✓ (`/web-tool/openapi.yaml` + `llms.txt`) | ✗ | ✗ | ✗ (docs behind a login-walled Feishu wiki) | ✗ | ✗ | ✗ |
+| Async batch / archive / callbacks | ✗ (sync, 20 URLs/request) | ✓ (async + Searches Archive) | ✗ | ✗ | ✓ (taskid polling) | ✗ | ✓ (webhook) |
+| Location/language/freshness params | ✗ | ✓ (location/uule/gl/hl…) | Partial | ✓ (freshness) | ✗ | ✗ | ✗ |
+| Result format options | Partial (`format=json\|markdown\|text\|ndjson` on search; index endpoint is JSON-only) | ✓ (json/html/md) | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Reranker / AI value-add layer | ✗ | ✗ | ✗ | ✓ (Semantic Reranker / AI Search) | ✗ | ✗ | ✗ |
+| Structured numeric error codes | ✗ (string `code` + `reason`, see error table) | ✗ | ✗ | ✗ | ✓ (100xxx/200xxx ranges) | — | ✗ |
+| Free tier / open source | ✓ (MIT, self-hosting is free) | Trial | 2,500 calls | — | 100 calls free | — | — |
+| Billing promise | Successful units only (engine-level failures not charged) | — | Success-only billing | — | Per call | Per call | — |
+
+**Differentiation summary**: SerpAPI/Serper/Bocha sell "search results"; we sell "index verdicts". 5118/Aizhan offer only a web tool or indirect site-level metrics for index checking; Link113 has an index API but no self-hosting, no agent entry points, and no search plane. **"URL index-check API for Chinese engines + self-hosted control + dual agent entry (MCP + OpenAPI)" is a niche no one else occupies today.**
+
+---
+
+## 2. How Index-Check Works
+
+1. **Search**: the target URL itself is the query phrase, retrieving the engine's top 10 results — baidu/sogou/so360 use the full URL; bing strips the scheme and searches host+path (measured across 10 real sites: full URL hit 4/10, scheme-stripped hit 7/10 — Bing treats `https://` as a keyword). The earlier `url:<url>` operator was retired in 2026-11 (it returns unrelated results). Everything runs through the engines' existing search pipeline, so fingerprints, dual-channel, CAPTCHA gating, rate limits and circuit breakers all apply.
+2. **Redirect resolution**: redirect links in the candidates (`baidu.com/link?url=`, `sogou.com/link`, `so.com/link`, bing `/ck/a`) are resolved to their real addresses before matching.
+3. **Normalized matching**: lowercase scheme and host, drop default ports, drop fragments, drop trailing `/` (except on the root path), percent-decode; when the target URL has no query string the result's query is ignored, otherwise sorted query params must be equal. Equal host and path → `indexed=true` with `match="exact"`; otherwise `indexed=false` with `match="none"`.
+4. **Accuracy**: every engine **under-reports when a page is indexed but ranked outside the top 10**; `match="none"` strictly means "not among the top 10 retrieved results", not "not indexed". Root URLs (e.g. `https://example.com`) hit most often; deep links outside the top 10 get missed. We recommend **cross-checking with multiple engines**: any engine returning `indexed=true` confirms the page is indexed.
+
+---
+
+## 3. Quick Start
+
+A local Chrome/Chromium/Edge is required (browser mode is the default).
 
 ```bash
 go build -o web2api .
-./web2api serve          # 默认读 ./config.yaml，监听 127.0.0.1:7000
-# 浏览器打开官网 http://127.0.0.1:7000/web-tool/
-# 管理控制台入口 http://127.0.0.1:7000/web-tool/console/
+./web2api serve          # reads ./config.yaml by default, listens on 127.0.0.1:7000
+# Website:        http://127.0.0.1:7000/web-tool/
+# Admin console:  http://127.0.0.1:7000/web-tool/console/
 ```
 
-或 Docker Compose（详见 [deploy/README.md](deploy/README.md)）：
+Or Docker Compose (see [deploy/README.md](deploy/README.md)):
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d --build
 curl http://127.0.0.1:7000/web-tool/health
 ```
 
-默认管理员 **`admin` / `admin123`** —— 首次部署后立即在控制台（`/web-tool/console/`）「系统设置」页改密码，或修改 `config.yaml` 的 `platform.admin_password`。启动日志检测到默认弱密码时会给出告警；控制台登录无验证码，切勿将管理端点暴露到公网。
+> `{BASE}` below stands for your service root: `http://127.0.0.1:7000/web-tool` locally, or e.g. `https://your-domain.com/web-tool` once deployed. **Every endpoint lives under the fixed `/web-tool` prefix.**
 
-**第一个调用**（控制台 `#/keys` 页创建一个 API key 后）：
+The default admin is **`admin` / `admin123`** — change the password right after the first deployment, either in the console (`/web-tool/console/`, Settings page) or via `config.yaml`'s `platform.admin_password`. When bound to a non-loopback address with the default `admin123` password, the startup log emits a security warning (loopback-only deployments don't trigger it; `security.data_plane_auth=false` adds a separate data-plane warning). Console login has no CAPTCHA — never expose the admin endpoints to the public internet.
+
+**First call** (after creating an API key on the console's `#/keys` page):
 
 ```bash
-curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
-  -H "X-API-Key: sk-w2a-…" -H "Content-Type: application/json" \
+curl -X POST {BASE}/v1/index/check \
+  -H "X-API-Key: <YOUR_API_KEY>" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'
 ```
 
-**开发者第一次接入,先看 [docs/QUICKSTART.md](docs/QUICKSTART.md)**:5 分钟跑通「登录 → 建钥 → 第一次收录判定 → 查配额」,含真实响应样例、Python/JS/curl 可复制代码与常见错误排查表。
-
-全量端点、请求/响应示例、错误码表、限流与计费口径见 **[docs/API.md](docs/API.md)**；Agent 接入见 **[docs/AGENT-README.md](docs/AGENT-README.md)**。
+For a step-by-step first integration, see **[docs/QUICKSTART.md](docs/QUICKSTART.md)** (Chinese): login → create key → first index check → read quota in 5 minutes, with real response samples, copy-paste Python/JS/curl code and a troubleshooting table.
 
 ---
 
-## 与 SaaS 竞品的对照
+## 4. Quick Start for Agents
 
-我们先说清楚**不做什么**：不做全球引擎覆盖、不做 Google 垂直矩阵、不做位置/语言参数、不做异步任务归档、没有 reranker 增值层。也如实说明两点：计费口径是 **HTTP 200 即计费**（200 信封内引擎级失败单元不退费；4xx/429/503 不计费），当前没有"仅成功计费"承诺；批量判定为同步模式，单请求上限 20 URL。下面是功能级矩阵（✓=有，✗=无，部分=有但有明显限制）：
+Three steps to your first verdict (full agent guide: [docs/AGENT-README.md](docs/AGENT-README.md), Chinese; hands-on tutorial: [docs/QUICKSTART.md](docs/QUICKSTART.md), Chinese):
 
-| 能力 | **Web2API** | SerpAPI | Serper.dev | 博查 BochaAI | 5118 | 爱站 | Link113 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 定位 | **收录判定** + 国内搜索 | 全球搜索结果 API | Google 搜索结果 API | AI 原生搜索 | SEO 大数据 | 站点级 SEO 数据 | 收录查询 |
-| 国内四引擎（baidu/sogou/so360/bing）搜索结果 | ✓ | 部分（含 Baidu/Yandex 等 100+ 引擎） | ✗（仅 Google 系） | 部分（Web Search 覆盖中文 web，非引擎对等） | ✗ | ✗ | ✗ |
-| **URL 收录判定 API（本文核心语义）** | **✓** | ✗ | ✗ | ✗ | ✗（仅网页工具，一次 200 条，无 API） | ✗ | ✓ |
-| 自托管（密钥/日志本地存储） | **✓**（单二进制） | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| MCP server（Claude 系客户端直连） | ✓（本仓库内置） | ✓（官方） | ✗ | ✓ | ✗ | ✗ | ✗ |
-| 公开 OpenAPI spec（Dify/Coze/n8n/LangChain 导入） | ✓（`/web-tool/openapi.yaml` + `llms.txt`） | ✗ | ✗ | ✗（文档在需登录的飞书 wiki） | ✗ | ✗ | ✗ |
-| 异步批量 / 归档 / 回调 | ✗（同步，20 URL/请求） | ✓（async + Searches Archive） | ✗ | ✗ | ✓（taskid 轮询） | ✗ | ✓（Webhook 回调） |
-| 位置/语言/时效参数 | ✗ | ✓（location/uule/gl/hl…） | 部分 | ✓（freshness） | ✗ | ✗ | ✗ |
-| 结果格式选择 | 部分（search 端点 `format=json\|markdown\|text\|ndjson`；收录端点固定 JSON） | ✓（json/html/md） | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Reranker / AI 增值层 | ✗ | ✗ | ✗ | ✓（Semantic Reranker / AI Search） | ✗ | ✗ | ✗ |
-| 结构化数字错误码 | ✗（字符串 `code` + `reason`，见错误码表） | ✗ | ✗ | ✗ | ✓（100xxx/200xxx 分段） | — | ✗ |
-| 免费额度 / 开源 | ✓（MIT，自托管零费用） | 试用 | 2500 次 | — | 0 元 100 次 | — | — |
-| 计费承诺 | 200 即计费（失败请求不计费） | — | 仅成功计费 | — | 按次 | 按次 | — |
+```bash
+# 1) Log in as admin (default admin / admin123 — change it right after first login)
+curl -s -X POST {BASE}/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<your-admin-password>"}'
+# → {"token":"<ADMIN_JWT>","expires_in":86400,"user":{"username":"admin"}}
 
-**差异化结论**：SerpAPI/Serper/博查做"搜索结果"，我们做"收录判定"；5118/爱站在收录上只有网页工具或站点级间接指标；Link113 有收录 API 但无自托管、无 Agent 入口、无搜索平面。**"中文引擎 URL 收录判定 API + 自托管可控 + Agent 双入口（MCP + OpenAPI）"是当前无人同时占据的生态位。**
+# 2) Create an API key (the full key, shaped like sk-w2a-<32-hex>, is returned only once — save it)
+curl -s -X POST {BASE}/api/keys \
+  -H "Authorization: Bearer <ADMIN_JWT>" -H "Content-Type: application/json" \
+  -d '{"name":"my-agent","daily_quota":100}'
+# → {"id":"35b1b68658b1dda8","prefix":"sk-w2a-f3a0c0","key":"<YOUR_API_KEY>",…}
 
----
-
-## 收录判定是怎么做的
-
-1. **检索**：以目标 URL 为查询词在引擎内检索前 10 条结果——baidu/sogou/so360 用完整 URL；bing 去掉 scheme 后用 host+path 检索（实测 10 站对照：完整 URL 命中 4/10、去 scheme 命中 7/10，`https://` 前缀会被 Bing 当成关键词）。bing 早期的 `url:<url>` 语法已于 2026-11 停用（返回无关结果）。全部走各引擎现有搜索管道，桌面指纹、双通道、CAPTCHA 门控、限速、熔断照常生效。
-2. **跳转解析**：候选结果里的跳转链接（`baidu.com/link?url=`、`sogou.com/link`、`so.com/link`、bing `/ck/a`）先还原成真实地址，再参与匹配。
-3. **归一化匹配**：协议与 host 小写、去默认端口、去 fragment、去尾部 `/`（根路径除外）、百分号解码；目标 URL 无 query 时忽略结果的 query，有 query 时参数排序后须相等。host 与 path 相等 → `indexed=true` 且 `match="exact"`，否则 `indexed=false` 且 `match="none"`。
-4. **准确率说明**：所有引擎在**已收录但排名靠后（未进前 10）时会漏报**；`match="none"` 的严格含义是"检索前 10 条结果中没有该页面"，不等于"未收录"。根路径 URL（如 `https://example.com`）命中率最高；带深层路径的 URL 若未进前 10 会漏报。建议对同一 URL **多引擎交叉验证**：任一引擎 `indexed=true` 即可确认已收录。
-
----
-
-## API 一览
-
-全部路径以 `/web-tool` 为前缀；请求/响应/错误码真实示例见 **[docs/API.md](docs/API.md)**。
-
+# 3) First index check
+curl -s -X POST {BASE}/v1/index/check \
+  -H "X-API-Key: <YOUR_API_KEY>" -H "Content-Type: application/json" \
+  -d '{"urls":["https://github.com"],"engines":["baidu","bing"]}'
+# → results[].engines.<engine> carries indexed / match / matched_result_url per engine
 ```
-数据平面（X-API-Key）
-  POST /web-tool/v1/index/check    批量收录判定（1..20 URL × 引擎，1 URL×1引擎=1 unit）
-  GET  /web-tool/v1/index/check    单 URL 便捷版
-  GET  /web-tool/v1/quota          配额查询
-  GET  /web-tool/v1/engines        引擎与熔断状态
-  GET  /web-tool/{baidu|sogou|so360|bing}/search?text=…   四引擎原始搜索（data_plane_auth=false 时免鉴权）
 
-Agent 平面
-  POST /web-tool/mcp               MCP streamable HTTP（initialize/tools，4 个工具）
-  GET  /web-tool/openapi.yaml      OpenAPI 3.1 全端点规范
-  GET  /web-tool/llms.txt          Agent 能力清单
+**Reading the result**: `indexed:true` = the URL was found among that engine's top 10 results; `indexed:false` (`match:"none"`) strictly means "not in the top 10", **not "not indexed"** — pages indexed but ranked lower (deep links especially) are missed, so cross-check with multiple engines (any engine returning `indexed:true` confirms it is indexed). Billing = URL count × engine count in units; only successful units are charged.
 
-控制平面（JWT）
-  /web-tool/api/auth/login|password、/web-tool/api/keys、/web-tool/api/stats/*、
-  /web-tool/api/usage、/web-tool/api/engines（冷却状态机）、
-  /web-tool/api/engines/{name}/cooldown/reset|force、
-  /web-tool/api/playground/check（控制台在线调试，不计费）
+One-line MCP setup (Claude Code):
 
-健康观测（免鉴权）
-  /web-tool/health、/ready、/stats、/stats/cache|proxy|cb
+```bash
+claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_API_KEY>"
 ```
 
 ---
 
-## Agent 接入（MCP + OpenAPI 双入口）
+## 5. API Overview
 
-### Claude / Claude Desktop（MCP）
+Three planes:
 
-`claude_desktop_config.json`：
+| Plane | Endpoints | Auth | In one line |
+| --- | --- | --- | --- |
+| Data plane | `/web-tool/v1/*`, `/web-tool/{engine}/search` | `X-API-Key` (search is anonymous only when `data_plane_auth:false`; the bundled config template defaults to `true`, key required) | Index check + four-engine search with quotas, rate limits and cooldowns built in |
+| Agent plane | `/web-tool/mcp`, `/web-tool/openapi.yaml`, `/web-tool/llms.txt` | `X-API-Key` or JWT | First-class agent access: Claude/Dify/n8n/LangChain via two entry points |
+| Control plane | `/web-tool/api/*` + `/web-tool/console/` console | JWT | Governance console: keys, quotas, usage logs, engine cooldown dashboard, playground |
+
+All paths are prefixed with `/web-tool`; real request/response/error samples live in **[docs/API.md](docs/API.md)** (Chinese).
+
+```text
+Data plane (X-API-Key)
+  POST /web-tool/v1/index/check    batch index check (1..20 URLs × engines, 1 URL×1 engine = 1 unit)
+  GET  /web-tool/v1/index/check    single-URL convenience variant
+  GET  /web-tool/v1/quota          quota lookup
+  GET  /web-tool/v1/engines        engines and circuit-breaker state
+  GET  /web-tool/{baidu|sogou|so360|bing}/search?text=…   four-engine raw search (auth follows security.data_plane_auth: template default requires X-API-Key)
+
+Agent plane
+  POST /web-tool/mcp               MCP streamable HTTP (initialize/tools, 4 tools)
+  GET  /web-tool/openapi.yaml      OpenAPI 3.1 spec
+  GET  /web-tool/llms.txt          agent capability list
+
+Control plane (JWT)
+  /web-tool/api/auth/login|password, /web-tool/api/keys, /web-tool/api/stats/*,
+  /web-tool/api/usage, /web-tool/api/engines (cooldown state machine),
+  /web-tool/api/engines/{name}/cooldown/reset|force,
+  /web-tool/api/playground/check (console playground, not billed)
+
+Health & observability (no auth)
+  /web-tool/health, /ready, /stats, /stats/cache|proxy|cb
+```
+
+---
+
+## 6. Agent Integrations (MCP + OpenAPI)
+
+### Claude Code (MCP, one line)
+
+```bash
+claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_API_KEY>"
+```
+
+### Generic JSON config (Claude Code `.mcp.json` / Cursor / VS Code, etc.)
 
 ```json
 {
   "mcpServers": {
     "web2api": {
-      "url": "http://127.0.0.1:7000/web-tool/mcp",
-      "headers": { "X-API-Key": "sk-w2a-…" }
+      "type": "http",
+      "url": "{BASE}/mcp",
+      "headers": { "X-API-Key": "<YOUR_API_KEY>" }
     }
   }
 }
 ```
 
-接入后 Claude 可直接调用 4 个工具：`web_search`（四引擎搜索，1 unit/次）、`check_indexed`（收录判定，urls×engines units）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。
+Claude Desktop adds remote MCP servers through its Connectors UI; ChatGPT, Codex and VS Code Copilot — clients that already support remote MCP (streamable HTTP) — can connect per their own documentation, and other clients should check their docs for remote-transport support. Config field names differ slightly between clients; follow each client's documentation.
 
-### Dify / Coze / n8n / LangChain（OpenAPI 导入）
+Once connected, agents can call 4 tools directly: `web_search` (four-engine search, 1 unit/call), `check_indexed` (index check, urls×engines units), `get_quota` (quota), `list_engines` (engines and cooldown state). The protocol is MCP streamable HTTP, JSON-RPC 2.0, protocolVersion `2025-06-18`, with in-memory `Mcp-Session-Id` sessions. **An API key is mandatory** — unauthenticated requests get 401.
 
-四个平台都以 OpenAPI spec 为通用入口：Dify「自定义工具 → 导入 OpenAPI」、Coze「资源库 → 插件 → 导入」、n8n「HTTP Request 节点 → 导入 cURL/OpenAPI」、LangChain「OpenAPI toolkit」。鉴权统一配 **Header 型 API Key**，Header 名 `X-API-Key`（n8n 选 Header Auth）。spec 地址：`http://127.0.0.1:7000/web-tool/openapi.yaml`。
+### Dify / n8n / LangChain (OpenAPI import)
 
-五分钟跑通的逐平台截图级步骤、JSON-RPC 报文与常见坑见 **[docs/AGENT-README.md](docs/AGENT-README.md)**。
+All three platforms use the OpenAPI spec as the common entry: Dify "Custom tool → import OpenAPI", n8n "HTTP Request node → import cURL/OpenAPI", LangChain "OpenAPI toolkit". Configure a **header-type API key** everywhere, header name `X-API-Key` (choose Header Auth in n8n). Spec address: `{BASE}/openapi.yaml`.
 
----
-
-## IP 风控与冷却机制
-
-国内引擎对单出口 IP 的高频访问极为敏感。平台内置四层递进的保护：
-
-1. **按引擎限速**（`rate_requests/rate_burst`，默认保守）——第一道闸。
-2. **CAPTCHA 门控 + 双通道**——被拦后 10 分钟内该引擎优先走纯 HTTP 通道（`core/captcha_gate.go`）；可选接入 2captcha 自动解题（见 config.yaml 注释）。
-3. **熔断器**——连续请求失败 8 次熔断、20 秒后半开（`circuit_breaker` 节）。针对**技术性失败**。
-4. **引擎冷却状态机**（二期新增，`stability.engine_cooldown` 节）——针对**反爬拦截**，每引擎独立：
-   - **触发**：引擎返回 blocked（403）/ 429 / captcha。**行为级提示：浏览器验证码页一旦出现即触发冷却**——哪怕那次请求最终解题成功，最短也会进入 10 分钟冷却。这是刻意设计：出现验证码意味着 IP 已被标记，继续打只会加深封禁。
-   - **连续升级**：第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟（`steps_minutes: [10,30,120]`）。
-   - **计数归零**：连续无拦截达 240 分钟（`reset_after_minutes`）后计数清零，重新从第 1 档起算。
-   - **冷却期内**：该引擎所有 search/check **快速失败（HTTP 503 `engine_cooldown` 信封 + `Retry-After`），不发真实请求**——不消耗引擎配额、代理与浏览器资源。
-   - **到期探测**：冷却到期放行一个探测请求，成功恢复，失败进下一档。
-   - **运维干预**：`POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}` 维护窗口强制冷却；控制台「引擎状态」页（10 秒轮询）提供冷却倒计时与同款按钮。
-
-冷却与熔断是两套独立机制，冷却检查在前。`/v1` 与 search 响应的 `meta.engines_cooldown` 会列出当前冷却中的引擎，客户端应据此跳过并在 `Retry-After` 后重试。
-
-**单出口 IP 无法支撑长时间高并发**——长期使用请配置代理池（`proxies` 节，支持 tagged pool 与 sticky lanes）或降低频率。
+Per-platform screenshot-level steps, JSON-RPC payloads and common pitfalls: **[docs/AGENT-README.md](docs/AGENT-README.md)** (Chinese).
 
 ---
 
-## 安全模型
+## 7. IP Risk Control & Engine Cooldown
 
-- **凭据存储**：管理员密码 bcrypt 哈希（settings 桶，修改密码后覆盖 config 默认值）；API key 只存 SHA-256 哈希，完整 key 仅创建响应返回一次；JWT 签名密钥为随机 32 字节，存 `<data_dir>/secret.key`（0600）。
-- **登录防爆破**：同一 用户名+IP 连续 5 次失败锁定 15 分钟（`security.login_lockout.{fails:5,minutes:15}`），期间一律 `429 {"error":"too_many_attempts"}` + `Retry-After`。
-- **管理 API 限速**：默认 60 req/min（`security.admin_rate_per_minute`），超限 429 + `Retry-After`。
-- **token 版本化**：修改密码（`POST /web-tool/api/auth/password`，新密码 ≥ 8 位）后 `token_version` +1，**全部旧 JWT（控制台与 MCP 的 Bearer 会话）立即失效**。
-- **传输**：CORS 默认放开但非回环绑定 + 无鉴权组合会在启动日志给出告警；生产环境建议绑回环、收紧 `cors.allow_origins` 或前置 nginx + TLS。
-- **存储**：bbolt（纯 Go 无 CGO）单文件 `<data_dir>/web2api.db`，打开失败自动回退等价 JSON 文件存储（接口不变）。
+Chinese engines are extremely sensitive to high-frequency access from a single egress IP. The platform ships four escalating layers of protection:
 
----
+1. **Per-engine rate limiting** (`rate_requests/rate_burst`, conservative by default) — the first gate.
+2. **CAPTCHA gating + dual channel** — after a block, the engine prefers the pure-HTTP channel for 10 minutes (`core/captcha_gate.go`); optional 2captcha auto-solving (see config.yaml comments).
+3. **Circuit breaker** — 8 consecutive failures open the circuit, half-open after 20 s (`circuit_breaker` section). Targets **technical failures**.
+4. **Engine cooldown state machine** (`stability.engine_cooldown` section) — targets **anti-scraping blocks**, independent per engine:
+   - **Trigger**: the engine returns blocked (403) / 429 / captcha. **Behavioral note: the moment a browser CAPTCHA page appears, the cooldown starts** — even if that request is eventually solved, a 10-minute cooldown applies at minimum. This is deliberate: a CAPTCHA means the IP is flagged; hammering on only deepens the ban.
+   - **Escalation**: 1st cooldown 10 min, 2nd 30 min, 3rd and beyond 120 min (`steps_minutes: [10,30,120]`).
+   - **Reset**: after 240 consecutive minutes without a block (`reset_after_minutes`), the counter resets to tier 1.
+   - **During cooldown**: all search/check calls to that engine **fail fast (HTTP 503 `engine_cooldown` envelope + `Retry-After`) without touching the real engine** — no engine quota, proxy or browser resources consumed.
+   - **Expiry probe**: when the cooldown expires one probe request is let through — success recovers the engine; another block advances to the next tier; other failures (e.g. timeouts) postpone by the current tier's duration.
+   - **Operator override**: `POST /web-tool/api/engines/{name}/cooldown/reset` force-recovers, `POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}` force-cools for a maintenance window; the console's Engines page (10 s polling) shows countdowns with the same buttons.
 
-## raw 模式（如实说明）
+Cooldown and circuit breaking are two independent mechanisms; the cooldown check runs first. The `meta.engines_cooldown` field on `/v1` and search responses lists currently-cooling engines — clients should skip those and retry after `Retry-After`.
 
-`server.raw_requests: true`（或 `--raw`）切换纯 HTTP 模式：不起浏览器、资源占用低，但**上游已明确结果不稳定或可能完全不可用**（启动日志会告警），且仅覆盖 baidu/sogou/so360（无 bing）。更重要的是：raw 引擎**不支持收录判定**——`/web-tool/v1/index/check` 在 raw 模式下每个单元返回 `{"error":{"code":"not_implemented",…}}`（HTTP 仍 200）。**计费口径不变：HTTP 200 完成即全额扣 unit**，因此 raw 模式下跑收录判定会"花钱买 not_implemented"。raw 收录能力在修复清单中（p1）；在那之前，收录判定请使用默认浏览器模式。
-
----
-
-## 遗留资产声明
-
-`examples/` 与 `skills/web2api-search/` 是**上一代改造遗留**：其中的脚本指向 `/mega/search`、`/extract`、Google/DuckDuckGo 引擎等**当前 API 面已不存在的端点**，未随本期契约更新，不可直接运行。一切以本 README 与 [docs/API.md](docs/API.md) 为准（示例修复已列入后续清单）。阅读时请把它们当历史参考，不要复制其中的 URL 或字段。
+**A single egress IP cannot sustain long high-concurrency runs** — for sustained use configure a proxy pool (`proxies` section, tagged pools and sticky lanes supported) or lower the frequency.
 
 ---
 
-## 子路径部署
+## 8. Security Model
 
-整个应用**固定部署在 `/web-tool` 子路径下**（代码内常量 `core.BasePath`，不是配置项，不支持根挂载）。根路径 `/` 没有任何路由（404），`/health`、`/v1/*`、`/api/*`、`/mcp`、`/{engine}/search` 只存在于前缀之下——容器探针与反向代理一律使用 `/web-tool/health` 等带前缀路径。
+- **Credential storage**: admin password stored as a bcrypt hash (settings bucket, overwriting the config default once changed); API keys stored as SHA-256 hashes only, the full key returned exactly once at creation; JWT signing key is 32 random bytes stored at `<data_dir>/secret.key` (0600).
+- **Login brute-force protection**: 5 consecutive failures for the same username+IP lock it for 15 minutes (`security.login_lockout.{fails:5,minutes:15}`); during the lockout every attempt gets `429 {"error":"too_many_attempts"}` + `Retry-After`.
+- **Admin API rate limit**: 60 req/min by default (`security.admin_rate_per_minute`), exceeding it returns 429 + `Retry-After`.
+- **Token versioning**: changing the password (`POST /web-tool/api/auth/password`, new password ≥ 8 chars) bumps `token_version`, **immediately invalidating all old JWTs (console sessions and MCP Bearer sessions alike)**.
+- **Transport**: CORS is open by default, but non-loopback binding combined with no-auth configurations emit startup warnings; in production bind to loopback, tighten `cors.allow_origins`, or put nginx + TLS in front.
+- **Storage**: bbolt (pure Go, no CGO) single file `<data_dir>/web2api.db`; if a second process holds the data directory, startup fails outright (fail-closed, preventing split-brain accounting); other open failures fall back to an equivalent JSON file store (same interface; the `/health` `storage` field exposes the actual type).
 
-**nginx 直接转发（不去前缀）**：
+---
+
+## 9. Raw Mode (Honest Notes)
+
+`server.raw_requests: true` (or `--raw`) switches to pure-HTTP mode: no browser, lower resource use — but the upstream result is **explicitly unstable or possibly unusable** (the startup log warns), and only baidu/sogou/so360 are covered (no bing). More importantly, raw engines **do not support index checks** — under raw mode every unit of `/web-tool/v1/index/check` returns `{"error":{"code":"not_implemented",…}}` (HTTP still 200). Those pseudo-units are **not billed** — under per-successful-unit accounting `not_implemented` is a failed unit, so you don't "pay for not_implemented" — but the results have no value. Raw index-check support is on the roadmap (p1); until then use the default browser mode for index checks.
+
+---
+
+## 10. Legacy Assets Notice
+
+`examples/` and `skills/web2api-search/` are **leftovers from the previous generation**: their scripts point at `/mega/search`, `/extract`, Google/DuckDuckGo engines and other endpoints **that no longer exist on the current API surface**, were not updated with this contract, and cannot be run as-is. This README and [docs/API.md](docs/API.md) are the source of truth (fixing the samples is on the backlog). Treat them as historical reference only — do not copy their URLs or fields.
+
+---
+
+## 11. Self-Hosting & Deployment
+
+The whole application **is always deployed under the `/web-tool` sub-path** (the constant `core.BasePath` in code — not a config option, root mounting unsupported). The root path `/` has no routes (404); `/health`, `/v1/*`, `/api/*`, `/mcp`, `/{engine}/search` exist only under the prefix — container probes and reverse proxies must use prefixed paths such as `/web-tool/health`.
+
+**nginx passthrough (no prefix stripping)**:
 
 ```nginx
 location /web-tool/ {
-    proxy_pass http://127.0.0.1:7000;   # 原样透传，不做路径重写
+    proxy_pass http://127.0.0.1:7000;   # pass through as-is, no path rewrite
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }
 ```
 
-`proxy_pass` 末尾**不带斜杠**即不重写路径；官网与控制台自身用相对路径引用资源、hash 路由，无需任何额外配置。更多部署细节（探针、日志、排障）见 [deploy/README.md](deploy/README.md)。
+A `proxy_pass` target **without a trailing slash** does not rewrite the path; the website and console reference assets with relative paths and hash routing, so no extra configuration is needed. Docker Compose orchestration, container probes, logs and troubleshooting (container `serp`, image `web2api:local`) are covered in [deploy/README.md](deploy/README.md).
 
 ---
 
-## 配置
+## 12. Configuration
 
-配置优先级：**CLI 参数 > `WEB2API_*` 环境变量 > `config.yaml` > 内置默认值**（Viper）。逐键注释见仓库根 [config.yaml](config.yaml)，完整参考见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。平台相关节（字段名固定）：
+Precedence: **CLI flags > `WEB2API_*` environment variables > `config.yaml` > built-in defaults** (Viper). Key-by-key comments are in the root [config.yaml](config.yaml); the full reference is [docs/CONFIGURATION.md](docs/CONFIGURATION.md) (Chinese). Platform-related sections (field names fixed):
 
 ```yaml
 platform:
-  enabled: true           # false 时不挂载 /api/* 与 /v1/*，官网与控制台静态页与健康端点仍可用
-  data_dir: "./data"      # bbolt 库 web2api.db + JWT 密钥 secret.key 的目录（.gitignore 已忽略 data/）
+  enabled: true           # false unmounts /api/* and /v1/*; website, console statics and health endpoints remain
+  data_dir: "./data"      # bbolt web2api.db + JWT secret.key live here (data/ is gitignored)
   admin_username: "admin"
-  admin_password: "admin123"  # 部署后务必修改
+  admin_password: "admin123"  # change this right after deployment
   jwt_expire_hours: 24
 
-stability:                # 二期：引擎冷却状态机
+stability:                # engine cooldown state machine
   engine_cooldown:
-    steps_minutes: [10, 30, 120]   # 连续第 1/2/3+ 次被拦截的冷却时长
-    reset_after_minutes: 240       # 连续无拦截达此时长后连续计数归零
+    steps_minutes: [10, 30, 120]   # cooldown minutes for the 1st/2nd/3rd+ consecutive block
+    reset_after_minutes: 240       # consecutive no-block minutes before the counter resets
 
-security:                 # 二期：控制平面加固
+security:                 # control-plane hardening
   login_lockout:
-    fails: 5              # 同一 用户名+IP 连续失败次数阈值
-    minutes: 15           # 锁定时长
-  admin_rate_per_minute: 60  # 管理 API 全局限速（超限 429 rate_limited）
-  data_plane_auth: true      # true 时数据面 /{engine}/search 与 /stats/* 也要求 X-API-Key（本仓库模板默认;代码内置默认仍 false 以兼容既有部署）
+    fails: 5              # failure threshold per username+IP
+    minutes: 15           # lockout duration
+  admin_rate_per_minute: 60  # global admin API rate limit (429 rate_limited beyond)
+  data_plane_auth: true      # true also requires X-API-Key on /{engine}/search and /stats/* (bundled template default; the in-code default stays false for existing deployments)
 ```
 
-引擎与反爬参数（限速、指纹、熔断、代理、2captcha）说明见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 与 config.yaml 内注释。
+Engine and anti-scraping parameters (rate limits, fingerprints, circuit breakers, proxies, 2captcha) are documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and the config.yaml comments.
 
 ---
 
-## 测试
+## 13. Testing
 
 ```bash
-go test ./...                                  # 单元测试（离线）
-node deploy/e2e.mjs http://127.0.0.1:7000      # 平台契约冒烟（含 MCP 握手、冷却恢复、openapi.yaml/llms.txt 断言）
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 引擎稳态观测
+go test ./...                                  # unit tests (offline)
+node deploy/e2e.mjs http://127.0.0.1:7000      # platform contract smoke (MCP handshake, cooldown recovery, openapi.yaml/llms.txt assertions)
+node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # engine steady-state observation
 ```
 
-测试设计见 [docs/TESTING.md](docs/TESTING.md)。
+Testing design: [docs/TESTING.md](docs/TESTING.md).
 
-## 项目结构
+## 14. Project Structure
 
+```text
+baidu/ sogou/ so360/ bing/   four engines (URL building, selectors, parsing, dual channel, index_check entry)
+core/                        HTTP service (all routes under /web-tool), index-check core, browser pool,
+                             proxies, cache, circuit breakers, response building, error contract
+mcp/                         MCP streamable HTTP endpoint and the 4 tools (agent plane)
+platform/                    platform backend: API keys/quotas/usage (bbolt), JWT issuer,
+                             /v1 and /api route registration, billing and rate limiting
+web/site/                    product website (pure static, zero deps, served at /web-tool/ root)
+web/admin/                   admin console (pure static, zero deps, served at /web-tool/console/:
+                             Overview/Engines/API Keys/Usage Logs/Playground/Agent Integrations/API Docs/Settings)
+cmd/                         CLI (search / serve) and assembly (platform mounting, static panels, startup logs)
+deploy/                      Docker orchestration, E2E smoke and steady-state scripts, ops docs
+docs/                        API reference, agent guide, architecture, configuration, testing docs
 ```
-baidu/ sogou/ so360/ bing/   四引擎（URL、选择器、解析、双通道、index_check 入口）
-core/                        HTTP 服务（全部路由挂 /web-tool）、收录判定核心、浏览器池、
-                             代理、缓存、熔断、响应构建、错误契约
-mcp/                         MCP streamable HTTP 端点与 4 个工具（Agent 平面）
-platform/                    平台后端：API key/配额/用量（bbolt）、JWT 管理端、
-                             /v1 与 /api 路由注册、计费与限速
-web/site/                    产品官网（纯静态零依赖，由 serve 挂在 /web-tool/ 根）
-web/admin/                   管理控制台（纯静态零依赖，由 serve 挂在 /web-tool/console/：
-                             总览/密钥/用量/文档/引擎状态/在线调试/Agent 集成/系统设置）
-cmd/                         CLI（search / serve）与装配（platform 挂载、官网与控制台静态、启动日志）
-deploy/                      Docker 编排、E2E 冒烟与稳态脚本、运维文档
-docs/                        API 参考、Agent 接入、架构、配置、测试文档
-```
 
-## 许可证
+## 15. License
 
-MIT，见 [LICENSE](LICENSE)。
+This project is open source under the [MIT](LICENSE) license.
+
+Copyright (c) 2026 Web2API contributors
+
+---
+
+> This file is kept in sync with [README.zh-CN.md](README.zh-CN.md); where the docs and the code disagree, the code wins — please open an issue.

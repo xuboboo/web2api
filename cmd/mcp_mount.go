@@ -17,7 +17,7 @@ import (
 // 终态接线(接缝已全部落地):
 //
 //  1. auth = plat.AuthAny():X-API-Key → key 校验 + 配额预检 + 按 JSON-RPC body
-//     计费(web_search=1 unit,check_indexed=urls×engines units,get_quota/
+//     计费(web_search 每次调用计 1 次,check_indexed=urls×engines 次,get_quota/
 //     list_engines/initialize 等不收费);Bearer JWT → 管理员不计费。
 //  2. Deps = core 新接缝的直接方法引用:web_search 走 serv.SearchViaEngine
 //     (现役 search 管道:重试/熔断/代理/冷却门),check_indexed 走

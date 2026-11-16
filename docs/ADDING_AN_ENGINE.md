@@ -67,7 +67,7 @@ func (e *Engine) Search(ctx context.Context, q core.Query) ([]core.SearchResult,
 - `core/response_builder.go`：引擎首页映射（用于补全显示 URL）
 - `core/server.go`：仅当需要**特殊端点别名**时改 `engineEndpointName`/`resolveEngineAlias`（如 `so360` ↔ `360`）
 - `config.yaml`：限速、`profile`、可选代理 tag
-- 文档：根 `README.md` 的引擎表、`docs/CONFIGURATION.md` 的引擎段、`docs/CONFIGURATION.md` 的引擎段
+- 文档：根 `README.md` 的引擎相关段落与竞品对照表、`docs/CONFIGURATION.md` 的引擎段
 
 ## 4. 测试
 
@@ -86,7 +86,7 @@ go test ./...
 真实网络验证用 E2E：
 
 ```bash
-node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs http://127.0.0.1:7000
 ```
 
 ## 5. 提交前检查
@@ -96,7 +96,7 @@ gofmt -w <新引擎目录>
 go vet ./...
 go test ./...
 docker compose -f deploy/docker-compose.yml up -d --build   # 真实链路验证
-node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs http://127.0.0.1:7000
 ```
 
 PR 保持聚焦：不要顺手改共享的浏览器/服务端行为，除非新引擎不这么改就跑不通。

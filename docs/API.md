@@ -28,6 +28,7 @@
 | 约定 | 值 |
 | --- | --- |
 | 前缀 | 所有端点固定挂在 `/web-tool` 之下；`GET /` 与 `GET /health`（无前缀）一律 404 |
+| `{BASE}` | 你的服务根地址，如 `http://127.0.0.1:7000/web-tool` 或部署后的 `https://your-domain.com/web-tool`；下文示例均用它 |
 | 请求体 | `Content-Type: application/json`（除静态资源与 MCP 通知外） |
 | 时间戳 | RFC3339 UTC，如 `2026-11-15T08:00:00Z` |
 | 请求 ID | 每请求生成（可由 `X-Request-ID` 请求头带入），回显在响应头与多数信封的 `request_id` 字段 |
@@ -73,7 +74,7 @@
 | 400 | `bad_request` | `code` 与 `reason` 同值，为 `EMPTY_QUERY` / `TOO_MANY_URLS` / `INVALID_PARAM` 之一 |
 | 401 | `unauthorized` | 无 |
 | 404 | `not_found` | 无 |
-| 429 | `quota_exceeded` | 无（响应带 `Retry-After` 头） |
+| 429 | `quota_exceeded` | `retry_after_seconds`（响应亦带 `Retry-After` 头） |
 | 429 | `too_many_attempts` | `retry_after_seconds`（登录防爆破锁定；响应亦带 `Retry-After` 头） |
 | 429 | `rate_limited` | 管理 API 全局限速超限（响应带 `Retry-After` 头） |
 | 500 | `server_error` | `message` |
@@ -94,9 +95,9 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 ## 2. 数据平面 `/v1/*`（公网 API，X-API-Key）
 
-鉴权：请求头 `X-API-Key: sk-w2a-…`（兼容 `Authorization: Bearer sk-w2a-…`）。key 缺失、未知或被禁用一律 `401 {"error":"unauthorized"}`。配额预检：`当日已用 + 本次 units > daily_quota`（`daily_quota=0` 为不限）时拒绝，`429 {"error":"quota_exceeded"}`，**预检拒绝不写用量记录、不扣 unit**。
+鉴权：请求头 `X-API-Key: sk-w2a-…`（兼容 `Authorization: Bearer sk-w2a-…`）。key 缺失、未知或被禁用一律 `401 {"error":"unauthorized"}`。配额预检：`当日已用 + 本次计费 unit 数 > daily_quota`（`daily_quota=0` 为不限）时拒绝，`429 {"error":"quota_exceeded"}`，**预检拒绝不写用量记录、不扣费**。
 
-计费单位：**1 URL × 1 引擎 = 1 unit**。
+计费口径：**1 URL × 1 引擎 = 1 unit**。
 
 ### 2.1 POST /web-tool/v1/index/check
 
@@ -176,14 +177,14 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 ```bash
 # curl 示例
-curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
+curl -X POST {BASE}/v1/index/check \
   -H "X-API-Key: sk-w2a-3f9c…" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'
 ```
 
 ```js
 // fetch 示例
-const res = await fetch('http://127.0.0.1:7000/web-tool/v1/index/check', {
+const res = await fetch('{BASE}/v1/index/check', {
   method: 'POST',
   headers: { 'X-API-Key': 'sk-w2a-3f9c…', 'Content-Type': 'application/json' },
   body: JSON.stringify({ urls: ['https://example.com/post-1'], engines: ['baidu', 'bing'] }),
@@ -196,24 +197,24 @@ const data = await res.json();
 单 URL 便捷版，查询参数传值，响应结构同上：
 
 ```bash
-curl "http://127.0.0.1:7000/web-tool/v1/index/check?url=https%3A%2F%2Fexample.com%2F&engines=360" \
+curl "{BASE}/v1/index/check?url=https%3A%2F%2Fexample.com%2F&engines=360" \
   -H "X-API-Key: sk-w2a-3f9c…"
 ```
 
 - `url`：必填（URL 编码）；`engines`：可选，逗号分隔，别名 `360` 可用。
-- 该请求 units 恒为 `1 × len(engines)`（缺省引擎时为 4）。
+- 该请求计费 unit 数恒为 `1 × len(engines)`（缺省引擎时为 4）。
 
 ### 2.3 GET /web-tool/v1/quota
 
 查询当前 key 的配额：
 
 ```bash
-curl http://127.0.0.1:7000/web-tool/v1/quota -H "X-API-Key: sk-w2a-3f9c…"
+curl {BASE}/v1/quota -H "X-API-Key: sk-w2a-3f9c…"
 ```
 
 ```json
 {
-  "key_id": "key_01jdp2…",
+  "key_id": "35b1b68658b1dda8",
   "name": "ci-robot",
   "daily_quota": 0,
   "used_today": 3,
@@ -257,7 +258,8 @@ GET /web-tool/bing/search?text=…&limit=…
 ```
 
 ```bash
-curl "http://127.0.0.1:7000/web-tool/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&limit=5"
+curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&limit=5" \
+  -H "X-API-Key: <YOUR_API_KEY>"
 ```
 
 **200 响应**（核心信封，`Envelope` 结构）：
@@ -302,9 +304,9 @@ curl "http://127.0.0.1:7000/web-tool/baidu/search?text=golang%20%E5%B9%B6%E5%8F%
 | `limit` | 返回条数（非法值 → 400 `INVALID_LIMIT`） |
 | `start` | 分页偏移（非法值 → 400 `INVALID_START`） |
 | `format` | `json`（默认）/ `markdown` / `text` / `ndjson`；未知值 → 400 `UNKNOWN_FORMAT`；也可用 `Accept: text/markdown`、`text/plain`、`application/x-ndjson` 头选择 |
-| `site` / `filetype` / 日期参数等 | 引擎语法透传，详见 [ARCHITECTURE.md](ARCHITECTURE.md) |
+| `site` / `file` / 日期参数等 | 引擎语法透传，详见 [ARCHITECTURE.md](ARCHITECTURE.md)（HTTP 查询参数名为 `file`，`filetype` 是内部字段名） |
 
-**鉴权与计费**：该组端点由核心管道直接挂载，**不走 API key 鉴权、不计费**；受引擎限速、熔断、冷却（见 §8）与 CORS 保护。请不要将其当作公网计费接口暴露。
+**鉴权与计费**：该组端点由核心管道直接挂载，**不计费**。鉴权随 `security.data_plane_auth` 开关：本仓库 config.yaml 模板默认 `true`，`/{engine}/search` 与 `/stats/*` 需要 `X-API-Key`（兼容 `Authorization: Bearer <密钥本体>`），缺失或无效返回 401；置 `false` 时匿名可用（启动日志会给出安全告警）。无论开关如何，都受引擎限速、熔断、冷却（见 §8）与 CORS 保护，请不要将其当作公网匿名接口暴露。
 
 **引擎级错误**（HTTP 状态随错误类型，核心信封 §1.1，完整表见 §7.2）：
 
@@ -344,7 +346,7 @@ curl "http://127.0.0.1:7000/web-tool/baidu/search?text=golang%20%E5%B9%B6%E5%8F%
 | 入口 | 用途 |
 | --- | --- |
 | `POST /web-tool/mcp` | MCP (Model Context Protocol) streamable HTTP 端点：Claude / Claude Desktop / Claude Code / 自研 Agent 直接把本平台当工具集调用 |
-| `GET /web-tool/openapi.yaml` | OpenAPI 3.1 全端点规范（静态文件，`go:embed` 内嵌）：Dify / Coze / n8n / LangChain 导入即用 |
+| `GET /web-tool/openapi.yaml` | OpenAPI 3.1 全端点规范（静态文件，`go:embed` 内嵌）：Dify / n8n / LangChain 导入即用 |
 | `GET /web-tool/llms.txt` | 平台简介 + 端点清单（llms.txt 约定），供 LLM 自主发现能力 |
 
 `openapi.yaml` 与 `llms.txt` 免鉴权、200，`Cache-Control` 允许缓存。
@@ -366,7 +368,7 @@ curl "http://127.0.0.1:7000/web-tool/baidu/search?text=golang%20%E5%B9%B6%E5%8F%
 
 ```bash
 # ① initialize
-curl -X POST http://127.0.0.1:7000/web-tool/mcp \
+curl -X POST {BASE}/mcp \
   -H "Content-Type: application/json" \
   -H "X-API-Key: sk-w2a-3f9c…" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"my-agent","version":"0.1.0"}}}'
@@ -388,7 +390,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/mcp \
 
 ```bash
 # ② initialized 通知 → HTTP 204，无响应体
-curl -X POST http://127.0.0.1:7000/web-tool/mcp \
+curl -X POST {BASE}/mcp \
   -H "Content-Type: application/json" \
   -H "X-API-Key: sk-w2a-3f9c…" \
   -H "Mcp-Session-Id: <上一步返回的会话 ID>" \
@@ -402,7 +404,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/mcp \
 #### tools/list
 
 ```bash
-curl -X POST http://127.0.0.1:7000/web-tool/mcp \
+curl -X POST {BASE}/mcp \
   -H "Content-Type: application/json" -H "X-API-Key: sk-w2a-3f9c…" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
@@ -456,7 +458,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/mcp \
 #### tools/call —— web_search
 
 ```bash
-curl -X POST http://127.0.0.1:7000/web-tool/mcp \
+curl -X POST {BASE}/mcp \
   -H "Content-Type: application/json" -H "X-API-Key: sk-w2a-3f9c…" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"golang 并发模型","engine":"baidu","limit":5}}}'
 ```
@@ -487,7 +489,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/mcp \
 }
 ```
 
-计费：**1 unit/次**。
+计费：**每次调用计 1 unit**。
 
 #### tools/call —— check_indexed
 
@@ -506,7 +508,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/mcp \
 
 ### 5.2 GET /web-tool/openapi.yaml
 
-OpenAPI 3.1 规范，覆盖 `/v1/*`、`/api/*`、`/web-tool/mcp` 全部端点。Dify（自定义工具 → 导入 OpenAPI）、Coze（资源库 → 插件 → 导入 OpenAPI 3.0）、n8n（HTTP Request 节点 → 导入 cURL/OpenAPI）、LangChain（OpenAPI toolkit）均以它为通用入口；鉴权在上述平台里统一配 **Header 型 API Key**，Header 名 `X-API-Key`（n8n 选 "Header Auth"；Dify/Coze 选 API Key + 自定义 Header 名）。导入后逐接口的调用示例见 [AGENT-README.md](AGENT-README.md)。
+OpenAPI 3.1 规范，覆盖 `/v1/*`、`/{engine}/search`、`/web-tool/mcp` 与健康观测端点；控制平面 `/api/*` 按安全约定不在公开规范中枚举，端点形状见 §6。Dify（自定义工具 → 导入 OpenAPI）、n8n（HTTP Request 节点 → 导入 cURL/OpenAPI）、LangChain（OpenAPI toolkit）均以它为通用入口；鉴权统一配 **Header 型 API Key**，Header 名 `X-API-Key`（n8n 选 "Header Auth"，Dify 选 API Key + 自定义 Header 名）。导入后逐接口的调用示例见 [AGENT-README.md](AGENT-README.md)。
 
 ### 5.3 GET /web-tool/llms.txt
 
@@ -521,7 +523,7 @@ Agent 友好的能力清单（平台简介、端点、鉴权约定、四引擎�
 ### 6.1 POST /web-tool/api/auth/login
 
 ```bash
-curl -X POST http://127.0.0.1:7000/web-tool/api/auth/login \
+curl -X POST {BASE}/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 ```
@@ -558,7 +560,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/auth/login \
 
 ```json
 {
-  "id": "key_01jdp2q9…",
+  "id": "35b1b68658b1dda8",
   "name": "ci-robot",
   "prefix": "sk-w2a-3f9c",
   "status": "active",
@@ -567,11 +569,11 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/auth/login \
   "used_total": 0,
   "created_at": "2026-11-15T08:00:00Z",
   "last_used_at": null,
-  "key": "sk-w2a-3f9c8f2e7d4a9c1b2e6f8a0b3c5d17e"
+  "key": "<YOUR_API_KEY>"
 }
 ```
 
-`key` 形如 `sk-w2a-<32位hex>`，服务端只存 SHA-256 哈希，**列表中不再出现**。禁用（`status:"disabled"`）后的 key 调用公网 API 一律 401。
+完整密钥形如 `sk-w2a-<32位hex>`，仅创建响应返回一次，请立即保存；服务端只存 SHA-256 哈希，**列表中不再出现**。禁用（`status:"disabled"`）后的 key 调用公网 API 一律 401。
 
 参数非法（空名、负配额、未知状态）→ 400 `{"error":"bad_request","code":"INVALID_PARAM","reason":"INVALID_PARAM"}`；`:id` 不存在 → 404 `{"error":"not_found"}`。
 
@@ -612,7 +614,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/auth/login \
   "items": [
     {
       "time": "2026-11-15T08:00:05Z",
-      "key_id": "key_01jdp2q9…",
+      "key_id": "35b1b68658b1dda8",
       "key_name": "ci-robot",
       "endpoint": "/web-tool/v1/index/check",
       "engines": ["baidu", "bing"],
@@ -655,12 +657,12 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/auth/login \
 
 ```bash
 # 强制恢复（运维误判/维护窗口结束）
-curl -X POST http://127.0.0.1:7000/web-tool/api/engines/baidu/cooldown/reset \
+curl -X POST {BASE}/api/engines/baidu/cooldown/reset \
   -H "Authorization: Bearer $TOKEN"
 # → {"ok":true,"engine":"baidu"}
 
 # 强制冷却 N 分钟（维护窗口内阻止某引擎接客）
-curl -X POST http://127.0.0.1:7000/web-tool/api/engines/baidu/cooldown/force \
+curl -X POST {BASE}/api/engines/baidu/cooldown/force \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"minutes":30}'
 # → {"ok":true,"engine":"baidu","minutes":30}
@@ -673,7 +675,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/engines/baidu/cooldown/force \
 修改管理员密码：
 
 ```bash
-curl -X POST http://127.0.0.1:7000/web-tool/api/auth/password \
+curl -X POST {BASE}/api/auth/password \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"old_password":"admin123","new_password":"s3cret-Passw0rd!"}'
 ```
@@ -695,7 +697,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/auth/password \
 控制台「在线调试」页后端：JWT 鉴权，**不计费、不写用量**。请求/响应结构与 `/web-tool/v1/index/check` 完全一致（§2.1）：
 
 ```bash
-curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
+curl -X POST {BASE}/api/playground/check \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'
 ```
@@ -713,7 +715,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
 | 400 | `bad_request` | `reason` ∈ `EMPTY_QUERY`（urls 为空）/ `TOO_MANY_URLS`（>20 条）/ `INVALID_PARAM`（未知引擎、空名、负配额、短密码等） | 无 |
 | 401 | `unauthorized` | key 缺失/未知/禁用；JWT 缺失/过期/密码修改后失效 | 无 |
 | 404 | `not_found` | 资源（key、引擎名）不存在 | 无 |
-| 429 | `quota_exceeded` | 当日配额用尽（预检拒绝，不扣 unit） | 有 |
+| 429 | `quota_exceeded` | 当日配额用尽（预检拒绝，不扣费） | 有 |
 | 429 | `too_many_attempts` | 登录连续失败锁定（默认 5 次失败锁 15 分钟，体内含 `retry_after_seconds`） | 有 |
 | 429 | `rate_limited` | 管理端点超过 60 req/min（默认值） | 有 |
 | 500 | `server_error` | 存储等内部错误，`message` 附原因 | 无 |
@@ -787,14 +789,14 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
 
 ## 9. 计费口径
 
-- 单位：**1 URL × 1 引擎 = 1 unit**。`/web-tool/v1/index/check` 计 `len(urls) × len(engines)`；MCP `web_search` 计 1；MCP `check_indexed` 计 `len(urls) × len(engines)`。`/web-tool/v1/quota`、`/web-tool/v1/engines`、MCP `get_quota`、`list_engines`、管理 API、`/web-tool/api/playground/check` 不计费。
+- 口径：**1 URL × 1 引擎 = 1 unit**。`/web-tool/v1/index/check` 计 `len(urls) × len(engines)` units；MCP `web_search` 每次调用计 1 unit；MCP `check_indexed` 计 `len(urls) × len(engines)` units。`/web-tool/v1/quota`、`/web-tool/v1/engines`、MCP `get_quota`、`list_engines`、管理 API、`/web-tool/api/playground/check` 不计费。
 - **扣费时点**：请求以 **HTTP 200 完成**即扣费，但按响应信封**逐引擎核对，仅成功单元计费**——200 信封内引擎级失败的单元（`results[].engines.<engine>.error`，含 `engine_cooldown` 冷却、`circuit_open` 熔断等）**不计费**。响应信封无法解析时按请求单元全额计费（兜底口径）。4xx（401/400）与配额预检 429、冷却 503 **不扣费**。MCP 平面与 `/v1` 同口径：`check_indexed` 的工具结果（`result.content[].text`）携带逐引擎明细时按成功单元计费；明细不可解析（`web_search` 结果、工具级错误信封）时按请求单元全额计费。
-- **用量日志如实化（B-01）**：被拒绝的请求（400 参数错误、401/403、429 配额与限速、503 冷却/熔断快速失败）同样写入用量日志，但 `status` 记录真实终态码、`units=0`，并携带 `outcome` 字段：`billed`（200 完成）/ `engine_failed`（5xx 引擎失败）/ `rejected`（未进入业务逻辑）。MCP 计费记录的 `outcome` 与 `/v1` 同规则落账。S4 之前的存量记录无 `outcome` 字段，按 reached 计。
+- **用量日志如实化（B-01）**：被拒绝的请求（400 参数错误、401/403、429 配额与限速、503 冷却/熔断快速失败）同样写入用量日志，但 `status` 记录真实终态码、`units=0`（计 0 unit），并携带 `outcome` 字段：`billed`（200 完成）/ `engine_failed`（5xx 引擎失败）/ `rejected`（未进入业务逻辑）。MCP 计费记录的 `outcome` 与 `/v1` 同规则落账。S4 之前的存量记录无 `outcome` 字段，按 reached 计。
 - **管理统计口径（P-01）**：`GET /api/stats/overview` 的 `today_calls`/`total_calls`/`success_rate_24h` 统计**有效调用**（到达业务逻辑的 billed+engine_failed），参数错误、配额与限速拒绝、冷却拒绝不计入；`today_calls_all`（今日全部请求）与 `rejected_today_24h`（24h 内拒绝数）为 additive 字段。口径变化在发布说明中说明,历史记录无法回填。
-- 对账：`GET /api/reconcile` 按日核对「落账 units」与「逐引擎成功单元数」；携带逐引擎明细的记录逐条核对，无明细的记录（MCP `web_search`、信封解析失败的存量数据）按落账口径计入、不判 mismatch。
+- 对账：`GET /api/reconcile` 按日核对「落账次数」与「逐引擎成功单元数」；携带逐引擎明细的记录逐条核对，无明细的记录（MCP `web_search`、信封解析失败的存量数据）按落账口径计入、不判 mismatch。
 - 对计费敏感的批量任务建议：先小批量探测引擎健康度（`GET /web-tool/v1/engines` / `list_engines`），避开冷却与熔断中的引擎，再放大批量——冷却/熔断单元虽不计费，但整请求会因此缩水。
-- 配额维度：`daily_quota`（本地日重置，0 = 不限）与 `used_total`（累计）；用量日志（`/web-tool/api/usage`）逐笔记录 units、HTTP 状态与各引擎成功/失败数。
-- **配额硬上限语义（B-15）**：配额为「预检-事后扣减」两段式——并发在途请求可轻微超出 `daily_quota`（每请求最多超额「在途 units-1」）；扣减在 bbolt 单事务内完成,**无丢账**。严格 Reservation 语义（先记账后执行、失败回滚）未实现;对账接口 `GET /api/reconcile` 可核对扣费与流水差异。
+- 配额维度：`daily_quota`（本地日重置，0 = 不限）与 `used_total`（累计）；用量日志（`/web-tool/api/usage`）逐笔记录计费 unit 数（units）、HTTP 状态与各引擎成功/失败数。
+- **配额硬上限语义（B-15）**：配额为「预检-事后扣减」两段式——并发在途请求可轻微超出 `daily_quota`（每请求最多超额「在途次数 − 1」）；扣减在 bbolt 单事务内完成,**无丢账**。严格 Reservation 语义（先记账后执行、失败回滚）未实现;对账接口 `GET /api/reconcile` 可核对扣费与流水差异。
 - 免费额度、QPS 分级等商用配额策略当前未实现；自托管场景配额即自我约束工具。
 
 ---
@@ -808,7 +810,7 @@ curl -X POST http://127.0.0.1:7000/web-tool/api/playground/check \
   GET  /web-tool/v1/quota              当前 key 配额
   GET  /web-tool/v1/engines            引擎与熔断状态
 
-搜索（无鉴权，核心管道）
+搜索（鉴权随 `security.data_plane_auth`：模板默认需 X-API-Key；不计费）
   GET  /web-tool/{baidu|sogou|so360|bing|360}/search?text=&limit=&format=
 
 Agent 平面
@@ -831,7 +833,7 @@ Agent 平面
   GET    /web-tool/api/stats/overview                                  总览（B-01 有效调用口径 + additive 字段）
   GET    /web-tool/api/stats/timeseries?days=14                        日粒度时序
   GET    /web-tool/api/usage?limit=&offset=&key_id=&from=&to=          用量日志（S4 增 from/to）
-  GET    /web-tool/api/usage/export?format=csv|json&key_id=&from=&to=  用量导出下载（S4）
+  GET    /web-tool/api/usage/export?format=csv|json&key_id=&from=&to=  用量导出下载（S4。CSV 表头固定为 seq,time,key_id,key_name,endpoint,engines,urls,units,status,took_ms，units = 计费 unit 数，1 URL × 1 引擎 = 1 unit）
   GET    /web-tool/api/reconcile?date=YYYY-MM-DD                       扣费-流水对账（S4）
   GET    /web-tool/api/engines                                         引擎状态机（含冷却）
   POST   /web-tool/api/engines/:name/cooldown/reset                    强制恢复

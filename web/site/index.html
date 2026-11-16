@@ -35,7 +35,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="assets/style.css?v=20261116r">
+<link rel="stylesheet" href="assets/style.css?v=20261118b">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
 <body>
@@ -109,19 +109,19 @@
         </div>
         <div class="fan-grid">
           <div class="exit-card" title="百度 — 批量收录判定">
-            <h3>百度 <span class="eng-en">BAIDU</span><span class="dot-ok"></span></h3>
+            <h3>百度 <span class="eng-en">BAIDU</span><span class="dot-ok" title="示例端点:收录判定" aria-label="示例端点:收录判定"></span></h3>
             <code>/v1/index/check</code>
           </div>
-          <div class="exit-card" title="搜狗 — 四引擎搜索">
-            <h3>搜狗 <span class="eng-en">SOGOU</span><span class="dot-ok dot-dim"></span></h3>
+          <div class="exit-card" title="搜狗 — 原始搜索端点">
+            <h3>搜狗 <span class="eng-en">SOGOU</span><span class="dot-ok dot-dim" title="示例端点:原始搜索" aria-label="示例端点:原始搜索"></span></h3>
             <code>/{engine}/search</code>
           </div>
-          <div class="exit-card" title="360 搜索 — 四引擎搜索">
-            <h3>360 搜索 <span class="eng-en">SO360</span><span class="dot-ok dot-dim"></span></h3>
+          <div class="exit-card" title="360 搜索 — 原始搜索端点">
+            <h3>360 搜索 <span class="eng-en">SO360</span><span class="dot-ok dot-dim" title="示例端点:原始搜索" aria-label="示例端点:原始搜索"></span></h3>
             <code>/{engine}/search</code>
           </div>
           <div class="exit-card" title="必应 — 批量收录判定">
-            <h3>必应 <span class="eng-en">BING</span><span class="dot-ok"></span></h3>
+            <h3>必应 <span class="eng-en">BING</span><span class="dot-ok" title="示例端点:收录判定" aria-label="示例端点:收录判定"></span></h3>
             <code>/v1/index/check</code>
           </div>
         </div>
@@ -194,8 +194,8 @@
           <div class="stat-label">复制即可发起首个收录判定</div>
         </div>
         <div class="stat">
-          <div class="stat-line"><span class="stat-num" data-count="100">100</span><span class="stat-unit">%</span></div>
-          <div class="stat-label">可自托管 · MIT · 数据本地存储</div>
+          <div class="stat-line"><span class="stat-num" data-count="0">0</span><span class="stat-unit">外部依赖</span></div>
+          <div class="stat-label">无数据库、无消息队列,bbolt 单文件即全部存储</div>
         </div>
       </div>
     </div>
@@ -212,19 +212,19 @@
         <div class="f-card reveal">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><polyline points="8.2 11.2 10.4 13.4 14.2 9"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></span><h3>一次调用,判定四引擎</h3></div>
-            <p>POST /v1/index/check 一次提交最多 20 条 URL,逐引擎返回 indexed 与匹配详情;1 URL × 1 引擎 = 1 unit,计费口径清晰。</p>
+<p>POST /web-tool/v1/index/check 一次提交最多 20 条 URL,逐引擎返回 indexed 与匹配详情;1 URL × 1 引擎 = 1 unit,计费口径清晰。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:240ms">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/><path d="M9 12a3 3 0 0 1 5.4-1.8M15 12a3 3 0 0 1-5.4 1.8"/><path d="M14.6 9v1.6H13M9.4 15v-1.6H11"/></svg></span><h3>风控自愈,稳定兜底</h3></div>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/><path d="M9 12a3 3 0 0 1 5.4-1.8M15 12a3 3 0 0 1-5.4 1.8"/><path d="M14.6 9v1.6H13M9.4 15v-1.6H11"/></svg></span><h3>风控自动冷却,无需人工干预</h3></div>
             <p>连续拦截按 10 / 30 / 120 分钟三档自动冷却,240 分钟无拦截计数归零;冷却期零真实请求,到期探测恢复。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:480ms">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><polyline points="7 9 10 12 7 15"/><line x1="12" y1="15" x2="16" y2="15"/></svg></span><h3>Agent 一等公民</h3></div>
-            <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口,内置 llms.txt 能力清单;Claude、Cursor、VS Code、Gemini、Codex 等主流 Agent,Dify / n8n / LangChain 直接导入。</p>
+            <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口,内置 llms.txt 能力清单;Claude Code、ChatGPT、Codex、VS Code Copilot 等客户端可接远程 MCP,Dify / n8n / LangChain 可直接导入 OpenAPI 规范。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:720ms">
@@ -239,7 +239,7 @@
       <div class="split">
         <div class="reveal">
           <h3 class="split-title">一次判定的完整语义</h3>
-          <p class="split-lede">判定语义:以 URL 为查询词检索引擎前 10 条结果,跳转链接还原后归一化匹配。</p>
+          <p class="split-lede">判定语义:以 URL 为查询词检索引擎前 10 条结果,跳转链接还原后归一化匹配;目标 URL 不在这 10 条结果中(如未上榜的深链接)会漏报为未收录,建议多引擎交叉验证。</p>
           <div class="steps">
             <div class="step">
               <span class="step-num">1</span>
@@ -265,7 +265,7 @@
               <span class="step-num">3</span>
               <div>
                 <h4>读取 results[].engines[].indexed</h4>
-                <p>match="exact" 即已收录;对同一 URL 多引擎交叉验证更准。</p>
+                <p>match="exact" 即已收录;match="none" 仅表示前 10 条结果中未命中,深链接建议多引擎交叉验证。</p>
               </div>
             </div>
           </div>
@@ -316,6 +316,7 @@
         <span class="tk-key">"bing"</span>: {
           <span class="tk-key">"indexed"</span>: <span class="tk-bool">false</span>,
           <span class="tk-key">"match"</span>: <span class="tk-str">"none"</span>,
+          <span class="tk-key">"matched_result_url"</span>: <span class="tk-str">""</span>,
           <span class="tk-key">"total_results"</span>: <span class="tk-num">4</span>,
           <span class="tk-key">"took_ms"</span>: <span class="tk-num">1812</span>
         }
@@ -341,8 +342,8 @@ res = requests.post(
           <span class="tk-str">"engines"</span>: [<span class="tk-str">"baidu"</span>, <span class="tk-str">"bing"</span>]},
 )
 data = res.json()
-unit = data[<span class="tk-str">"results"</span>][<span class="tk-num">0</span>][<span class="tk-str">"engines"</span>]
-<span class="tk-cmd">print</span>(<span class="tk-str">"baidu indexed:"</span>, unit[<span class="tk-str">"baidu"</span>][<span class="tk-str">"indexed"</span>])</pre>
+first = data[<span class="tk-str">"results"</span>][<span class="tk-num">0</span>][<span class="tk-str">"engines"</span>]
+<span class="tk-cmd">print</span>(<span class="tk-str">"baidu indexed:"</span>, first[<span class="tk-str">"baidu"</span>][<span class="tk-str">"indexed"</span>])</pre>
             <div class="code-gap"></div>
             <div class="block-label">响应 · RESPONSE</div>
             <pre class="code-block">{ <span class="tk-com">/* 同 cURL 标签页,results[].engines 逐引擎返回
@@ -370,7 +371,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
 <span class="tk-cmd">claude</span> mcp add --transport http web2api <span class="tk-str">{{ORIGIN}}/web-tool/mcp</span> \
   --header <span class="tk-str">"X-API-Key: sk-w2a-你的密钥"</span>
 
-<span class="tk-com"># Claude Desktop / Cursor / VS Code 等:通用 JSON 配置</span>
+<span class="tk-com"># Claude Code(.mcp.json)/ Cursor / VS Code 等:通用 JSON 配置;Claude Desktop 经 Connectors 界面添加远程 MCP</span>
 {
   <span class="tk-key">"mcpServers"</span>: {
     <span class="tk-key">"web2api"</span>: {
@@ -382,7 +383,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
 }
 
 <span class="tk-com"># 内置 4 个工具:web_search / check_indexed / get_quota / list_engines</span>
-<span class="tk-com"># 其余主流客户端(Cursor/Windsurf/Cline/Gemini CLI/Codex)均支持 type:http 远程 MCP</span></pre>
+<span class="tk-com"># 其余客户端配置字段名各异(Gemini CLI 用 httpUrl、Codex 用 config.toml),以各自文档为准</span></pre>
           </div>
 
           <div class="cw-foot">
@@ -411,9 +412,9 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
               <div class="route"><code>POST /web-tool/v1/index/check</code><span>批量收录判定(1..20 URL × 引擎)</span></div>
               <div class="route"><code>GET /web-tool/v1/quota</code><span>当前 key 的配额查询</span></div>
               <div class="route"><code>GET /web-tool/{engine}/search</code><span>四引擎原始搜索,实际形如 /web-tool/baidu/search、/web-tool/360/search</span></div>
-              <div class="route"><code>GET /web-tool/stats</code><span>运行统计(免鉴权)</span></div>
+              <div class="route"><code>GET /web-tool/stats</code><span>运行统计</span></div>
             </div>
-            <div class="plane-auth">鉴权:<code>X-API-Key</code>(search 免鉴权)</div>
+            <div class="plane-auth">鉴权:<code>X-API-Key</code>(search / stats 是否免鉴权随 security.data_plane_auth 开关)</div>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:240ms">
@@ -454,7 +455,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         <div class="dark-card reveal">
           <span class="dk-eyebrow">MCP · STREAMABLE HTTP</span>
           <h3>一个 MCP Server,主流 Agent 通用</h3>
-          <p class="dk-desc">标准 MCP streamable HTTP(JSON-RPC 2.0),内置 <strong>web_search、check_indexed、get_quota、list_engines</strong> 四个工具。Claude Code / Claude Desktop、Cursor、VS Code Copilot、Windsurf、Cline、Gemini CLI、OpenAI Codex 等支持远程 MCP 的客户端均可接入。<strong>必须携带 API Key</strong>,无鉴权请求一律 401。</p>
+          <p class="dk-desc">标准 MCP streamable HTTP(JSON-RPC 2.0),内置 <strong>web_search、check_indexed、get_quota、list_engines</strong> 四个工具。Claude Code、Claude Desktop、ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP 的客户端可直接接入;Cursor、Windsurf、Cline、Gemini CLI 等以各自文档的远程传输支持为准。<strong>必须携带 API Key</strong>,无鉴权请求一律 401。</p>
           <div class="mini-term">
             <code id="mcpCmd">claude mcp add --transport http web2api {{ORIGIN}}/web-tool/mcp --header "X-API-Key: sk-w2a-你的密钥"</code>
             <button class="copy-btn" type="button" data-copy-target="#mcpCmd" aria-label="复制 MCP 接入命令">
@@ -489,7 +490,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
               <span class="eco-mono">llms.txt</span>
             </a>
           </div>
-          <p class="dk-auth">鉴权:Header 型 API Key <code>X-API-Key</code>(计费),或 <code>Authorization: Bearer &lt;管理员JWT&gt;</code>(不计费,仅限管理员)。无鉴权请求一律 401,不暴露裸端点。spec 地址 <a class="dk-link" href="/web-tool/openapi.yaml"><code>/web-tool/openapi.yaml</code></a>(浏览器打开即网页视图,程序化导入自动取得原始 YAML)。请先在控制台创建密钥。</p>
+          <p class="dk-auth">鉴权:Header 型 API Key <code>X-API-Key</code>(计费;<code>Authorization: Bearer &lt;密钥本体&gt;</code> 等效)。MCP 端点另接受 <code>Authorization: Bearer &lt;管理员JWT&gt;</code>(不计费,仅限管理员)。无鉴权请求一律 401,不暴露裸端点。spec 地址 <a class="dk-link" href="/web-tool/openapi.yaml"><code>/web-tool/openapi.yaml</code></a>(浏览器打开即网页视图,程序化导入自动取得原始 YAML)。请先在控制台创建密钥。</p>
         </div>
       </div>
     </div>
@@ -507,7 +508,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         <div class="f-card reveal">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 5 13 19 16 12 22 12"/></svg></span><h3>三档冷却,自动恢复</h3></div>
-            <p>连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求,成功恢复、失败进下一档。</p>
+            <p>连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求:成功即恢复,再次被拦截进下一档,其他失败(如超时)按当前档顺延重试。</p>
             <p class="cool-sub">冷却期内该引擎零接触:相关请求快速失败且不消耗配额,到期自动恢复,全程无需人工干预。客户端接入细节见 <a href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>。</p>
           </div>
         </div>
@@ -572,8 +573,8 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   "results": [{
     "url": "https://example.com/post-1",
     "engines": {
-      "baidu": { "indexed": true,  "match": "exact", "took_ms": 812 },
-      "bing":  { "indexed": false, "match": "none",  "took_ms": 940 }
+      "baidu": { "indexed": true,  "match": "exact", "matched_result_url": "https://example.com/post-1", "total_results": 9, "took_ms": 812 },
+      "bing":  { "indexed": false, "match": "none",  "matched_result_url": "", "total_results": 10, "took_ms": 940 }
     }
   }],
   "meta": { "request_id": "01a1…", "took_ms": 2541, "units": 2 }
@@ -581,7 +582,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
       </div>
       <div class="qs-notes reveal" style="--reveal-delay:480ms">
-        <p class="qs-note">结果字段:<span class="inline-code">indexed</span> 是否收录 · <span class="inline-code">match</span> 匹配精度(exact / none) · <span class="inline-code">meta.units</span> 本次计费(1 URL × 1 引擎 = 1 unit)。引擎级失败不拖垮整体,对应项返回 error。</p>
+<p class="qs-note">结果字段:<span class="inline-code">indexed</span> 是否收录 · <span class="inline-code">match</span> 匹配精度(exact / none) · <span class="inline-code">meta.units</span> 本次计费 unit 数(1 URL × 1 引擎 = 1 unit;按成功单元计费,失败单元不计费)。引擎级失败不拖垮整体,对应项返回 error。</p>
         <p class="qs-note">更多端点:GET 单 URL 判定、GET <span class="inline-code">/web-tool/v1/quota</span> 配额查询、GET <span class="inline-code">/{engine}/search</span> 四引擎搜索 —— 全部见 <a href="/web-tool/openapi.yaml">API 文档(OpenAPI 3.1)</a>。</p>
         <p class="qs-note">AI Agent 接入:MCP Server 一条命令即用,见上方 <a href="#agents">Agent 接入区</a>。</p>
       </div>
@@ -617,7 +618,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="foot-top">
       <div class="foot-brand">
         <a class="brand" href="#top" aria-label="Web2API 网站收录查询开放平台 · 返回顶部">
-          <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><circle cx="32" cy="29" r="16" fill="#F5F8F5"/><path d="M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z" fill="#E05A5A"/><path d="M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z" fill="#E05A5A" opacity=".85"/><circle cx="26" cy="26" r="5" fill="#0B1210"/><circle cx="27.5" cy="24.5" r="1.6" fill="#FFFFFF"/><circle cx="38" cy="26" r="5" fill="#0B1210"/><circle cx="36.5" cy="24.5" r="1.6" fill="#FFFFFF"/><path d="M28 36 L32 58 L36 36 Z" fill="#F0B429"/><circle cx="18" cy="34" r="2.4" fill="#177E5B" opacity=".3"/><circle cx="46" cy="34" r="2.4" fill="#177E5B" opacity=".3"/></svg>
+      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><circle cx="32" cy="29" r="16" fill="#F5F8F5"/><path d="M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z" fill="#E05A5A"/><path d="M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z" fill="#E05A5A" opacity=".85"/><circle cx="26" cy="26" r="5" fill="#0B1210"/><circle cx="27.5" cy="24.5" r="1.6" fill="#FFFFFF"/><circle cx="38" cy="26" r="5" fill="#0B1210"/><circle cx="36.5" cy="24.5" r="1.6" fill="#FFFFFF"/><path d="M28 36 L32 58 L36 36 Z" fill="#F0B429"/><circle cx="18" cy="34" r="2.4" fill="#177E5B" opacity=".3"/><circle cx="46" cy="34" r="2.4" fill="#177E5B" opacity=".3"/></svg>
           <span class="brand-name">Web2API</span>
         </a>
         <p class="foot-tagline">自托管的网站收录查询开放平台 —— 收录判定、四引擎搜索、Agent 双入口(MCP + OpenAPI)。</p>
@@ -636,6 +637,6 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   </div>
 </footer>
 
-<script src="assets/app.js?v=20261116r" defer></script>
+<script src="assets/app.js?v=20261118b" defer></script>
 </body>
 </html>

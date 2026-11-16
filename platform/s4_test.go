@@ -517,15 +517,24 @@ func TestBoltUsageIndexAccuracy(t *testing.T) {
 
 	// Time-bounded page totals are DAY-granular (documented semantics): the
 	// filtered total counts whole local-day buckets intersecting [From, To],
-	// while the returned items are filtered by exact record time. Intra-day
-	// From at yesterday 23:28 spans both fixture days → all 120.
+	// while the returned items are filtered by exact record time. The window
+	// expectation is derived like the TODAY slice above: records count when
+	// their whole local-day bucket still intersects [From, ∞). (A hardcoded
+	// 120 assumed From lands on the first fixture day, which only holds when
+	// the run crosses midnight before 01:30 local — a flake, now derived.)
 	from := base.Add(30 * time.Minute)
 	_, totalWin, err := s.ListUsagePage(UsagePageFilter{From: from, Limit: 5})
 	if err != nil {
 		t.Fatalf("page window: %v", err)
 	}
-	if totalWin != 120 {
-		t.Fatalf("window total=%d want 120 (both fixture days)", totalWin)
+	wantWin := 0
+	for i := 0; i < 120; i++ {
+		if localDate(base.Add(time.Duration(i)*time.Minute)) >= localDate(from) {
+			wantWin++
+		}
+	}
+	if totalWin != wantWin {
+		t.Fatalf("window total=%d want %d (day-granular buckets intersecting [From,∞))", totalWin, wantWin)
 	}
 	// A date-aligned From (today 00:00) matches the UI time tabs exactly.
 	fromToday := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.Local)

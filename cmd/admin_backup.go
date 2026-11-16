@@ -18,9 +18,9 @@ import (
 	"path/filepath"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	bolt "go.etcd.io/bbolt"
 )
 
 var adminBackupCMD = &cobra.Command{

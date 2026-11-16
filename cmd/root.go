@@ -71,24 +71,24 @@ type ServerConfig struct {
 }
 
 type AppConfig struct {
-	Timeout        int           `mapstructure:"timeout"`
-	BrowserPath    string        `mapstructure:"browser_path"`
-	ProfilesJSON   string        `mapstructure:"profiles"`
-	IsBrowserHead  bool          `mapstructure:"head"`
-	IsLeaveHead    bool          `mapstructure:"leave_head"`
-	IsLeakless     bool          `mapstructure:"leakless"`
-	BlockResources string        `mapstructure:"block_resources"`
-	BlockTrackers  bool          `mapstructure:"block_trackers"`
-	DebugEndpoints bool          `mapstructure:"debug_endpoints"`
-	LogFormat      string        `mapstructure:"log_format"`
-	LogLevel       string        `mapstructure:"log_level"`
-	SaveLog        bool          `mapstructure:"save_log"`
+	Timeout        int    `mapstructure:"timeout"`
+	BrowserPath    string `mapstructure:"browser_path"`
+	ProfilesJSON   string `mapstructure:"profiles"`
+	IsBrowserHead  bool   `mapstructure:"head"`
+	IsLeaveHead    bool   `mapstructure:"leave_head"`
+	IsLeakless     bool   `mapstructure:"leakless"`
+	BlockResources string `mapstructure:"block_resources"`
+	BlockTrackers  bool   `mapstructure:"block_trackers"`
+	DebugEndpoints bool   `mapstructure:"debug_endpoints"`
+	LogFormat      string `mapstructure:"log_format"`
+	LogLevel       string `mapstructure:"log_level"`
+	SaveLog        bool   `mapstructure:"save_log"`
 	// LogMaxMB / LogBackups bound the serve-mode ./logs.txt with size-triggered
 	// rolling (S4-GAP 日志轮转). 0 disables rotation (legacy infinite append).
-	LogMaxMB   int           `mapstructure:"log_max_mb"`
-	LogBackups int           `mapstructure:"log_backups"`
-	MaxProcesses int         `mapstructure:"max_processes"`
-	IdleTTL        time.Duration `mapstructure:"idle_ttl"`
+	LogMaxMB     int           `mapstructure:"log_max_mb"`
+	LogBackups   int           `mapstructure:"log_backups"`
+	MaxProcesses int           `mapstructure:"max_processes"`
+	IdleTTL      time.Duration `mapstructure:"idle_ttl"`
 }
 
 type EngineConfig struct {
@@ -447,9 +447,9 @@ var knownConfigKeys = map[string]bool{
 	"app.max_processes": true, "app.idle_ttl": true,
 
 	"proxies.global": true, "proxies.entries": true,
-	"proxies.allow_request_proxy_url": true,
+	"proxies.allow_request_proxy_url":  true,
 	"proxies.health.failure_threshold": true,
-	"proxies.lanes.enabled": true, "proxies.lanes.max_lanes": true,
+	"proxies.lanes.enabled":            true, "proxies.lanes.max_lanes": true,
 	"proxies.lanes.drop_cookies_on_challenge": true,
 
 	"cache.ttl_seconds": true, "cache.max_size": true,
@@ -468,7 +468,7 @@ var knownConfigKeys = map[string]bool{
 	"platform.admin_username": true, "platform.admin_password": true,
 	"platform.jwt_expire_hours": true, "platform.usage_retention_days": true,
 
-	"stability.engine_cooldown.steps_minutes": true,
+	"stability.engine_cooldown.steps_minutes":       true,
 	"stability.engine_cooldown.reset_after_minutes": true,
 
 	"security.admin_rate_per_minute": true, "security.admin_rate_per_ip": true,

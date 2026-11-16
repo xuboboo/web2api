@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/bcrypt"
 )
 

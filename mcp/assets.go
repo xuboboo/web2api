@@ -12,7 +12,7 @@ import (
 // binary (契约 C: go:embed 静态文件). openapi.yaml is the PUBLIC contract —
 // data plane (/v1/*, /{engine}/search, health/stats) plus agent plane (/mcp)
 // only; admin-plane /api/* definitions live in the repo-only
-// docs/openapi-admin.yaml and are neither embedded nor served (审计 A-08).
+// docs/internal/openapi-admin.yaml and are neither embedded nor served (审计 A-08).
 // llms.txt is the agent-facing platform brief.
 var (
 	//go:embed openapi.yaml
@@ -36,9 +36,11 @@ func wantsHTML(c *fiber.Ctx) bool {
 // assetView wraps the embedded file in a zero-dependency dark-theme document
 // page (官网 V3 暗夜语言) so a browser click opens a polished, readable web
 // page instead of a download (三期用户反馈:文档要网页浏览,不要下载)。
+// eyebrow 区分两类资产页的眉标(openapi.yaml → OPEN API SPECIFICATION,
+// llms.txt → AGENT PLATFORM BRIEF),避免简介页挂着「规范」眉标的错位组合。
 // 不提供任何前端可见的「下载」入口(用户要求:防止被刷);程序化导入
 // 直接 GET 本路径即可拿到原始字节(内容协商按 Accept 区分)。
-func assetView(title, subtitle string, body []byte) string {
+func assetView(eyebrow, title, subtitle string, body []byte) string {
 	var b strings.Builder
 	b.WriteString(`<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
@@ -69,12 +71,12 @@ h1{margin:0 0 12px;font-size:30px;line-height:1.25;color:#F5F5F7;font-weight:650
 .dots{display:flex;gap:6px}
 .dots i{width:10px;height:10px;border-radius:50%;display:block}
 .dots i:nth-child(1){background:#FF5F57}.dots i:nth-child(2){background:#FEBC2E}.dots i:nth-child(3){background:#28C840}
-.fname{font:500 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#73737A}
+.fname{font:500 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#8A8A90}
 .btn{margin-left:auto;padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#F5F5F7;font:500 12.5px/1.4 inherit;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease}
 .btn:hover{background:#3ECF8E;border-color:#3ECF8E;color:#062B1C}
 .btn:active{transform:scale(.97)}
 pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/1.75 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:auto;max-height:70vh;white-space:pre;tab-size:2}
-.foot{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:20px;color:#73737A;font-size:12px}
+.foot{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:20px;color:#8A8A90;font-size:12px}
 .hint{margin-top:14px;padding:12px 16px;border-radius:10px;background:rgba(62,207,142,.07);border:1px solid rgba(62,207,142,.16);color:#A1A1A6;font-size:12.5px}
 .hint code{font:500 12px/1 ui-monospace,monospace;color:#3ECF8E}
 .quick{margin-top:22px;padding:18px 20px;border-radius:14px;border:1px solid rgba(255,255,255,.09);background:#17171A}
@@ -97,7 +99,7 @@ pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/
 <nav class="topnav"><a href="./">官网</a><a href="./console/">控制台</a></nav>
 </div></header>
 <main class="wrap">
-<span class="eyebrow">OPEN API SPECIFICATION</span>
+<span class="eyebrow">` + html.EscapeString(eyebrow) + `</span>
 <h1>` + html.EscapeString(title) + `</h1>
 <p class="sub">` + html.EscapeString(subtitle) + `</p>
 <section class="card">
@@ -114,7 +116,7 @@ pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/
 </ol>
 <a href="./#quickstart">官网完整实例与代码示例 →</a>
 </section>
-<p class="hint">程序化导入(Dify / n8n / curl / Agent)直接 <code>GET</code> 本地址即可获得原始规范字节;浏览器访问自动呈现此网页视图。带真实响应样例、Python/JS/curl 代码与排错表的完整教程见仓库 <code>docs/QUICKSTART.md</code>。</p>
+<p class="hint">程序化导入(Dify / n8n / curl / Agent)直接 <code>GET</code> 本地址即可获得原始文件字节;浏览器访问自动呈现此网页视图。带真实响应样例、Python/JS/curl 代码与排错表的完整教程见仓库 <code>docs/QUICKSTART.md</code>。</p>
 <div class="foot"><span>© Web2API 网站收录查询开放平台</span><a href="./">返回官网</a><a href="./console/">进入控制台</a></div>
 </main>
 <script>
@@ -136,12 +138,12 @@ pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/
 // callers: importers, curl, agents — precise content type, short public
 // cache window) or, for browsers, a zero-dependency HTML viewer so the spec
 // opens as a web page instead of a download (三期用户反馈)。
-func serveAsset(body []byte, contentType string, title, subtitle string) fiber.Handler {
+func serveAsset(body []byte, contentType string, eyebrow, title, subtitle string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		c.Set(fiber.HeaderCacheControl, "public, max-age=300")
 		if wantsHTML(c) {
 			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
-			return c.SendString(assetView(title, subtitle, body))
+			return c.SendString(assetView(eyebrow, title, subtitle, body))
 		}
 		c.Set(fiber.HeaderContentType, contentType)
 		return c.Send(body)

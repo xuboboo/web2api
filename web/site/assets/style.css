@@ -33,9 +33,9 @@
   --brand-dim: #3ECF8E;           /* 亮绿:暗主题文字色与图示强调 */
 
   /* —— 语义色(功能性,非装饰)—— */
-  --ok: #00A86B;
-  --warn: #C97A0E;
-  --destructive: #D64545;
+  --ok: #006B44;
+  --warn: #8F5B00;
+  --destructive: #B23030;
 
   /* —— 反差主按钮(macOS:可操作面用最大反差)—— */
   --primary: #1D1D1F;
@@ -79,12 +79,9 @@
   --shadow-1: 0 8px 24px rgba(0, 0, 0, 0.06);      /* 卡片 hover */
   --shadow-window: 0 24px 64px rgba(11, 11, 13, 0.28), 0 2px 8px rgba(11, 11, 13, 0.10); /* 产品窗 */
 
-  /* —— 字体(零外部加载,SF 气质系统栈;V3 全站无衬线)—— */
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
-               "Segoe UI", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI",
-               "Microsoft YaHei", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "JetBrains Mono",
-               Menlo, "Liberation Mono", monospace;
+  /* —— 字体(零外部加载,与控制台逐字一致的两族系统栈;全站无衬线)—— */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "JetBrains Mono", Menlo, "Liberation Mono", monospace;
 
   /* —— 布局 —— */
   --container: 1120px;
@@ -338,7 +335,10 @@ html.dark .btn-primary:active { background: #E2E2E7; }
 }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .pill-neutral { background: var(--muted); color: var(--muted-foreground); }
-.pill-brand { background: var(--brand-tint); color: var(--brand); }
+/* V-02(验收缺陷清单):浅色 --brand #177E5B on --brand-tint ≈4.06:1 < 4.5:1;
+   文字提至品牌族内更深的 --brand-hover #12634A(≈5.9:1,与 F11 .eco .eyebrow 同解),
+   暗主题经既有令牌自动成立(#5BDC9F on tint,达标);不动 #177E5B 本体与 .btn-primary */
+.pill-brand { background: var(--brand-tint); color: var(--brand-hover); }
 .pill-ok { background: rgba(0, 168, 107, 0.12); color: var(--ok); }
 .pill-warn { background: rgba(240, 180, 65, 0.14); color: var(--warn); }
 .pill-error { background: rgba(214, 69, 69, 0.12); color: var(--destructive); }
@@ -382,6 +382,15 @@ h2 {
   border-radius: var(--radius-sm);
   padding: 2px 6px;
   white-space: nowrap;
+  color: var(--foreground);
+}
+
+/* F1(清单1 C-01/清单2 C-01+C-09):暗卡内的 inline-code 徽片曾是浅底浅字
+   (浅色主题 1.07:1);统一为恒定暗底亮字,两主题一致 10.36:1 */
+.dark-card .inline-code {
+  background: var(--ink-bg);
+  border-color: var(--ink-border-soft);
+  color: var(--ink-dim);
 }
 
 /* ---------- 5. 顶部导航(V3:单配色玻璃两态,blur 为渐进增强) ---------- */
@@ -463,7 +472,10 @@ html.dark .icon-btn .icon-moon { display: block; }
 /* 导航副标:V3 画布恒定,单配色 */
 .brand-sub {
   font: 500 12px/1 var(--font-sans);
-  color: var(--foreground-faint);
+  /* V-01(验收缺陷清单):--foreground-faint 双主题对比度不达标
+     (浅 #86868B on 导航玻璃 ≈3.33:1、暗 #73737A ≈4.18:1,均低于 4.5:1),
+     提至 --muted-foreground:浅 #6E6E73(≈4.7:1)、暗 #A1A1A6(≈7.6:1) */
+  color: var(--muted-foreground);
   border-left: 1px solid var(--border);
   padding-left: 10px;
   margin-left: 2px;
@@ -531,7 +543,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 .dark-window .diag-req { background: rgba(255, 255, 255, .03); border-color: rgba(255, 255, 255, .09); max-width: none; }
 .dark-window .diag-req code { color: rgba(255, 255, 255, .85); }
-.dark-window .diag-req code .muted { color: rgba(255, 255, 255, .4); }
+.dark-window .diag-req code .muted { color: rgba(255, 255, 255, .62); }
 .dark-window .diag-tag { color: rgba(255, 255, 255, .5); }
 .dark-window .diag-stem, .dark-window .diag-stem2 { background: rgba(255, 255, 255, .16); }
 .dark-window .diag-stem::after, .dark-window .diag-stem2::after { background: #3ECF8E; }
@@ -541,9 +553,9 @@ html.dark .icon-btn .icon-moon { display: block; }
 .dark-window .exit-card { background: rgba(255, 255, 255, .03); border-color: rgba(255, 255, 255, .1); }
 .dark-window .exit-card:hover { border-color: rgba(255, 255, 255, .24); }
 .dark-window .exit-card h3 { color: var(--ink-title); display: flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
-.dark-window .exit-card code { color: rgba(255, 255, 255, .4); }
+.dark-window .exit-card code { color: rgba(255, 255, 255, .62); }
 .dark-window .diag-hub { background: #3ECF8E; box-shadow: 0 0 12px rgba(62, 207, 142, .30); }
-.eng-en { font: 500 9.5px/1 var(--font-mono); letter-spacing: .14em; color: rgba(255, 255, 255, .35); font-style: normal; }
+.eng-en { font: 500 10px/1 var(--font-mono); letter-spacing: .14em; color: rgba(255, 255, 255, .55); font-style: normal; }
 .dot-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-accent); margin-left: auto; box-shadow: 0 0 6px rgba(62, 207, 142, .5); }
 .dot-dim { background: rgba(255, 255, 255, .25); box-shadow: none; }
 
@@ -1009,7 +1021,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   padding: 16px 24px 0;
   font: 600 11px/1 var(--font-mono);
   letter-spacing: 0.12em;
-  color: var(--ink-faint);
+  color: rgba(245, 245, 247, .55);
 }
 .code-block {
   margin: 0;
@@ -1028,7 +1040,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 .tk-str { color: var(--ink-green); }
 .tk-num { color: var(--ink-num); }
 .tk-bool { color: var(--ink-accent); }
-.tk-com { color: var(--ink-faint); }
+.tk-com { color: rgba(245, 245, 247, .60); }
 .tk-punc { color: rgba(255, 255, 255, 0.45); }
 
 .cw-foot {
@@ -1043,7 +1055,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 .cw-ok { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-accent); }
 .cw-ok::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-accent); }
-.cw-units { margin-left: auto; color: var(--ink-faint); }
+.cw-units { margin-left: auto; color: var(--ink-dim); }
 
 /* ---------- 11. Agent 接入暗卡 ---------- */
 .dark-card {
@@ -1061,7 +1073,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   font: 600 11px/1 var(--font-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 .dark-card h3 {
   margin-top: 14px;
@@ -1144,7 +1156,7 @@ html.dark .icon-btn .icon-moon { display: block; }
   margin-top: 14px;
   font-size: 12px;
   line-height: 19px;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 .dk-auth code { color: var(--ink-dim); }
 .dk-auth a { color: var(--ink-accent); text-decoration: none; }
@@ -1190,7 +1202,7 @@ html.dark .icon-btn .icon-moon { display: block; }
 .st-cb { background: rgba(214, 69, 69, 0.12); color: var(--destructive); }
 html.dark .st-ok { background: rgba(62, 207, 142, 0.14); }
 html.dark .st-cool { background: rgba(240, 180, 65, 0.17); }
-html.dark .st-cb { background: rgba(229, 100, 92, 0.15); }
+html.dark .st-cb { background: rgba(229, 100, 92, 0.08); }
 .st-count {
   font: 600 12px/1 var(--font-mono);
   color: var(--muted-foreground);
@@ -1274,6 +1286,10 @@ html.dark .st-cb { background: rgba(229, 100, 92, 0.15); }
 html.dark .eco { background: var(--card); }
 .eco-sub { margin-top: 18px; }
 .eco-sub p { font-size: 16px; line-height: 26px; color: var(--muted-foreground); }
+/* F11(清单2 C-10):生态区眉标与副文在浅主题下对比度不足,分别提至
+   --brand-hover(5.91:1)与 --foreground(13.78:1);暗主题经既有令牌自动成立 */
+.eco .eyebrow { color: var(--brand-hover); }
+.eco-sub p { color: var(--foreground); }
 .eco-btns { margin-top: 36px; display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
 /* 生态区在浅主题下是中性亮面:.pill-dark 的恒定玻璃材质不可读,
    按主题换成卡面次级钮(暗主题下与 V2 玻璃语言一致) */
@@ -1312,7 +1328,7 @@ html.dark .eco { background: var(--card); }
   gap: 8px 24px;
   font-size: 12.5px;
   line-height: 19px;
-  color: var(--foreground-faint);
+  color: var(--muted-foreground);
 }
 
 /* ---------- 16. 动效基建 ---------- */

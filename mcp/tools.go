@@ -51,7 +51,7 @@ func toolSpecs() []map[string]any {
 		{
 			"name": toolWebSearch,
 			"description": "国内搜索引擎 SERP 查询。返回 {results:[{rank,title,url,snippet}]}。" +
-				"计费:1 unit/次。引擎冷却期调用会返回 engine_cooldown 错误。",
+				"计费:每次调用计 1 次。引擎冷却期调用会返回 engine_cooldown 错误。",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -80,7 +80,7 @@ func toolSpecs() []map[string]any {
 		{
 			"name": toolCheckIndexed,
 			"description": "检测 URL 是否被百度/搜狗/360/必应收录(收录判定)。返回与 GET /v1/index/check 相同的" +
-				" {id,created_at,results:[{url,engines:{...}}],meta} 结构。计费:urls × engines units。",
+				" {id,created_at,results:[{url,engines:{...}}],meta} 结构。计费:urls × engines 次(URL 数 × 引擎数)。",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

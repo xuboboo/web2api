@@ -40,8 +40,8 @@
     '#/engines': { title: '引擎状态', desc: '四大搜索引擎的运行、冷却与熔断状态,支持强制恢复与强制冷却。' },
     '#/keys': { title: 'API 密钥', desc: '公网 API 鉴权密钥的创建、配额与启停管理。' },
     '#/usage': { title: '使用日志', desc: '每次收录查询与搜索调用的明细记录,支持按密钥筛选。' },
-    '#/playground': { title: '在线调试', desc: '发起一次真实收录判定,响应结构与 /v1/index/check 完全一致。' },
-    '#/agents': { title: 'Agent 集成', desc: 'MCP 端点与 Claude / Dify / Coze / n8n / LangChain 的接入配置。' },
+    '#/playground': { title: '在线调试', desc: '在面板内发起一次真实收录查询,结果与 POST /v1/index/check 完全一致。' },
+    '#/agents': { title: 'Agent 集成', desc: 'MCP 端点与 Claude / Dify / n8n / LangChain 的接入配置。' },
     '#/docs': { title: 'API 文档', desc: '全部 REST 端点、MCP 工具与错误码的完整说明。' },
     '#/settings': { title: '系统设置', desc: '管理员密码修改与平台安全机制说明。' }
   };
@@ -226,7 +226,8 @@
   }
 
   function skeletonCards(n) {
-    var grid = el('div', { class: 'engine-grid' });
+    /* is-skeleton 为哨兵类(无样式):防止 renderGrid 把骨架网格误判为真网格 */
+    var grid = el('div', { class: 'engine-grid is-skeleton' });
     for (var i = 0; i < (n || 4); i++) {
       grid.appendChild(el('div', { class: 'engine-card' },
         skeletonBlock([{ w: 'w40' }, { big: true, w: 'w60' }, { w: 'w80' }])));
@@ -944,14 +945,22 @@
     var recentCard = el('div', { class: 'card' });
     root.appendChild(recentCard);
 
+    var firstStatsLoad = true;
     function loadAll() {
-      wrap.innerHTML = '';
-      wrap.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w60' }, { w: 'w40' }]));
+      /* 首进骨架;此后旧内容原位降透明,避免「清空→骨架→重建」白浪 */
+      if (firstStatsLoad) {
+        firstStatsLoad = false;
+        wrap.innerHTML = '';
+        wrap.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w60' }, { w: 'w40' }]));
+      } else {
+        wrap.classList.add('is-busy');
+      }
       Promise.all([
         api('GET', '/api/stats/overview'),
         api('GET', '/api/stats/timeseries?days=14'),
         api('GET', '/api/engines')
       ]).then(function (res) {
+        wrap.classList.remove('is-busy');
         wrap.innerHTML = '';
         var stats = (res[0] && typeof res[0] === 'object') ? res[0] : {};
         var series = extractTimeseries(res[1]);
@@ -962,29 +971,39 @@
           buildEngineCard(engines));
         wrap.appendChild(grid);
       }).catch(function (e) {
+        wrap.classList.remove('is-busy');
         wrap.innerHTML = '';
         wrap.appendChild(errorNode(e, function () { loadAll(); }));
       });
     }
 
+    var recentBody = null;
     function loadRecent() {
-      recentCard.innerHTML = '';
-      recentCard.appendChild(el('div', { class: 'card-head' },
-        el('h2', { class: 'card-title' }, '最近日志',
-          el('span', { class: 'card-head-sub', text: '最近 5 次调用记录' })),
-        el('a', { class: 'link-more', href: '#/usage', text: '查看全部 >' })));
-      var body = el('div', { class: 'card-body flush' });
-      recentCard.appendChild(body);
-      body.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      /* 卡头只建一次;重载时仅表体降透明 */
+      recentBody = recentCard.querySelector('.card-body');
+      if (!recentBody) {
+        recentCard.innerHTML = '';
+        recentCard.appendChild(el('div', { class: 'card-head' },
+          el('h2', { class: 'card-title' }, '最近日志',
+            el('span', { class: 'card-head-sub', text: '最近 5 次调用记录' })),
+          el('a', { class: 'link-more', href: '#/usage', text: '查看全部 >' })));
+        recentBody = el('div', { class: 'card-body flush' });
+        recentCard.appendChild(recentBody);
+        recentBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      } else {
+        recentBody.classList.add('is-busy');
+      }
+      var body = recentBody;
       api('GET', '/api/usage?limit=5').then(function (data) {
         data = data || {};
         var items = Array.isArray(data.items) ? data.items : [];
+        body.classList.remove('is-busy');
         body.innerHTML = '';
         if (!items.length) {
           body.appendChild(el('div', { class: 'empty' },
             el('div', { class: 'empty-dot' },
               el('div', { class: 'empty-title', text: '暂无调用记录' }),
-              el('div', { class: 'empty-desc', text: '发起一次 /v1/index/check 调用后,最近 5 条日志会显示在这里。' }))));
+              el('div', { class: 'empty-desc', text: '完成一次收录查询后,最近 5 条日志会显示在这里。' }))));
           return;
         }
         var tbody = el('tbody');
@@ -1004,6 +1023,7 @@
             el('th', { text: '状态' }))),
           tbody)));
       }).catch(function (e) {
+        body.classList.remove('is-busy');
         body.innerHTML = '';
         body.appendChild(el('div', { class: 'empty' },
           el('div', { class: 'empty-title', text: '最近日志加载失败' }),
@@ -1042,7 +1062,7 @@
         { label: '今日有效调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
         { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
         { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
-        { label: '有效成功率(24h)', value: fmtPercent(stats.success_rate_24h), sub: '全部请求 ' + fmtNumber(stats.today_calls_all) + ' · 拒绝 ' + fmtNumber(stats.rejected_today_24h) }
+        { label: '有效成功率(24h)', value: fmtPercent(stats.success_rate_24h), sub: '全部请求 ' + fmtNumber(stats.today_calls_all) + ' 次,拒绝 ' + fmtNumber(stats.rejected_today_24h) + ' 次' }
       ];
     } else {
       defs = [
@@ -1072,7 +1092,7 @@
         el('h2', { class: 'card-title' }, '近 14 日调用', el('span', { class: 'card-head-sub', text: '全部调用按天统计' }))),
       body);
     if (!series.length) {
-      body.appendChild(emptyNode('暂无调用数据', '发起一次 /v1/index/check 调用后,这里会展示近 14 日的柱状图。'));
+      body.appendChild(emptyNode('暂无调用数据', '完成一次收录查询后,这里会展示近 14 日的调用柱状图。'));
       return card;
     }
     body.appendChild(barChart(series));
@@ -1117,7 +1137,7 @@
       var y = m.top + ih - (ih * g / steps);
       // SVG 呈现属性写进 style,使 var() 随主题切换
       svg.appendChild(s('line', { x1: m.left, y1: y, x2: W - m.right, y2: y, style: 'stroke:var(--border);stroke-width:1' }));
-      var yt = s('text', { x: m.left - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 10, style: 'fill:var(--muted-fg);font-family:var(--mono)' });
+      var yt = s('text', { x: m.left - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 10, style: 'fill:var(--muted-fg);font-family:var(--font-mono)' });
       yt.textContent = chartTick(val);
       svg.appendChild(yt);
     }
@@ -1145,7 +1165,7 @@
       svg.appendChild(rect);
 
       if (v > 0 && slot >= 30) {
-        var vt = s('text', { x: x + bw / 2, y: m.top + ih - h - 6, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:var(--fg);font-family:var(--mono)' });
+        var vt = s('text', { x: x + bw / 2, y: m.top + ih - h - 6, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:var(--fg);font-family:var(--font-mono)' });
         vt.textContent = v >= 10000 ? Math.round(v / 1000) + 'k' : String(v);
         svg.appendChild(vt);
       }
@@ -1248,26 +1268,90 @@
     return { pill: 'pill-green', label: '运行中' };
   }
 
-  /* 迷你分段健康进度条(V4 §9.6/§10.3):约 16 块 h8;
-   * 健康(2xx 占比)= success,异常 = destructive;无数据时全灰空槽。 */
-  function segHealthBar(calls, ok) {
-    var SEGS = 16;
-    var bar = el('div', { class: 'segbar', role: 'img' });
+  /* ================= 引擎可视化(共享:总览迷你行 + 冷却看板大卡) =================
+   * 仅消费 GET /api/engines 快照字段(state/until/reason/consecutive_blocks/
+   * last_error_at);四态 = 运行(满绿+流光)/ 冷却(until 驱动倒计时条,分母按
+   * 10/30/120 档前端估算,真值始终 until)/ 熔断(红满格)/ 停用(灰)。
+   * 契约若将来补充 calls/ok 两字段,占比分支自动生效,前端零改动升级。 */
+  function engineVizState(eng) {
+    if (eng.enabled === false || eng.state === 'disabled') return 'disabled';
+    if (eng.state === 'cooldown') return 'cooldown';
+    if (eng.state === 'circuit_open' || eng.breaker === 'open') return 'circuit';
+    return 'ok';
+  }
+  var VIZ_CLS = { ok: 'is-ok', cooldown: 'is-cooldown', circuit: 'is-circuit', disabled: 'is-disabled' };
+
+  function stateSegBar(eng, size) {
+    var SEGS = 16, vs = engineVizState(eng);
+    var bar = el('div', { class: 'segbar' + (size ? ' ' + size : '') + (vs === 'ok' ? ' is-live' : ''), role: 'img' });
     var ratio = null;
-    if (typeof calls === 'number' && calls > 0 && typeof ok === 'number' && ok >= 0) {
-      ratio = Math.max(0, Math.min(1, ok / calls));
-      bar.setAttribute('aria-label', '健康度 ' + Math.round(ratio * 100) + '%');
-    } else {
-      bar.setAttribute('aria-label', '暂无健康度数据');
+    if (typeof eng.calls === 'number' && eng.calls > 0 && typeof eng.ok === 'number' && eng.ok >= 0) {
+      ratio = Math.max(0, Math.min(1, eng.ok / eng.calls));
     }
+    var mode = vs === 'circuit' ? 'bad' : (vs === 'cooldown' ? 'warn' : (vs === 'disabled' ? 'plain' : 'ok'));
+    var lit = ratio === null ? SEGS : Math.round(ratio * SEGS);
+    if (mode === 'ok' && ratio !== null) mode = 'mix';
+    if (vs === 'circuit') bar.setAttribute('aria-label', '熔断开启');
+    else if (vs === 'cooldown') bar.setAttribute('aria-label', '冷却中');
+    else if (vs === 'disabled') bar.setAttribute('aria-label', '已停用');
+    else if (ratio !== null) bar.setAttribute('aria-label', '健康度 ' + Math.round(ratio * 100) + '%');
+    else bar.setAttribute('aria-label', '运行正常');
     for (var i = 0; i < SEGS; i++) {
       var cls = '';
-      if (ratio !== null) {
-        cls = (i < Math.round(ratio * SEGS)) ? 'ok' : 'bad';
-      }
+      if (mode === 'ok') cls = 'ok';
+      else if (mode === 'warn') cls = 'warn';
+      else if (mode === 'bad') cls = 'bad';
+      else if (mode === 'mix') cls = (i < lit) ? 'ok' : 'bad';
       bar.appendChild(el('i', { class: cls }));
     }
     return bar;
+  }
+
+  /* 冷却档位与 core/engine_cooldown.go 一致:10/30/120 分钟;真值始终 until */
+  var CD_TIERS = [10, 30, 120];
+  function estimateCdSpan(untilMs, now) {
+    var left = untilMs - now;
+    if (left <= 0) return 60000;
+    for (var i = 0; i < CD_TIERS.length; i++) {
+      var t = CD_TIERS[i] * 60000;
+      if (left <= t) return t;
+    }
+    return left;
+  }
+
+  function cdBlockNode(eng, size) {
+    var untilMs = eng.until.getTime(), now = Date.now(), left = untilMs - now, total = estimateCdSpan(untilMs, now);
+    var block = el('div', { class: 'cd-block' + (size ? ' ' + size : ''), 'data-cd-until': String(untilMs), 'data-cd-total': String(total) });
+    var pct = Math.max(0, Math.min(100, total > 0 ? (left / total) * 100 : 0));
+    var bar = el('div', { class: 'cd-bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(pct)), 'aria-label': '冷却剩余' },
+      el('div', { class: 'cd-bar-fill' }));
+    if (left > 0) bar.firstChild.style.width = pct.toFixed(2) + '%';
+    else block.classList.add('is-done');
+    block.appendChild(bar);
+    block.appendChild(el('div', { class: 'cd-row' },
+      el('span', { class: 'cd-value', text: left > 0 ? fmtRemaining(left) : '等待恢复探测…' }),
+      el('span', { class: 'cd-label', text: '冷却剩余(至 ' + fmtDateTime(eng.until) + ')' })));
+    return block;
+  }
+
+  function engineViz(eng, size) {
+    var big = size === 'viz-lg', vs = engineVizState(eng);
+    if (vs === 'cooldown' && eng.until) return cdBlockNode(eng, big ? '' : 'cd-sm');
+    if (vs === 'cooldown') {
+      return el('div', { class: 'cd-block' + (big ? '' : ' cd-sm') },
+        el('div', { class: 'cd-bar is-stalled', role: 'img', 'aria-label': '冷却中' }, el('div', { class: 'cd-bar-fill' })),
+        big ? el('div', { class: 'cd-row' },
+          el('span', { class: 'cd-value done', text: '冷却' }),
+          el('span', { class: 'cd-label', text: '冷却中(服务端未返回恢复时间,等待下次刷新)' })) : null);
+    }
+    var frag = el('div', null, stateSegBar(eng, big ? 'segbar-lg' : ''));
+    if (big) {
+      var copy = vs === 'circuit'
+        ? '熔断开启:连续失败达阈值,等待半开探测' + ((eng.breaker === 'half-open' || eng.breaker === 'halfopen' || eng.breaker === 'half_open') ? '(当前半开)' : '')
+        : (vs === 'disabled' ? '该引擎已在配置中停用' : '运行正常,请求正常放行');
+      frag.appendChild(el('div', { class: 'cd-label' + (vs === 'circuit' ? ' is-alarm-text' : ''), text: copy }));
+    }
+    return frag;
   }
 
   function buildEngineCard(engines) {
@@ -1282,13 +1366,14 @@
     }
     var list = el('div', { class: 'engine-list' });
     engines.forEach(function (eng) {
-      var info = engineStateInfo(eng);
+      var info = engineStateInfo(eng), vs = engineVizState(eng);
       var meta = el('div', { class: 'engine-meta' });
-      meta.appendChild(segHealthBar(eng.calls, eng.ok));
-      meta.appendChild(el('span', { class: 'pill ' + info.pill, text: info.label }));
-      if (eng.state === 'cooldown' && eng.until) {
-        meta.appendChild(el('span', { class: 'muted td-mono', text: '至 ' + fmtDateTime(eng.until) }));
-      }
+      if (vs === 'cooldown') meta.appendChild(engineViz(eng, ''));
+      else meta.appendChild(stateSegBar(eng, ''));
+      meta.appendChild(el('span', {
+        class: 'pill ' + info.pill + (vs === 'ok' ? ' is-live' : '') + (vs === 'circuit' ? ' is-alarm' : ''),
+        text: info.label
+      }));
       if (eng.consecutiveBlocks !== null && eng.consecutiveBlocks > 0) {
         meta.appendChild(el('span', { class: 'muted', text: '连续拦截 ' + eng.consecutiveBlocks + ' 次' }));
       }
@@ -1349,13 +1434,15 @@
 
     root.appendChild(el('p', {
       class: 'page-note',
-      text: '连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截则归零。到期后放行一个探测请求,成功恢复、失败进下一档。每 10 秒自动刷新。'
+      text: '连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截则归零。到期后放行一个探测请求:成功即恢复,再次被拦截进下一档,其他失败(如超时)按当前档顺延重试。每 10 秒自动刷新。'
     }));
 
     var wrap = el('div', null);
     root.appendChild(wrap);
     var lastList = [];
     var reloadQueued = false;
+    /* 键控 patch:引擎名 → 卡片记录(节点/按钮/状态键),10s 静默刷新零重建 */
+    var cardRecs = {};
 
     function switchView(v) {
       if (viewState.view === v) return;
@@ -1367,11 +1454,13 @@
     }
 
     function renderGrid(list) {
-      wrap.innerHTML = '';
       var scoped = (groupState === 'all') ? list : list.filter(function (eng) {
         return eng && eng.name === groupState;
       });
+      wrap.classList.remove('is-busy');
       if (!scoped.length) {
+        cardRecs = {};
+        wrap.innerHTML = '';
         if (groupState !== 'all' && list.length) {
           wrap.appendChild(el('div', { class: 'card' },
             emptyNode('该分组暂无引擎',
@@ -1383,14 +1472,41 @@
         return;
       }
       if (viewState.view === 'table') {
+        cardRecs = {};
+        wrap.innerHTML = '';
         wrap.appendChild(buildEnginesTable(scoped));
-      } else {
-        var grid = el('div', { class: 'engine-grid' });
-        scoped.forEach(function (eng) {
-          grid.appendChild(engineCardNode(eng));
-        });
+        return;
+      }
+      /* 卡片视图:真网格则键控复用(状态键未变时零 DOM 写入,动画不被 10s 轮询打断);
+       * 骨架网格/空网格/其他内容仍整建。 */
+      var grid = wrap.firstElementChild;
+      var realGrid = grid && grid.classList.contains('engine-grid') && !grid.classList.contains('is-skeleton') &&
+        (grid.children.length === 0 || grid.firstElementChild.hasAttribute('data-engine'));
+      if (!realGrid) {
+        cardRecs = {};
+        wrap.innerHTML = '';
+        grid = el('div', { class: 'engine-grid' });
         wrap.appendChild(grid);
       }
+      var seen = {};
+      scoped.forEach(function (eng, idx) {
+        seen[eng.name] = true;
+        var rec = cardRecs[eng.name];
+        if (rec) {
+          patchEngineCard(rec, eng);
+          if (grid.children[idx] !== rec.node) grid.insertBefore(rec.node, grid.children[idx] || null);
+        } else {
+          rec = engineCardNode(eng, idx);
+          cardRecs[eng.name] = rec;
+          grid.appendChild(rec.node);
+        }
+      });
+      Object.keys(cardRecs).forEach(function (name) {
+        if (!seen[name]) {
+          cardRecs[name].node.remove();
+          delete cardRecs[name];
+        }
+      });
     }
 
     /* 表格视图(§4.5 范式):列 = 快照实有字段 */
@@ -1432,18 +1548,33 @@
         tbody)));
     }
 
-    /* 单秒倒计时:刷新所有 data-cd-until 元素;有冷却到期时触发一次静默刷新 */
+    /* 单秒倒计时:刷新所有 data-cd-until 载体(表格纯 span / 冷却看板 cd-block 两种);
+     * cd-bar-fill 宽度 1s linear 过渡把每秒一跳内插成连续收缩;到期触发一次静默刷新 */
     function tickCountdowns() {
       var nodes = wrap.querySelectorAll('[data-cd-until]');
       var expired = false;
+      var now = Date.now();
       for (var i = 0; i < nodes.length; i++) {
-        var until = Number(nodes[i].getAttribute('data-cd-until'));
-        var left = until - Date.now();
+        var node = nodes[i];
+        var left = Number(node.getAttribute('data-cd-until')) - now;
+        var isBlock = node.classList.contains('cd-block');
+        var val = isBlock ? node.querySelector('.cd-value') : node;
+        var bar = isBlock ? node.querySelector('.cd-bar') : null;
         if (left > 0) {
-          nodes[i].textContent = fmtRemaining(left);
+          val.textContent = fmtRemaining(left);
+          val.classList.remove('done');
+          node.classList.remove('is-done');
+          if (bar) {
+            var total = Number(node.getAttribute('data-cd-total')) || left;
+            var pct = Math.max(0, Math.min(100, (left / total) * 100));
+            bar.querySelector('.cd-bar-fill').style.width = pct.toFixed(2) + '%';
+            bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+            bar.setAttribute('aria-label', '冷却剩余 ' + fmtRemaining(left));
+          }
         } else {
-          nodes[i].textContent = '等待恢复探测…';
-          nodes[i].classList.add('done');
+          val.textContent = '等待恢复探测…';
+          val.classList.add('done');
+          if (bar) bar.classList.add('is-done');
           expired = true;
         }
       }
@@ -1456,14 +1587,21 @@
 
     function load(silent) {
       if (!silent) {
-        wrap.innerHTML = '';
-        wrap.appendChild(skeletonCards(4));
+        /* 首进骨架;此后旧内容原位降透明(renderGrid 返回后恢复) */
+        if (!wrap.childElementCount) {
+          wrap.innerHTML = '';
+          wrap.appendChild(skeletonCards(4));
+        } else {
+          wrap.classList.add('is-busy');
+        }
       }
       api('GET', '/api/engines').then(function (res) {
         lastList = normalizeEngines(res);
         renderGrid(lastList);
         tickCountdowns();
       }).catch(function (e) {
+        cardRecs = {};
+        wrap.classList.remove('is-busy');
         wrap.innerHTML = '';
         wrap.appendChild(errorNode(e, function () { load(false); }));
       });
@@ -1512,48 +1650,67 @@
 
     /* 每引擎一张状态卡:字段仅限 /api/engines 快照
      * (engine/endpoint/enabled/breaker/state/until/reason/consecutive_blocks/last_error_at) */
-    function engineCardNode(eng) {
-      var info = engineStateInfo(eng);
-      var cardCls = 'engine-card';
-      if (eng.state === 'cooldown') cardCls += ' is-cooldown';
-      if (eng.state === 'circuit_open') cardCls += ' is-circuit';
+    function stateKey(eng) {
+      return [eng.state, eng.enabled === false ? 'd' : 'e', eng.breaker,
+        eng.until ? eng.until.getTime() : 0, eng.reason, eng.consecutiveBlocks,
+        eng.lastErrorAt ? eng.lastErrorAt.getTime() : 0, eng.endpoint].join('|');
+    }
 
+    function engineCardNode(eng, idx) {
+      var vs = engineVizState(eng), info = engineStateInfo(eng);
+      var node = el('div', { class: 'engine-card ' + (VIZ_CLS[vs] || 'is-ok'), 'data-engine': eng.name });
+      node.style.animationDelay = Math.min((idx || 0) * 45, 360) + 'ms';
       var head = el('div', { class: 'engine-card-head' },
         el('div', { class: 'engine-card-title' },
           el('b', { text: ENGINE_LABEL[eng.name] || eng.name }),
           el('span', { class: 'chip', text: eng.name })),
-        el('span', { class: 'pill ' + info.pill, text: info.label }));
-
-      var body;
-      if (eng.state === 'cooldown' && eng.until) {
-        var left = eng.until.getTime() - Date.now();
-        body = el('div', null,
-          el('div', { class: 'cd-value', 'data-cd-until': String(eng.until.getTime()), text: left > 0 ? fmtRemaining(left) : '等待恢复探测…' }),
-          el('div', { class: 'cd-label', text: '冷却剩余(至 ' + fmtDateTime(eng.until) + ')' }));
-      } else if (eng.state === 'cooldown') {
-        body = el('div', null,
-          el('div', { class: 'cd-value done', text: '冷却' }),
-          el('div', { class: 'cd-label', text: '冷却中(服务端未返回恢复时间,等待下次刷新)' }));
-      } else if (eng.state === 'circuit_open') {
-        body = el('div', null,
-          el('div', { class: 'cd-value done', text: '熔断' }),
-          el('div', { class: 'cd-label', text: '熔断开启:连续失败达阈值,等待半开探测' + (eng.breaker === 'half-open' || eng.breaker === 'halfopen' || eng.breaker === 'half_open' ? '(当前半开)' : '') }));
-      } else {
-        body = el('div', null,
-          el('div', { class: 'cd-value done', text: eng.enabled === false ? '停用' : '正常' }),
-          el('div', { class: 'cd-label', text: eng.enabled === false ? '该引擎已在配置中停用' : '运行正常,请求正常放行' }));
-      }
-
+        el('span', { class: 'pill ' + info.pill + (vs === 'ok' ? ' is-live' : '') + (vs === 'circuit' ? ' is-alarm' : ''), text: info.label }));
+      var viz = el('div', { class: 'engine-viz' }, engineViz(eng, 'viz-lg'));
       var btns = buildEngineButtons(eng);
       var facts = el('div', { class: 'engine-facts' });
       facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '端点' }), el('span', { text: eng.endpoint || '—' })));
       facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '冷却原因' }), el('span', { text: eng.reason || '—' })));
       facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '连续拦截' }), el('span', { text: eng.consecutiveBlocks !== null ? eng.consecutiveBlocks + ' 次' : '—' })));
       facts.appendChild(el('div', { class: 'fact' }, el('b', { text: '最近错误' }), el('span', { text: eng.lastErrorAt ? fmtDateTime(eng.lastErrorAt) : '—' })));
+      node.appendChild(head);
+      node.appendChild(viz);
+      node.appendChild(facts);
+      node.appendChild(el('div', { class: 'engine-actions' }, btns.resetBtn, btns.forceBtn));
+      return {
+        node: node, btns: btns, key: stateKey(eng), viz: vs,
+        untilKey: String(eng.until ? eng.until.getTime() : 0)
+      };
+    }
 
-      var cardActions = el('div', { class: 'engine-actions' }, btns.resetBtn, btns.forceBtn);
-
-      return el('div', { class: cardCls }, head, body, facts, cardActions);
+    /* 就地更新已渲染卡片:状态键未变时零 DOM 写入;变化时仅 patch 受影响部分 */
+    function patchEngineCard(rec, eng) {
+      var key = stateKey(eng);
+      if (rec.key === key) return;
+      var vs = engineVizState(eng), node = rec.node;
+      node.className = 'engine-card ' + (VIZ_CLS[vs] || 'is-ok');
+      var info = engineStateInfo(eng);
+      var pill = node.querySelector('.engine-card-head .pill');
+      pill.className = 'pill ' + info.pill + (vs === 'ok' ? ' is-live' : '') + (vs === 'circuit' ? ' is-alarm' : '');
+      pill.textContent = info.label;
+      var untilKey = String(eng.until ? eng.until.getTime() : 0);
+      if (vs !== rec.viz || untilKey !== rec.untilKey) {
+        node.querySelector('.engine-viz').replaceWith(el('div', { class: 'engine-viz' }, engineViz(eng, 'viz-lg')));
+        rec.viz = vs;
+        rec.untilKey = untilKey;
+      }
+      var spans = node.querySelectorAll('.engine-facts .fact span');
+      if (spans.length >= 4) {
+        spans[0].textContent = eng.endpoint || '—';
+        spans[1].textContent = eng.reason || '—';
+        spans[2].textContent = eng.consecutiveBlocks !== null ? eng.consecutiveBlocks + ' 次' : '—';
+        spans[3].textContent = eng.lastErrorAt ? fmtDateTime(eng.lastErrorAt) : '—';
+      }
+      var needReset = eng.state === 'cooldown' || eng.state === 'circuit_open';
+      rec.btns.resetBtn.disabled = !needReset;
+      rec.btns.resetBtn.title = needReset ? '' : '引擎当前无需强制恢复';
+      rec.btns.forceBtn.disabled = eng.state === 'cooldown';
+      rec.btns.forceBtn.title = eng.state === 'cooldown' ? '冷却中,无需再次强制冷却' : '';
+      rec.key = key;
     }
 
     /* 强制冷却弹窗:minutes 1–720 */
@@ -1643,16 +1800,25 @@
     root.appendChild(card);
 
     var keys = [];
+    var firstKeysLoad = true;
 
     function loadAll() {
-      card.innerHTML = '';
-      card.appendChild(skeletonBlock([{ w: 'w30' }, { w: 'w80' }, { w: 'w80' }, { w: 'w60' }]));
+      /* 首进骨架;此后旧内容原位降透明 */
+      if (firstKeysLoad) {
+        firstKeysLoad = false;
+        card.innerHTML = '';
+        card.appendChild(skeletonBlock([{ w: 'w30' }, { w: 'w80' }, { w: 'w80' }, { w: 'w60' }]));
+      } else {
+        card.classList.add('is-busy');
+      }
       api('GET', '/api/keys').then(function (data) {
         keys = Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : []);
         state.keysCache = keys;
+        card.classList.remove('is-busy');
         card.innerHTML = '';
         renderTable(true);
       }).catch(function (e) {
+        card.classList.remove('is-busy');
         card.innerHTML = '';
         card.appendChild(errorNode(e, loadAll));
       });
@@ -1670,6 +1836,7 @@
     }
 
     function renderTable(fresh) {
+      card.classList.remove('is-busy');
       card.innerHTML = '';
       if (!keys.length) {
         var emptyCreate = el('button', {
@@ -1803,7 +1970,7 @@
         usedCell = el('td', { class: 'td-num' },
           el('div', { class: 'qbar-wrap' },
             el('span', { class: 'qbar-num', text: fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' · ' + pct + '%' }),
-            el('div', { class: barCls, title: '今日 ' + fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' units(' + pct + '%)' },
+            el('div', { class: barCls, title: '今日 ' + fmtNumber(usedNum) + ' / ' + fmtNumber(quotaNum) + ' 次(' + pct + '%)' },
               el('i', { style: 'width:' + pct + '%' }))));
       } else {
         usedCell = el('td', { class: 'td-num', text: fmtNumber(k.used_today) });
@@ -1883,7 +2050,7 @@
         el('label', { class: 'field-label', text: '名称' }),
         nameInput),
       el('div', { class: 'field' },
-        el('label', { class: 'field-label', text: '日配额(units / 天)' }),
+        el('label', { class: 'field-label', text: '日配额(次 / 天)' }),
         quotaInput,
         el('div', { class: 'form-hint', text: '1 URL × 1 引擎 = 1 unit;留空或 0 表示不限量。' })),
       el('div', { class: 'field' },
@@ -1969,7 +2136,7 @@
         el('label', { class: 'field-label', text: '名称' }),
         nameInput),
       el('div', { class: 'field' },
-        el('label', { class: 'field-label', text: '日配额(units / 天)' }),
+        el('label', { class: 'field-label', text: '日配额(次 / 天)' }),
         quotaInput,
         el('div', { class: 'form-hint', text: '1 URL × 1 引擎 = 1 unit;留空或 0 表示不限量。' })),
       el('div', { class: 'field' },
@@ -2138,6 +2305,9 @@
 
     var lastItems = [];
     var lastTotal = 0;
+    /* 闪屏守卫:首进骨架、此后降透明;listSeq 只采纳最后一次请求(防 tab 快速切换竞态) */
+    var firstListLoad = true;
+    var listSeq = 0;
 
     /* S4: GET /api/usage 支持 from/to 服务端时间过滤(时间 tabs 改服务端参数,
      * 分页总数随之准确);级别 chips 仍作用于当前页数据。 */
@@ -2181,9 +2351,16 @@
     }
 
     function loadList() {
-      card.innerHTML = '';
-      card.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w80' }, { w: 'w60' }]));
+      if (firstListLoad) {
+        firstListLoad = false;
+        card.innerHTML = '';
+        card.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w80' }, { w: 'w60' }]));
+      } else {
+        card.classList.add('is-busy');
+      }
+      var seq = ++listSeq;
       api('GET', currentUrl()).then(function (data) {
+        if (seq !== listSeq) return; // 已有更新一次的请求,丢弃过期响应
         data = data || {};
         lastTotal = (typeof data.total === 'number') ? data.total : Number(data.total) || 0;
         lastItems = Array.isArray(data.items) ? data.items : [];
@@ -2194,16 +2371,19 @@
         }
         renderTable();
       }).catch(function (e) {
+        if (seq !== listSeq) return;
+        card.classList.remove('is-busy');
         card.innerHTML = '';
         card.appendChild(errorNode(e, loadList));
       });
     }
 
     function renderTable() {
+      card.classList.remove('is-busy');
       card.innerHTML = '';
       if (!lastItems.length) {
         card.appendChild(emptyNode('暂无调用记录',
-          st.keyId ? '当前筛选条件下还没有日志,试试切换密钥或点击刷新。' : '发起一次 /v1/index/check 调用后,这里会出现日志。'));
+          st.keyId ? '当前筛选条件下还没有日志,试试切换密钥或点击刷新。' : '完成一次收录查询后,这里会出现日志。'));
         return;
       }
       var visible = lastItems.filter(function (it) {
@@ -2257,7 +2437,7 @@
     loadList();
   }
 
-  /* 使用日志表:全部列保留(时间/密钥/端点/引擎/URL 数/Units/HTTP 状态/耗时);行点击展开详情 */
+  /* 使用日志表:全部列保留(时间/密钥/端点/引擎/URL 数/次数/HTTP 状态/耗时);行点击展开详情 */
   /* 使用日志列定义:8 列全部可排序(§4.5 可排序列名后置 ⇅ 图标)。
    * val() 取排序键:时间/数字取数值,文本列取展示字符串。 */
   var USAGE_COLS = [
@@ -2455,7 +2635,7 @@
       placeholder: '每行一个 URL,最多 20 条\nhttps://example.com/blog/post-1\nhttps://example.com/blog/post-2'
     });
     var urlCount = el('span', { class: 'pg-count-num', text: '0 / 20' });
-    var countHint = el('span', { text: '0 URL × 4 引擎 = 0 unit' });
+    var countHint = el('span', { text: '0 条 URL × 4 个引擎 = 0 组检测' });
     var countRow = el('div', { class: 'pg-count' }, countHint, urlCount);
 
     function checkedEngineCount() {
@@ -2472,7 +2652,7 @@
       var over = lines.length > 20;
       urlCount.className = 'pg-count-num' + (over ? ' over' : '');
       urlCount.parentElement.classList.toggle('over', over);
-      countHint.textContent = lines.length + ' URL × ' + ec + ' 引擎 = ' + (lines.length * ec) + ' unit';
+      countHint.textContent = lines.length + ' 条 URL × ' + ec + ' 个引擎 = ' + (lines.length * ec) + ' 组检测';
     }
     urlsTa.addEventListener('input', function () {
       updateCount();
@@ -2530,7 +2710,7 @@
         el('div', { class: 'field' },
           el('label', { class: 'field-label', text: '检测引擎' }),
           checksBox,
-          el('div', { class: 'form-hint', text: '平台调试接口不计费;响应结构与 /v1/index/check 完全一致。' })),
+          el('div', { class: 'form-hint', text: '在线调试不计费。「复制等价 curl」对应 POST /v1/index/check,用 API 密钥发起等价调用时按 URL 数 × 引擎数计次。' })),
         formErr,
         submitBtn,
         el('div', { style: 'height:8px;' }),
@@ -2617,7 +2797,7 @@
         return;
       }
       if (urls.length > 20) {
-        showFormErr('单次最多 20 条 URL(平台契约上限),当前 ' + urls.length + ' 条。');
+        showFormErr('单次最多 20 条 URL,当前输入了 ' + urls.length + ' 条,请删减后重试。');
         return;
       }
       if (!engines.length) {
@@ -2625,8 +2805,13 @@
         return;
       }
       pgState.lastReq = { urls: urls, engines: engines.slice() };
-      termBody.innerHTML = '';
-      termBody.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w50' }, { w: 'w80' }, { w: 'w70' }]));
+      /* 首进骨架;此后旧结果原位降透明 */
+      if (!termBody.childElementCount) {
+        termBody.innerHTML = '';
+        termBody.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w50' }, { w: 'w80' }, { w: 'w70' }]));
+      } else {
+        termBody.classList.add('is-busy');
+      }
       setFootStatus(null);
       setBtnLoading(submitBtn, true, '检测中…');
       api('POST', '/api/playground/check', { urls: urls, engines: engines })
@@ -2639,6 +2824,7 @@
         .catch(function (e) {
           pgState.lastStatus = typeof e.status === 'number' ? e.status : 0;
           setFootStatus(pgState.lastStatus);
+          termBody.classList.remove('is-busy');
           termBody.innerHTML = '';
           termBody.appendChild(errorNode(e, function () { submitBtn.click(); }));
         })
@@ -2650,6 +2836,7 @@
     /* 结果渲染:表格 / JSON 双视图 */
     function renderResult() {
       var data = pgState.lastData || {};
+      termBody.classList.remove('is-busy');
       termBody.innerHTML = '';
       termBody.style.padding = '';
 
@@ -2783,9 +2970,22 @@
         el('h2', { class: 'card-title' }, 'MCP 接入'),
         copyUrlBtn('复制 base_url', BASE)),
       el('div', { class: 'card-body' },
-        p('Web2API 内置 <strong>MCP(Model Context Protocol)Streamable HTTP</strong> 端点,AI Agent(Claude Desktop / Claude Code / Dify / Coze / n8n / LangChain 等)可作为一等公民直接调用收录查询与搜索能力,无需自行封装 HTTP。'),
-        p('端点:<code>' + MCP_URL + '</code>(JSON-RPC 2.0;协议版本 <code>2025-06-18</code>;支持 <code>initialize / notifications/initialized / tools/list / tools/call / ping</code>,服务端返回的 <code>Mcp-Session-Id</code> 响应头需在后续请求中原样带回)。'),
-        el('div', { class: 'auth-warn', html: ICONS.warn + '<span><b>鉴权必须显式配置:</b>所有请求需携带 <code>X-API-Key</code> 请求头(计费,1 次 web_search = 1 unit;check_indexed = URL 数 × 引擎数 units)或 <code>Authorization: Bearer &lt;管理员 JWT&gt;</code>(管理员不计费)。<b>未携带密钥的调用一律返回 401 {"error":"unauthorized"}</b>。请先在「API 密钥」页创建密钥。</span>' }),
+        p('Web2API 内置 MCP(Model Context Protocol)端点。传输方式为 Streamable HTTP,协议为 JSON-RPC 2.0。'),
+        p('Claude Desktop、Claude Code、Dify、n8n、LangChain 等 AI Agent 可直接接入,无需自行封装 HTTP。'),
+        el('dl', { class: 'spec-list' },
+          el('div', null, el('dt', { text: '端点地址' }), el('dd', null, el('code', { text: MCP_URL }))),
+          el('div', null, el('dt', { text: '协议' }), el('dd', null, 'JSON-RPC 2.0(Streamable HTTP)')),
+          el('div', null, el('dt', { text: '协议版本' }), el('dd', null, el('code', { text: '2025-06-18' }))),
+          el('div', null, el('dt', { text: '支持方法' }), el('dd', null, 'initialize、notifications/initialized、tools/list、tools/call、ping')),
+          el('div', null, el('dt', { text: '会话机制' }), el('dd', null, '服务端通过 Mcp-Session-Id 响应头下发会话 ID,后续请求需原样带回'))),
+        el('div', { class: 'auth-warn', html: ICONS.warn + '<span><b>调用前必须配置鉴权。</b>请先在「API 密钥」页创建密钥,并为每个请求携带 X-API-Key 请求头。未携带有效密钥的调用会返回 401 {"error":"unauthorized"}。</span>' }),
+        codeBlock('HTTP · 请求头', 'X-API-Key: ' + DEMO_KEY),
+        el('div', { class: 'docs-note', text: '管理员也可改用 Authorization: Bearer <JWT>(面板登录获得)。管理员发起的 MCP 调用不计费。' }),
+        p('计费口径(仅 API 密钥调用计费;管理员 JWT 调用不计费):'),
+        el('dl', { class: 'spec-list' },
+          el('div', null, el('dt', { text: 'web_search' }), el('dd', null, '1 unit/次')),
+          el('div', null, el('dt', { text: 'check_indexed' }), el('dd', null, 'URL 数 × 引擎数 units')),
+          el('div', null, el('dt', { text: 'get_quota、list_engines' }), el('dd', null, '不计费'))),
         el('div', { class: 'agent-links' },
           el('a', { href: OPENAPI_URL, target: '_blank', rel: 'noopener noreferrer', html: ICONS.external + '<span>openapi.yaml(OpenAPI 3.1 全端点)</span>' }),
           el('a', { href: LLMS_URL, target: '_blank', rel: 'noopener noreferrer', html: ICONS.external + '<span>llms.txt(Agent 友好简介)</span>' })),
@@ -2796,19 +2996,21 @@
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: 'MCP 工具清单' })),
       el('div', { class: 'card-body' },
         paramTable([
-          ['web_search', 'object', 'query 必填', '{ query, engine?("baidu|sogou|so360|bing",默认 baidu), limit?(默认 10) } → { results:[{rank,title,url,snippet}] };计费 1 unit/次'],
-          ['check_indexed', 'object', 'urls 必填', '{ urls[1..20], engines? } → 与 /v1/index/check 相同的 results 结构;计费 = URL 数 × 引擎数 units'],
-          ['get_quota', 'object', '—', '{} → 当前密钥的配额与用量'],
-          ['list_engines', 'object', '—', '{} → 引擎清单与冷却 / 熔断状态']
+          ['web_search', 'object', 'query 必填', '按关键词搜索,返回 rank、title、url、snippet。engine 可选 baidu|sogou|so360|bing,默认 baidu;limit 默认 10'],
+          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–20 条 URL,返回结构与 /v1/index/check 相同'],
+          ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
+          ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
-        p('提示:引擎冷却期间,check_indexed 对应引擎单元会返回 <code>engine_cooldown</code> 错误;可先用 <code>list_engines</code> 判断可用性。'))));
+        p('计费:web_search 1 unit/次;check_indexed 计 URL 数 × 引擎数 units;get_quota 与 list_engines 不计费。'),
+        p('提示:引擎冷却期间,check_indexed 中对应引擎的查询会返回 <code>engine_cooldown</code> 错误。可先调用 <code>list_engines</code> 确认可用性。'))));
 
     /* ---- Claude Desktop / Claude Code ---- */
     root.appendChild(agentCard('Claude Desktop / Claude Code', [
       '打开 Claude Desktop「设置 → 开发者 → 编辑配置」(或项目根目录的 <code>.mcp.json</code>)。',
       '将下方 JSON 合并进 <code>mcpServers</code>;headers 中的 <code>X-API-Key</code> 替换为你的密钥。',
       '重启 Claude Desktop,工具面板出现 web_search / check_indexed / get_quota / list_engines 即接入成功。',
-      '注意:未配置 <code>X-API-Key</code> 的调用一律返回 401 <code>{"error":"unauthorized"}</code>(JSON 不支持注释,勿在配置文件内加注释)。'
+      '注意:未配置 <code>X-API-Key</code> 的调用会返回 401 <code>{"error":"unauthorized"}</code>。',
+      '配置文件为 JSON,不支持注释,请勿在文件内添加注释。'
     ], 'JSON · claude_desktop_config.json', `{
   "mcpServers": {
     "web2api": {
@@ -2831,18 +3033,7 @@
 #    名称(Key):X-API-Key
 #    值(Value):${DEMO_KEY}
 # 3. 导入后可用工具:web_search / check_indexed / get_quota / list_engines
-# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`, OPENAPI_URL));
-
-    /* ---- Coze ---- */
-    root.appendChild(agentCard('Coze', [
-      '进入「插件 → 创建插件」,选择「通过 URL 导入 OpenAPI 3.1」。'
-    ], '配置 · Coze 插件', `# Coze → 插件 → 创建插件 → 导入 OpenAPI 3.1
-# 1. 导入方式:URL 导入,填写 ${ORIGIN}/web-tool/openapi.yaml
-# 2. 硬性要求:每个接口必须有唯一 operationId;servers 必须是完整域名
-#    (本平台 openapi.yaml 的 servers 为 ${ORIGIN},接口路径统一带 /web-tool 前缀)
-# 3. 鉴权:插件「授权方式」选择 API Key
-#    位置:Header;名称:X-API-Key;值:${DEMO_KEY}
-# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`, OPENAPI_URL));
+# 注意:未携带 X-API-Key 的调用会返回 401 {"error":"unauthorized"}`, OPENAPI_URL));
 
     /* ---- n8n ---- */
     root.appendChild(agentCard('n8n', [
@@ -2863,12 +3054,13 @@ JSON Body:
 # 或使用 MCP Client Tool 节点直连 MCP 端点:
 #   Endpoint:      ${MCP_URL}
 #   Transport:     HTTP Streamable
-#   Authentication: Header Auth → Name: X-API-Key,Value: 同上
-# 注意:未配置 X-API-Key 的调用一律返回 401 {"error":"unauthorized"}`, BASE));
+#   Authentication: Header Auth(Name: X-API-Key,Value 同上)
+# 注意:未携带 X-API-Key 的调用会返回 401 {"error":"unauthorized"}`, BASE));
 
     /* ---- LangChain Python ---- */
     root.appendChild(agentCard('LangChain / Python', [
-      'HTTP 方式:用 requests 直接调用 REST 端点;MCP 方式:用官方 <code>mcp</code> SDK 连接 Streamable HTTP。'
+      'HTTP 方式:用 <code>requests</code> 直接调用 REST 端点。',
+      'MCP 方式:用官方 <code>mcp</code> SDK 连接 Streamable HTTP。'
     ], 'Python · requests + MCP SDK', `import requests
 
 BASE = "${ORIGIN}/web-tool"  # 注意:所有端点都带 /web-tool 前缀
@@ -3079,8 +3271,9 @@ async def run():
       id: 'docs-overview',
       title: '概述',
       children: [
-        p('Web2API 是<strong>单二进制自托管的「网站收录查询开放平台」</strong>:提交文章 / 页面 URL 列表,查询百度(baidu)、搜狗(sogou)、360(so360)、必应(bing)四大搜索引擎是否已收录对应页面;同时提供国内四引擎通用搜索与 MCP Agent 端点。引擎级失败(反爬拦截 / 验证码 / 熔断 / 冷却)不会拖垮整体响应,对应引擎项返回 error,HTTP 仍为 200。'),
-        p('Base URL(固定前缀,不可配置):<code>' + BASE + '</code>。下文示例均以该地址为例,请替换为你的实际地址与密钥。所有端点清单与可导入的 OpenAPI 3.1 描述见文末「Agent 静态资源」。')
+        p('Web2API 是<strong>单二进制自托管的「网站收录查询开放平台」</strong>。提交文章或页面 URL 列表,即可查询百度(baidu)、搜狗(sogou)、360(so360)、必应(bing)四大引擎是否已收录对应页面。平台同时提供四引擎通用搜索与 MCP Agent 端点。'),
+        p('单个引擎失败(反爬拦截、验证码、熔断、冷却)不影响整体响应:该引擎项返回 error,HTTP 状态仍为 200。'),
+        p('Base URL:<code>' + BASE + '</code>(固定前缀,不可配置)。下文示例均使用该地址;若从其它机器访问,请把主机名替换为服务器实际地址,密钥换成自己的。全部端点清单见文末「Agent 静态资源」。')
       ]
     }));
 
@@ -3089,13 +3282,12 @@ async def run():
       id: 'docs-auth',
       title: '鉴权(X-API-Key / JWT)',
       children: [
-        p('公网 API(/v1/*)与 MCP 使用 API 密钥(在「API 密钥」页创建);管理 API(/api/*)使用管理员 JWT(面板登录获得)。'),
+        p('公网 API(/v1/*)与 MCP 使用 API 密钥,在「API 密钥」页创建。管理 API(/api/*)使用管理员 JWT,由面板登录获得。'),
         ulHtml([
-          '推荐:<code>X-API-Key: sk-w2a-…</code>',
-          '兼容:<code>Authorization: Bearer sk-w2a-…</code>',
-          '无效或被禁用的密钥返回 <code>401 {"error":"unauthorized"}</code>;',
-          '当日配额用尽返回 <code>429 {"error":"quota_exceeded"}</code>,响应头携带 <code>Retry-After</code>(次日零点自动恢复)。'
+          '推荐请求头:<code>X-API-Key: sk-w2a-…</code>',
+          '兼容写法:<code>Authorization: Bearer sk-w2a-…</code>'
         ]),
+        p('密钥无效或已禁用时,返回 <code>401 {"error":"unauthorized"}</code>。当日配额用尽时,返回 <code>429 {"error":"quota_exceeded"}</code>,响应携带 <code>Retry-After</code>,次日零点自动恢复。'),
         codeBlock('cURL', 'curl "' + BASE + '/v1/quota" \\\n  -H "X-API-Key: ' + DEMO_KEY + '"')
       ]
     }));
@@ -3257,12 +3449,20 @@ async def run():
       title: '/web-tool/mcp',
       sub: 'MCP Streamable HTTP(JSON-RPC 2.0)',
       children: [
-        p('AI Agent 一等公民端点。方法:<code>initialize</code>(返回 protocolVersion「2025-06-18」与 serverInfo{name:"web2api"})、<code>notifications/initialized</code>(204)、<code>tools/list</code>、<code>tools/call</code>、<code>ping</code>。服务端通过 <code>Mcp-Session-Id</code> 响应头下发会话 ID,后续请求需原样带回。鉴权同公网 API:<code>X-API-Key</code>(计费)或管理员 JWT(不计费)。'),
+        p('MCP 端点供 AI Agent 直接调用平台能力。鉴权与计费规则与公网 API 相同(见「鉴权」)。'),
+        ulHtml([
+          '<code>initialize</code> — 握手,返回协议版本 <code>2025-06-18</code> 与 serverInfo(name 为 <code>web2api</code>)。',
+          '<code>notifications/initialized</code> — 握手确认,服务端返回 204。',
+          '<code>tools/list</code> — 列出可用工具。',
+          '<code>tools/call</code> — 调用工具。',
+          '<code>ping</code> — 连通性探测。'
+        ]),
+        p('服务端通过 <code>Mcp-Session-Id</code> 响应头下发会话 ID,后续请求需原样带回。'),
         paramTable([
-          ['web_search', 'object', 'query 必填', '{ query, engine?, limit? } → { results:[{rank,title,url,snippet}] };计费 1 unit/次'],
-          ['check_indexed', 'object', 'urls 必填', '{ urls[1..20], engines? } → /v1/index/check 同构 results;计费 URL 数 × 引擎数 units'],
-          ['get_quota', 'object', '—', '{} → 当前密钥配额与用量'],
-          ['list_engines', 'object', '—', '{} → 引擎清单与冷却 / 熔断状态']
+          ['web_search', 'object', 'query 必填', '按关键词搜索,返回 rank、title、url、snippet。engine 可选 baidu|sogou|so360|bing,默认 baidu;limit 默认 10'],
+          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–20 条 URL,返回结构与 /v1/index/check 相同;计费 URL 数 × 引擎数 units'],
+          ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
+          ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
         codeBlock('cURL · tools/call',
           'curl -X POST "' + BASE + '/mcp" \\\n' +
@@ -3279,26 +3479,26 @@ async def run():
       children: [
         p('除 <code>POST /api/auth/login</code> 外均需 <code>Authorization: Bearer &lt;JWT&gt;</code>(面板登录获得)。管理 API 全局限速默认 60 次/分钟,超限返回 429 与 <code>Retry-After</code>。'),
         paramTable([
-          ['POST /api/auth/login', '—', '—', '管理员登录,返回 {"token","expires_in","user"};同一用户名+IP 连续 5 次失败锁定 15 分钟(429 too_many_attempts)'],
-          ['POST /api/auth/password', 'JSON', '—', '修改管理员密码 { old_password, new_password(≥8 位) };成功后全部旧 token 立即失效'],
+          ['POST /api/auth/login', '—', '—', '管理员登录,返回 token、expires_in 与 user。同一用户名在同一 IP 连续 5 次失败将锁定 15 分钟,期间返回 429 too_many_attempts'],
+          ['POST /api/auth/password', 'JSON', '—', '修改管理员密码。请求体为 old_password 与 new_password(至少 8 位);成功后全部旧 token 立即失效'],
           ['GET /api/me', '—', '—', '当前管理员与调用概况'],
-          ['POST /api/keys', 'JSON', '—', '创建 API 密钥 { name, daily_quota? };完整密钥仅返回一次'],
+          ['POST /api/keys', 'JSON', '—', '创建 API 密钥。请求体为 name 与可选的 daily_quota;完整密钥仅返回一次'],
           ['GET /api/keys', '—', '—', '密钥列表(新→旧)'],
           ['PATCH /api/keys/{id}', 'JSON', '—', '更新名称 / 状态 / 日配额'],
           ['DELETE /api/keys/{id}', '—', '—', '删除密钥'],
           ['GET /api/stats/overview', '—', '—', '总览统计(今日 / 累计 / 24h 成功率)'],
           ['GET /api/stats/timeseries', 'Query', '—', '按日时间序列 ?days=1..90,默认 14'],
-          ['GET /api/usage', 'Query', '—', '使用日志 ?limit(≤200)&offset&key_id,分页返回 {total, items[]}'],
+          ['GET /api/usage', 'Query', '—', '使用日志 ?limit(≤200)&offset&key_id,分页返回总条数与 items 数组'],
           ['GET /api/engines', '—', '—', '每引擎状态:{ state: ok|cooldown|circuit_open, until, reason, consecutive_blocks, last_error_at }'],
-          ['POST /api/playground/check', 'JSON', '—', '面板在线调试 { urls[1..20], engines? };响应结构与 /v1/index/check 完全一致;JWT 鉴权,不计费'],
+          ['POST /api/playground/check', 'JSON', '—', '面板在线调试。请求体为 urls(1–20 条)与可选 engines;响应结构与 /v1/index/check 完全一致;JWT 鉴权,不计费'],
           ['POST /api/engines/{name}/cooldown/reset', '—', '—', '强制恢复引擎:清除冷却与连续拦截计数'],
-          ['POST /api/engines/{name}/cooldown/force', 'JSON', '—', '强制冷却引擎 { minutes: 1–720 }(维护窗口用)'],
+          ['POST /api/engines/{name}/cooldown/force', 'JSON', '—', '强制冷却引擎。请求体为 minutes(1–720),供维护窗口使用'],
           ['POST /api/keys/{id}/rotate', '—', '—', '轮换密钥:保留名称 / 配额 / 计数,一次性返回新密钥;旧密钥即时失效'],
           ['GET /api/sessions', '—', '—', '管理员会话列表(IP / 最后活跃 / 当前会话标记)'],
           ['DELETE /api/sessions/{id}', '—', '—', '撤销指定会话;撤销当前会话等同退出登录'],
           ['POST /api/auth/refresh', '—', '—', '滑动续期当前会话'],
           ['POST /api/auth/logout', '—', '—', '退出登录:清除会话凭证'],
-          ['GET /api/audit', 'Query', '—', '安全审计轨迹 ?limit&offset,返回 {total, items[]}(动作 / 对象 / 时间 / IP)'],
+          ['GET /api/audit', 'Query', '—', '安全审计轨迹 ?limit&offset,分页返回总条数与 items 数组(动作 / 对象 / 时间 / IP)'],
           ['GET /api/usage/export', 'Query', '—', '用量导出 ?format=csv|json&key_id&from&to'],
           ['GET /api/reconcile', 'Query', '—', '记账对账 ?date=YYYY-MM-DD,返回扣费与流水差异数'],
           ['GET /api/admin/backup', '—', '—', '下载 bbolt 一致性快照(attachment)'],
@@ -3316,11 +3516,11 @@ async def run():
       title: '限流与引擎冷却',
       children: [
         ulHtml([
-          '<strong>管理 API 限速</strong>:默认 60 次/分钟,超限返回 <code>429</code> 并携带 <code>Retry-After</code> 响应头。',
-          '<strong>登录防爆破</strong>:同一「用户名 + IP」连续 5 次密码失败锁定 15 分钟,期间登录一律 <code>429 {"error":"too_many_attempts"}</code> + <code>Retry-After</code>。',
-          '<strong>引擎冷却状态机</strong>(每引擎独立):触发 = 引擎返回 blocked(403)/ 429 / captcha。连续第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截则计数归零。',
-          '<strong>冷却期内</strong>:该引擎所有 search / check 请求快速失败、不发真实请求,返回 <code>503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}</code> 并携带 <code>Retry-After</code>;/v1 与 /{engine}/search 的 <code>meta.engines_cooldown</code> 同步列出冷却引擎。',
-          '<strong>到期恢复</strong>:冷却到期后放行一个探测请求,成功即恢复、失败进下一档。管理员可在「引擎状态」页强制恢复或强制冷却。'
+          '<strong>管理 API 限速</strong>:默认 60 次/分钟。超限返回 429,响应携带 <code>Retry-After</code>。',
+          '<strong>登录防爆破</strong>:同一用户名在同一 IP 下连续 5 次密码失败,锁定 15 分钟。期间登录返回 <code>429 {"error":"too_many_attempts"}</code> 与 <code>Retry-After</code>。',
+          '<strong>引擎冷却</strong>(每引擎独立):引擎返回 blocked(403)、429 或 captcha 时触发。第 1 次冷却 10 分钟,第 2 次 30 分钟,第 3 次及以上 120 分钟;连续 240 分钟无拦截则计数归零。',
+          '<strong>冷却期内</strong>:该引擎的请求立即返回 <code>503 engine_cooldown</code>(携带 <code>Retry-After</code>),不发真实请求。<code>meta.engines_cooldown</code> 会列出冷却中的引擎。',
+          '<strong>到期恢复</strong>:冷却到期后放行一个探测请求,成功即恢复,再次被拦截进下一档,其他失败(如超时)按当前档顺延重试。管理员可在「引擎状态」页强制恢复或强制冷却。'
         ])
       ]
     }));
@@ -3332,7 +3532,7 @@ async def run():
       children: [
         p('<strong>HTTP 级错误(整请求失败)</strong>'),
         errTable([
-          ['400', 'bad_request', '参数错误;reason 取值:<code>EMPTY_QUERY</code>(URL 列表为空)/ <code>TOO_MANY_URLS</code>(超过 20 条)/ <code>INVALID_PARAM</code>(参数非法)'],
+          ['400', 'bad_request', '参数错误。reason:EMPTY_QUERY(URL 列表为空)、TOO_MANY_URLS(超过 20 条)、INVALID_PARAM(参数非法)'],
           ['401', 'unauthorized', '密钥无效 / 已禁用,或管理员 JWT 缺失、过期'],
           ['403', 'blocked', '搜索引擎反爬拦截了请求(引擎级错误同样会以 code=blocked 出现在单元结果中)'],
           ['403', 'forbidden', '该请求被拒绝访问(如来源不在允许范围内)'],
@@ -3373,9 +3573,9 @@ async def run():
       children: [
         p('面向 Agent / 客户端的全量机器可读描述,随服务自动提供:'),
         ulHtml([
-          '<a href="' + BASE + '/openapi.yaml" target="_blank" rel="noopener noreferrer">openapi.yaml</a> — OpenAPI 3.1 全端点描述(可直接导入 Dify / Coze / Apifox 等)',
+          '<a href="' + BASE + '/openapi.yaml" target="_blank" rel="noopener noreferrer">openapi.yaml</a> — OpenAPI 3.1 全端点描述(可直接导入 Dify / Apifox 等)',
           '<a href="' + BASE + '/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a> — 平台简介 + 端点清单(Agent 友好格式)',
-          'MCP 接入配置示例见「<a href="#/agents">Agent 集成</a>」页(Claude / Dify / Coze / n8n / LangChain)。'
+          'MCP 接入配置示例见「<a href="#/agents">Agent 集成</a>」页(Claude / Dify / n8n / LangChain)。'
         ])
       ]
     }));
@@ -3384,10 +3584,10 @@ async def run():
   /* ================= 8d. 页面:系统设置(V4 §10.6:左锚点 + 右表单卡) ================= */
 
   function pageSettings(root) {
-    /* 左分组锚点(运行 / 数据 / 系统)+ scrollspy,复用文档页范式 */
+    /* 左分组锚点(安全 / 数据 / 系统)+ scrollspy,复用文档页范式 */
     var NAVS = [
-      ['st-account', '账户安全', '运行'],
-      ['st-security', '安全机制', '运行'],
+      ['st-account', '账户安全', '安全'],
+      ['st-security', '安全机制', '安全'],
       ['st-sessions', '会话管理', '数据'],
       ['st-audit', '安全审计', '数据'],
       ['st-backup', '数据备份', '系统']
@@ -3527,10 +3727,10 @@ async def run():
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '安全机制' })),
       el('div', { class: 'card-body' },
         el('ul', { class: 'info-list' },
-          el('li', null, el('b', { text: '登录锁定:' }), '同一「用户名 + IP」连续 5 次密码错误后锁定 15 分钟;期间登录一律返回 429 {"error":"too_many_attempts"} 与 Retry-After。'),
-          el('li', null, el('b', { text: '管理 API 限速:' }), '全部 /api/* 默认 60 次 / 分钟,超限返回 429 与 Retry-After。'),
-          el('li', null, el('b', { text: '会话失效:' }), '密码以 bcrypt 哈希存储;修改密码后全部已登录 token(含当前浏览器)立即失效,需要重新登录。'),
-          el('li', null, el('b', { text: '公网鉴权:' }), '/v1/* 与 MCP 使用 X-API-Key(哈希存储,面板仅可见前缀);引擎冷却期间请求快速失败,不产生上游流量。'))));
+          el('li', null, el('b', { text: '登录锁定:' }), '同一用户名在同一 IP 下连续 5 次密码错误,锁定 15 分钟。期间登录返回 429 too_many_attempts,响应携带 Retry-After。'),
+          el('li', null, el('b', { text: '管理 API 限速:' }), '管理 API(/api/*)默认限速 60 次/分钟,超限返回 429,响应携带 Retry-After。'),
+          el('li', null, el('b', { text: '会话失效:' }), '密码以 bcrypt 哈希存储。修改密码后,全部已登录 token(含当前浏览器)立即失效,需重新登录。'),
+          el('li', null, el('b', { text: '公网鉴权:' }), '公网 API 与 MCP 均使用 X-API-Key。密钥以哈希存储,面板中仅可见前缀。'))));
 
     /* ---- 会话管理(UI 壳:GET /api/sessions 随服务端新版本提供) ---- */
     var sessionBody = el('div', { class: 'card-body' });
@@ -3580,15 +3780,24 @@ async def run():
     }
 
     function shellUnavailable(body, what) {
+      body.classList.remove('is-busy');
       body.innerHTML = '';
       body.appendChild(el('div', { class: 'shell-note', text: what + '需要服务端对应接口支持(随平台新版本提供),当前实例尚未启用。' }));
     }
 
+    var firstSessionsLoad = true;
     function loadSessions() {
-      sessionBody.innerHTML = '';
-      sessionBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      /* 首进骨架;此后旧内容原位降透明 */
+      if (firstSessionsLoad) {
+        firstSessionsLoad = false;
+        sessionBody.innerHTML = '';
+        sessionBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      } else {
+        sessionBody.classList.add('is-busy');
+      }
       api('GET', '/api/sessions').then(function (data) {
         var items = (data && Array.isArray(data.items)) ? data.items : [];
+        sessionBody.classList.remove('is-busy');
         sessionBody.innerHTML = '';
         if (!items.length) {
           sessionBody.appendChild(el('div', { class: 'shell-note', text: '当前没有活跃会话记录。' }));
@@ -3623,6 +3832,7 @@ async def run():
             el('th', { text: '操作' }))),
           tbody)));
       }).catch(function (e) {
+        sessionBody.classList.remove('is-busy');
         if (e.status === 404 || e.status === 401) shellUnavailable(sessionBody, '会话列表');
         else {
           sessionBody.innerHTML = '';
@@ -3642,11 +3852,19 @@ async def run():
         })),
       auditBody);
 
+    var firstAuditLoad = true;
     function loadAudit() {
-      auditBody.innerHTML = '';
-      auditBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      /* 首进骨架;此后旧内容原位降透明 */
+      if (firstAuditLoad) {
+        firstAuditLoad = false;
+        auditBody.innerHTML = '';
+        auditBody.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w70' }]));
+      } else {
+        auditBody.classList.add('is-busy');
+      }
       api('GET', '/api/audit?limit=20').then(function (data) {
         var items = (data && Array.isArray(data.items)) ? data.items : [];
+        auditBody.classList.remove('is-busy');
         auditBody.innerHTML = '';
         if (!items.length) {
           auditBody.appendChild(el('div', { class: 'shell-note', text: '暂无审计记录。' }));
@@ -3669,6 +3887,7 @@ async def run():
             el('th', { text: '来源 IP' }))),
           tbody)));
       }).catch(function (e) {
+        auditBody.classList.remove('is-busy');
         if (e.status === 404 || e.status === 401) shellUnavailable(auditBody, '审计轨迹');
         else {
           auditBody.innerHTML = '';

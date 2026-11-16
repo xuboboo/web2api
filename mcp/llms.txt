@@ -1,4 +1,4 @@
-# Web2API — 网站收录查询开放平台
+# Web2API 网站收录查询开放平台
 
 > 单二进制自托管的网站收录查询开放平台:百度/搜狗/360/必应四引擎的网页搜索与 URL 收录判定,内建 API 密钥鉴权、配额计费、限流与引擎冷却风控;为 AI Agent 提供原生 MCP 接口与 OpenAPI 规范。壁垒在引擎反爬对抗与收录判定,不在转发。
 
@@ -7,7 +7,7 @@
 - 鉴权方式:请求头 `X-API-Key: <你的密钥>`(计费)或 `Authorization: Bearer <管理员JWT>`(管理员,不计费)。密钥在管理控制台「API密钥」页创建。
 - 所有路径都在前缀 `/web-tool` 之下。本文中的链接为相对路径,请拼接你的部署域名,例如 `https://your-host/web-tool/mcp`。
 - OpenAPI 3.1 规范(供 Dify/n8n/LangChain 等 OpenAPI toolkit 导入):[openapi.yaml](/web-tool/openapi.yaml)
-- 管理控制台:`/web-tool/console/`(登录 / 总览 / API密钥 / 使用日志 / 引擎状态 / 在线调试 / Agent 集成 / 系统设置)
+- 管理控制台:`/web-tool/console/`(登录 / 总览 / 引擎状态 / API 密钥 / 使用日志 / 在线调试 / Agent 集成 / API 文档 / 系统设置)
 
 ## MCP 接入(Agent 一等公民)
 
@@ -15,8 +15,8 @@
 - 鉴权:`X-API-Key` 请求头(计费)或 `Authorization: Bearer <JWT>`(管理员不计费)。
 - 握手:`initialize`(protocolVersion 默认 `2025-06-18`,serverInfo.name=`web2api`)→ 响应头取 `Mcp-Session-Id` → 发 `notifications/initialized`(HTTP 204)→ `tools/list` / `tools/call`。
 - 工具(4 个):
-  - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;计费 1 unit/次。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
-  - `check_indexed{urls[1..20], engines?}` → 与 GET /v1/index/check 相同的 results 结构;计费 urls×engines units。
+  - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;每次调用计 1 unit。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
+  - `check_indexed{urls[1..20], engines?}` → 与 GET /v1/index/check 相同的 results 结构;计费 = urls×engines units。
   - `get_quota{}` → 当前调用方配额对象(管理员不计费)。
   - `list_engines{}` → 四引擎及冷却/熔断状态。
 - tools/call 结果统一为 `{content:[{type:"text",text:"<JSON字符串>"}], isError}`;入参校验失败返回 JSON-RPC `-32602`。
@@ -42,7 +42,7 @@
 - [GET /v1/index/check](/web-tool/v1/index/check?url=…&engines=baidu,bing) — 单 URL 收录判定。
 - [GET /v1/quota](/web-tool/v1/quota) — 当前密钥配额与用量。
 - [GET /v1/engines](/web-tool/v1/engines) — 引擎列表与熔断状态。
-- [GET /{engine}/search](/web-tool/baidu/search?text=关键词&limit=10) — 单引擎搜索(engine ∈ baidu|sogou|so360|360|bing;免鉴权,公网部署请加网关鉴权)。
+- [GET /{engine}/search](/web-tool/baidu/search?text=关键词&limit=10) — 单引擎搜索(engine ∈ baidu|sogou|so360|360|bing;鉴权随部署方 `security.data_plane_auth`:模板默认需 `X-API-Key`,显式关闭时免鉴权)。
 
 ### Agent 平面
 
@@ -71,7 +71,7 @@
 ## 示例
 
 ```bash
-# 批量收录判定(X-API-Key,计费 = 2 urls × 2 engines = 4 units)
+# 批量收录判定(X-API-Key,计费 = 2 条 urls × 2 个 engines = 4 units)
 curl -X POST https://your-host/web-tool/v1/index/check \
   -H "X-API-Key: sk-w2a-你的密钥" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/a","https://example.com/b"],"engines":["baidu","bing"]}'

@@ -36,7 +36,7 @@ info:
     超限返回 `429 {"error":"too_many_requests"}` + `Retry-After`。
 servers:
   - url: https://your-host/web-tool
-    description: 自托管部署根(替换为你的域名;Dify/Coze 导入要求域名格式,禁用 IP)
+    description: 自托管部署根(替换为你的域名;Dify/n8n/LangChain 导入要求域名格式,禁用 IP)
 tags:
   - name: data-plane
     description: 数据平面 — 收录判定与搜索(/v1/*,/{engine}/search)
@@ -259,7 +259,7 @@ paths:
       operationId: checkIndexSingle
       summary: 单 URL 收录判定(X-API-Key)
       description: |
-        查询单个 URL 是否被收录。计费:`1 URL × engines 数` units。
+        查询单个 URL 是否被收录。计费:`1 条 URL × engines 数` 次。
         引擎级失败(403/429/captcha/冷却/熔断)记入该单元的 `error` 字段,HTTP 状态保持 200。
       security:
         - ApiKeyAuth: []
@@ -309,7 +309,7 @@ paths:
       operationId: checkIndexBatch
       summary: 批量收录判定(X-API-Key)
       description: |
-        批量检测 1..20 个 URL。计费:`len(urls) × len(engines)` units(缺省引擎=全部四引擎)。
+        批量检测 1..20 个 URL。计费:`len(urls) × len(engines)` 次(缺省引擎=全部四引擎)。
         响应 `meta.engines_cooldown` 携带冷却中的引擎;冷却引擎的单元结果带 `error:{code:"engine_cooldown",...}`。
       security:
         - ApiKeyAuth: []
@@ -682,7 +682,7 @@ paths:
       tags: [admin]
       operationId: statsOverview
       summary: 用量总览(JWT)
-      description: 今日/累计调用与 units、24h 成功率、活跃密钥数与分引擎调用统计,风控与用量治理台首屏。
+      description: 今日/累计调用与计费次数、24h 成功率、活跃密钥数与分引擎调用统计,风控与用量治理台首屏。
       security:
         - BearerAuth: []
       responses:
@@ -717,7 +717,7 @@ paths:
       tags: [admin]
       operationId: statsTimeseries
       summary: 按日用量时间序列(JWT)
-      description: 最近 N 天(days 参数,1..90,默认 14)的按日调用数、units 与成功数,日期升序零填充。
+      description: 最近 N 天(days 参数,1..90,默认 14)的按日调用数、计费次数与成功数,日期升序零填充。
       security:
         - BearerAuth: []
       parameters:
@@ -749,7 +749,7 @@ paths:
       tags: [admin]
       operationId: listUsage
       summary: 使用日志(JWT,新→旧)
-      description: 分页返回每次调用的端点、引擎、URL 数、units、HTTP 状态与耗时;支持 key_id 过滤。
+      description: 分页返回每次调用的端点、引擎、URL 数、计费次数(units)、HTTP 状态与耗时;支持 key_id 过滤。
       security:
         - BearerAuth: []
       parameters:
@@ -966,7 +966,7 @@ paths:
     get:
       tags: [admin]
       operationId: reconcileUsage
-      summary: 扣费-流水对账(S4) — charged units vs 信封引擎 OK 合计
+      summary: 扣费-流水对账(S4) — 落账次数(charged_units) vs 信封引擎 OK 合计
       description: B-01 修复后两者应一致;历史记录(修复前)允许 mismatch,samples 列出前 10 条。
       security:
         - BearerAuth: []
@@ -1188,7 +1188,7 @@ paths:
 
         **鉴权**:`X-API-Key`(计费)或 `Authorization: Bearer <JWT>`(管理员,不计费);未授权 401 平台信封。
 
-        **计费**:`web_search`=1 unit;`check_indexed`=urls×engines units;`get_quota`/`list_engines` 不计费。
+        **计费**:`web_search` 每次调用计 1 次;`check_indexed` = urls×engines 次;`get_quota`/`list_engines` 不计费。
 
         **JSON-RPC 错误码**:`-32700` 解析错误(HTTP 400)、`-32600` 请求无效(不支持批量)、`-32601` 方法不存在、
         `-32602` 入参校验失败、`-32001` 会话不存在(HTTP 404)。
@@ -1304,7 +1304,7 @@ paths:
       tags: [agent-plane]
       operationId: getOpenApiSpec
       summary: 本 OpenAPI 3.1 规范(go:embed 静态资源,公开)
-      description: 供 Dify/Coze/n8n/LangChain OpenAPI toolkit 导入(Content-Type 为 application/yaml)。
+      description: 供 Dify/n8n/LangChain OpenAPI toolkit 导入(Content-Type 为 application/yaml)。
       responses:
         "200":
           description: YAML 规范文件
@@ -1331,7 +1331,7 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: 平台签发的 API 密钥(sk-w2a-…),在管理面板「API密钥」页创建;计费按 units。
+      description: 平台签发的 API 密钥(sk-w2a-…),在管理面板「API密钥」页创建;计费按次(URL 数 × 引擎数)。
     BearerAuth:
       type: http
       scheme: bearer
@@ -1491,7 +1491,7 @@ components:
           properties:
             request_id: { type: string }
             took_ms: { type: integer }
-            units: { type: integer, example: 8 }
+            units: { type: integer, example: 8, description: 本次计费次数(URL 数 × 引擎数) }
             engines_cooldown:
               type: array
               description: 契约 A — 冷却中的引擎

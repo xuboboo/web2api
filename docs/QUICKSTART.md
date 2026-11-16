@@ -22,9 +22,11 @@ curl {BASE}/engines/status
     { "engine": "baidu", "state": "ok", "enabled": true, "breaker": { "state": "closed" } },
     { "engine": "bing",  "state": "ok", "enabled": true, "breaker": { "state": "closed" } }
   ],
-  "generated_at": "2026-11-16T14:46:31Z"
+  "generated_at": "2026-11-16 22:46:31"
 }
 ```
+
+> `generated_at` 为服务器本地时间（格式 `YYYY-MM-DD HH:MM:SS`）；样例引擎清单为截断示意，实际返回全部四引擎。
 
 > 若某引擎 `state:"cooldown"`，说明它刚被搜索引擎风控、正在冷却自愈，换个引擎或稍后再试。
 
@@ -243,7 +245,7 @@ curl "{BASE}/api/usage?limit=3" -H "Authorization: Bearer $ADMIN_TOKEN"
 }
 ```
 
-**计费口径**：`outcome:"billed"` 表示成功计费；引擎级失败（如 `blocked`、`captcha_detected`）的单元 `units` 记 0，不扣费。
+**计费口径**：`outcome:"billed"` 表示成功计费；引擎级失败（如 `blocked`、`captcha_detected`）对应的 `units` 记 0，不扣费。
 
 ---
 
@@ -309,7 +311,7 @@ MCP 入口是 `{BASE}/mcp`，**必须携带 API Key**，否则 401。以 Claude 
 claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: $W2A_KEY"
 ```
 
-其它主流客户端（Cursor / VS Code / Windsurf / Cline / Gemini CLI / Codex）用等价配置：
+其它客户端的远程 MCP 配置字段名各异（Gemini CLI 用 httpUrl、Codex 用 config.toml），以各自文档为准；下方 JSON 适用于 Claude Code（.mcp.json）、Cursor、VS Code：
 
 ```json
 {

@@ -11,7 +11,7 @@
 
 ## 开发环境
 
-- Go 1.24+
+- Go 1.26+
 - Chromium/Chrome（仅浏览器模式与 E2E 需要；容器部署已自带）
 - 可选：Docker（推荐，真实链路更接近线上）
 
@@ -30,7 +30,7 @@ go build -o web2api .
 ```bash
 go test ./...                                  # 单测，无需网络/浏览器
 docker compose -f deploy/docker-compose.yml up -d --build
-node deploy/e2e-domestic.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs http://127.0.0.1:7000
 node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
 ```
 
@@ -59,6 +59,10 @@ go test ./...
 - 根 `README.md`（对外说明）
 - `docs/CONFIGURATION.md`（新增配置项）
 - `docs/TESTING.md`（新增/调整用例）
+
+**文档同步清单（唯一口径三则）**：计费 = 按成功单元（`platform/middleware.go:219-241`）；search 鉴权 = 随 `security.data_plane_auth`（`cmd/serve.go:554-559` + `config.yaml`）；bing 查询词 = 去 scheme 后的 host+path（`bing/index_check.go:22-37`）。改任一口径必须同步六个文件：`README.md`、`README.zh-CN.md`、`docs/API.md`、`docs/AGENT-README.md`、`mcp/llms.txt`、`mcp/openapi.yaml`。
+
+`docs/` 只放对外文档，内部资产（openapi-admin.yaml、audits、design）入 `docs/internal/`。
 
 ## 项目约定
 

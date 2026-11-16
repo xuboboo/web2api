@@ -251,8 +251,8 @@ func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 		})
 	})
 
-	app.Get("/openapi.yaml", serveAsset(openapiSpec, "application/yaml; charset=utf-8", "OpenAPI 3.1 规范", "Web2API 数据面与 Agent 面契约,Dify / n8n / LangChain 可直接导入;管理面 /api/* 不在公开规范中"))
-	app.Get("/llms.txt", serveAsset(llmsText, "text/plain; charset=utf-8", "llms.txt · Agent 平台简介", "面向 AI Agent 的平台说明与端点清单"))
+	app.Get("/openapi.yaml", serveAsset(openapiSpec, "application/yaml; charset=utf-8", "OPEN API SPECIFICATION", "OpenAPI 3.1 规范", "Web2API 数据面与 Agent 面契约,Dify / n8n / LangChain 可直接导入;管理面 /api/* 不在公开规范中"))
+	app.Get("/llms.txt", serveAsset(llmsText, "text/plain; charset=utf-8", "AGENT PLATFORM BRIEF", "llms.txt · Agent 平台简介", "面向 AI Agent 的平台说明与端点清单"))
 	return nil
 }
 

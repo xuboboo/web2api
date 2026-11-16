@@ -1,7 +1,7 @@
 openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
-  title: Web2API — 网站收录查询开放平台
+  title: Web2API 网站收录查询开放平台
   version: "1.0" # 公开规范固定为 1.0,不携带真实应用版本号
   license:
     name: MIT
@@ -126,12 +126,15 @@ paths:
     get:
       tags: [data-plane]
       operationId: searchEngine
-      summary: 单引擎 SERP 搜索(免鉴权,公网部署请加网关鉴权)
+      summary: 单引擎 SERP 搜索(鉴权随部署方 security.data_plane_auth;不计费)
       description: |
         走浏览器渲染或 raw HTTP 管道的单引擎搜索。`engine` 取值:`baidu`、`sogou`、`so360`(亦可用 `360`)、`bing`。
 
         响应 `meta.engines_cooldown` 携带冷却中的引擎;该引擎请求快速失败:
         `503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}` + `Retry-After`。
+        鉴权随部署方 security.data_plane_auth:模板默认 true 需 X-API-Key;置 false 时免鉴权。不计费。
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: engine
           in: path
@@ -260,7 +263,7 @@ paths:
       operationId: checkIndexSingle
       summary: 单 URL 收录判定(X-API-Key)
       description: |
-        查询单个 URL 是否被收录。计费:`1 URL × engines 数` units。
+        查询单个 URL 是否被收录。计费:`1 URL × 引擎数` units。
         引擎级失败(403/429/captcha/冷却/熔断)记入该单元的 `error` 字段,HTTP 状态保持 200。
       security:
         - ApiKeyAuth: []
@@ -446,7 +449,7 @@ paths:
 
         **鉴权**:`X-API-Key`(计费)或 `Authorization: Bearer <JWT>`(管理员,不计费);未授权 401 平台信封。
 
-        **计费**:`web_search`=1 unit;`check_indexed`=urls×engines units;`get_quota`/`list_engines` 不计费。
+        **计费**:`web_search` 每次调用计 1 unit;`check_indexed` = urls×engines units;`get_quota`/`list_engines` 不计费。
 
         **JSON-RPC 错误码**:`-32700` 解析错误(HTTP 400)、`-32600` 请求无效(不支持批量)、`-32601` 方法不存在、
         `-32602` 入参校验失败、`-32001` 会话不存在(HTTP 404)。
@@ -589,7 +592,7 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: 平台签发的 API 密钥(sk-w2a-…),在管理面板「API密钥」页创建;计费按 units。
+      description: 平台签发的 API 密钥(sk-w2a-…),在管理面板「API密钥」页创建;计费按 unit(URL 数 × 引擎数)。
     BearerAuth:
       type: http
       scheme: bearer
@@ -749,7 +752,7 @@ components:
           properties:
             request_id: { type: string }
             took_ms: { type: integer }
-            units: { type: integer, example: 8 }
+            units: { type: integer, example: 8, description: 本次计费 unit 数(URL 数 × 引擎数) }
             engines_cooldown:
               type: array
               description: 契约 A — 冷却中的引擎
