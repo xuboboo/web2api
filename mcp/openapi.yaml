@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Web2API — 网站收录查询开放平台
-  version: "1.0" # B-07 版本指纹收敛: 公开规范不携带真实应用版本号,真实版本仅在鉴权后的管理端点暴露(见 docs/openapi-admin.yaml)
+  version: "1.0" # 公开规范固定为 1.0,不携带真实应用版本号
   license:
     name: MIT
     url: https://github.com/xuboboo/web2api/blob/main/LICENSE
@@ -12,7 +12,7 @@ info:
     三个平面:
     * **数据平面** `/v1/*` — 国内四引擎(百度/搜狗/360/必应)收录判定与搜索,鉴权/配额/限流/冷却内建。
     * **Agent 平面** `/mcp` + 本 spec + `llms.txt` — AI Agent 一等公民(MCP streamable HTTP,JSON-RPC 2.0)。
-    * **控制平面** `/api/*` — 管理面板后台(风控与用量治理台),仅限管理员;公开规范不枚举其端点形状,完整定义见仓库 docs/openapi-admin.yaml(内部文档,不随站发布)。
+    * **控制平面** `/api/*` — 管理面板后台(风控与用量治理台),仅限管理员;公开规范不枚举其端点。
 
     ## 三套错误信封
     1. **平台信封**(`/v1/*`、`/mcp` 鉴权与配额):`{"error":"unauthorized|quota_exceeded|..."}`,429/503 带 `Retry-After` 响应头。
@@ -26,7 +26,7 @@ info:
     `/v1` 与 `/{engine}/search` 响应 `meta.engines_cooldown:[{engine,until,reason}]` 携带冷却中的引擎。
 
     ## 限流
-    所有 429/503 响应携带 `Retry-After` 头(秒)。管理 API 默认全局限速 60 req/min(`security.admin_rate_per_minute`),
+    所有 429/503 响应携带 `Retry-After` 头(秒)。管理 API 默认全局限速 60 req/min,
     超限返回 `429 {"error":"too_many_requests"}` + `Retry-After`。
 servers:
   - url: https://your-host/web-tool
@@ -37,7 +37,7 @@ tags:
   - name: agent-plane
     description: Agent 平面 — MCP 与静态资源(/mcp、openapi.yaml、llms.txt)
   - name: admin
-    description: 控制平面 — 管理面板后台(/api/*,仅限管理员;公开规范不枚举,完整定义见仓库 docs/openapi-admin.yaml)
+    description: 控制平面 — 管理面板后台(/api/*,仅限管理员;公开规范不枚举其端点)
   - name: ops
     description: 运维 — 健康/就绪/运行统计
 

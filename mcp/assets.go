@@ -33,9 +33,9 @@ func wantsHTML(c *fiber.Ctx) bool {
 	return strings.Contains(c.Get(fiber.HeaderAccept), "text/html")
 }
 
-// assetView wraps the embedded file in a zero-dependency dark-window page
-// (site 暗窗语言) so a browser click opens a readable web page instead of
-// triggering a download (三期用户反馈:文档要网页浏览,不要下载)。
+// assetView wraps the embedded file in a zero-dependency dark-theme document
+// page (官网 V3 暗夜语言) so a browser click opens a polished, readable web
+// page instead of a download (三期用户反馈:文档要网页浏览,不要下载)。
 // 不提供任何前端可见的「下载」入口(用户要求:防止被刷);程序化导入
 // 直接 GET 本路径即可拿到原始字节(内容协商按 Accept 区分)。
 func assetView(title, subtitle string, body []byte) string {
@@ -44,21 +44,40 @@ func assetView(title, subtitle string, body []byte) string {
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>` + html.EscapeString(title) + ` · Web2API 网站收录查询开放平台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Cpath d='M18 20 L30 32 L18 44' fill='none' stroke='%23fff' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M34 44 L46 44' stroke='%233ECF8E' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box}
-body{margin:0;background:#0A0A0A;color:rgba(255,255,255,.5);font:14px/1.6 "Geist Mono","JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.wrap{max-width:1056px;margin:0 auto;padding:48px 24px 64px}
-.head{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between;margin-bottom:8px}
-h1{margin:0;font-size:22px;color:#fff;font-weight:600;letter-spacing:.2px}
-.sub{margin:0 0 20px;color:rgba(255,255,255,.5)}
-.bar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
-.btn{display:inline-block;padding:8px 16px;border-radius:8px;border:.8px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:rgba(255,255,255,.72);font:500 13px/1.4 inherit;cursor:pointer;text-decoration:none;transition:background .15s ease,color .15s ease,border-color .15s ease}
-.btn:hover{background:#3ECF8E;border-color:#3ECF8E;color:#0A0A0A}
-pre{margin:0;background:#161615;border:.8px solid rgba(255,255,255,.06);border-radius:16px;padding:28px 24px;color:rgba(255,255,255,.72);font-size:13px;line-height:1.7;overflow:auto;max-height:72vh;white-space:pre;tab-size:2}
-.foot{margin-top:16px;color:rgba(255,255,255,.35);font-size:12px}
-.foot a{color:#3ECF8E;text-decoration:none}
-@media(max-width:640px){.wrap{padding:24px 14px 40px}pre{padding:16px 12px}}
+body{margin:0;background:#0B0B0D;color:#A1A1A6;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#3ECF8E;text-decoration:none}
+a:hover{text-decoration:underline}
+.topbar{height:60px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(11,11,13,.78);backdrop-filter:blur(16px);position:sticky;top:0;z-index:2}
+.topbar-in{max-width:1100px;height:100%;margin:0 auto;padding:0 28px;display:flex;align-items:center;gap:12px}
+.mark{width:28px;height:28px;flex:none}
+.brand{color:#F5F5F7;font-weight:600;font-size:15px;letter-spacing:.2px;white-space:nowrap}
+.brand span{color:#73737A;font-weight:400;margin-left:9px;font-size:13px}
+.topnav{margin-left:auto;display:flex;gap:6px}
+.topnav a{color:#A1A1A6;font-size:13px;padding:7px 12px;border-radius:8px}
+.topnav a:hover{color:#F5F5F7;background:rgba(255,255,255,.06);text-decoration:none}
+.wrap{max-width:1100px;margin:0 auto;padding:44px 28px 72px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;color:#3ECF8E;font:600 11.5px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:1.4px;text-transform:uppercase;margin-bottom:18px}
+.eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:#3ECF8E;box-shadow:0 0 0 4px rgba(62,207,142,.16)}
+h1{margin:0 0 12px;font-size:30px;line-height:1.25;color:#F5F5F7;font-weight:650;letter-spacing:-.4px}
+.sub{margin:0 0 26px;color:#A1A1A6;font-size:14.5px;max-width:760px}
+.card{border:1px solid rgba(255,255,255,.09);border-radius:16px;background:#17171A;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.22)}
+.card-head{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid rgba(255,255,255,.07);background:#1E1E22}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;display:block}
+.dots i:nth-child(1){background:#FF5F57}.dots i:nth-child(2){background:#FEBC2E}.dots i:nth-child(3){background:#28C840}
+.fname{font:500 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#73737A}
+.btn{margin-left:auto;padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#F5F5F7;font:500 12.5px/1.4 inherit;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.btn:hover{background:#3ECF8E;border-color:#3ECF8E;color:#062B1C}
+.btn:active{transform:scale(.97)}
+pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/1.75 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:auto;max-height:70vh;white-space:pre;tab-size:2}
+.foot{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:20px;color:#73737A;font-size:12px}
+.hint{margin-top:14px;padding:12px 16px;border-radius:10px;background:rgba(62,207,142,.07);border:1px solid rgba(62,207,142,.16);color:#A1A1A6;font-size:12.5px}
+.hint code{font:500 12px/1 ui-monospace,monospace;color:#3ECF8E}
+@media(max-width:640px){.topbar-in{padding:0 16px}.brand span,.topnav{display:none}.wrap{padding:28px 14px 48px}h1{font-size:24px}pre{padding:16px 14px;font-size:11.5px}.fname{font-size:11px}}
 /* 细滚动条(与官网 V3 同款):本页不加载 assets/style.css,此处内联同规格 */
 @supports (-moz-appearance: checkbox){html{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}pre{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}}
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -66,12 +85,23 @@ pre{margin:0;background:#161615;border:.8px solid rgba(255,255,255,.06);border-r
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:999px}
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.36)}
 ::-webkit-scrollbar-corner{background:transparent}
-</style></head><body><div class="wrap">
-<div class="head"><h1>` + html.EscapeString(title) + `</h1><div class="bar"><button class="btn" id="copyBtn" type="button">复制全文</button></div></div>
-<p class="sub">` + html.EscapeString(subtitle) + ` · 程序化导入(Dify/Coze/curl)请直接 GET 本地址,自动返回原始内容。</p>
+</style></head><body>
+<header class="topbar"><div class="topbar-in">
+<svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#177E5B"/><path d="M18 20 L30 32 L18 44" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M34 44 L46 44" stroke="#3ECF8E" stroke-width="6" stroke-linecap="round"/></svg>
+<div class="brand">Web2API<span>网站收录查询开放平台</span></div>
+<nav class="topnav"><a href="./">官网</a><a href="./console/">控制台</a></nav>
+</div></header>
+<main class="wrap">
+<span class="eyebrow">OPEN API SPECIFICATION</span>
+<h1>` + html.EscapeString(title) + `</h1>
+<p class="sub">` + html.EscapeString(subtitle) + `</p>
+<section class="card">
+<div class="card-head"><span class="dots"><i></i><i></i><i></i></span><span class="fname">` + html.EscapeString(title) + `</span><button class="btn" id="copyBtn" type="button">复制全文</button></div>
 <pre id="content">` + html.EscapeString(string(body)) + `</pre>
-<p class="foot">Web2API 网站收录查询开放平台 · <a href="./">返回官网</a> · <a href="./console/">进入控制台</a></p>
-</div>
+</section>
+<p class="hint">程序化导入(Dify / Coze / curl / Agent)直接 <code>GET</code> 本地址即可获得原始规范字节;浏览器访问自动呈现此网页视图。</p>
+<div class="foot"><span>© Web2API 网站收录查询开放平台</span><a href="./">返回官网</a><a href="./console/">进入控制台</a></div>
+</main>
 <script>
 (function(){
   var btn=document.getElementById('copyBtn');
