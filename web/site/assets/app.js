@@ -388,17 +388,21 @@
     }
 
     function initOrigin() {
-      /* 自适应部署地址:示例代码里的 127.0.0.1:7000 重写为当前访问源,
-       * 上线后所有示例随部署域名/协议自动变化,无需改静态文案。 */
+      /* 自适应部署地址:源码中的 {{ORIGIN}} 占位符在运行时替换为当前访问源。
+       * 源码不含任何写死的 IP/端口,避免复制源码/禁用 JS/SEO 抓取时暴露内网地址;
+       * 同时兼容旧文案里遗留的 http://127.0.0.1:7000(平滑过渡,后续会被占位符取代)。 */
       var origin = location.origin;
       if (origin.indexOf('http') !== 0) return;
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
       var hits = [];
       while (walker.nextNode()) {
-        if (walker.currentNode.nodeValue.indexOf('127.0.0.1:7000') !== -1) hits.push(walker.currentNode);
+        var v = walker.currentNode.nodeValue;
+        if (v.indexOf('{{ORIGIN}}') !== -1 || v.indexOf('127.0.0.1:7000') !== -1) hits.push(walker.currentNode);
       }
       for (var i = 0; i < hits.length; i++) {
-        hits[i].nodeValue = hits[i].nodeValue.split('http://127.0.0.1:7000').join(origin);
+        hits[i].nodeValue = hits[i].nodeValue
+          .split('{{ORIGIN}}').join(origin)
+          .split('http://127.0.0.1:7000').join(origin);
       }
     }
   } catch (err) {

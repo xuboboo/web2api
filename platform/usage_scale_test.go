@@ -81,7 +81,15 @@ func newBulkJSONStore(t *testing.T, path string, n int, baseTime time.Time) *jso
 // fixture. It also prints the measured latencies so regressions are visible.
 func TestUsageScaleQueryPushdown(t *testing.T) {
 	dir := t.TempDir()
-	s := newBulkJSONStore(t, filepath.Join(dir, "web2api.json"), 10000, time.Now().Add(-time.Hour))
+	// Anchor the fixture safely inside the 14-day window that UsageTimeseries
+	// buckets by local date. A baseTime of "now - 1h" spans ~2.8h across 10k
+	// one-second records; when the suite runs late in the day, the tail lands
+	// on tomorrow's local date, which is outside the [today-13, today] buckets
+	// and gets dropped (flake: 8363/10000). Start 7 days back at local midnight
+	// so every record is comfortably in history regardless of run time.
+	now := time.Now()
+	base := time.Date(now.Year(), now.Month(), now.Day()-7, 0, 0, 0, 0, now.Location())
+	s := newBulkJSONStore(t, filepath.Join(dir, "web2api.json"), 10000, base)
 	defer s.Close()
 
 	const total = 10000

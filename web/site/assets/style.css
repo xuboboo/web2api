@@ -1095,6 +1095,20 @@ html.dark .icon-btn .icon-moon { display: block; }
 }
 .mini-term .copy-btn { margin-left: 0; flex-shrink: 0; }
 
+/* 通用 MCP 配置片段:长 JSON 必须可断行/可滚动,否则移动端撑破卡片 */
+.dk-json {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--ink-border-soft);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .22);
+  color: var(--ink-dim);
+  font: 500 11.5px/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .dk-links { margin-top: 20px; }
 .dk-links a { color: rgba(255, 255, 255, .62); font-size: 12.5px; text-decoration: none; border-bottom: 1px solid rgba(255, 255, 255, .28); padding-bottom: 2px; transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); }

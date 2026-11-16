@@ -266,7 +266,7 @@ func TestToolsListFourTools(t *testing.T) {
 		got[name] = true
 		desc, _ := tool["description"].(string)
 		if desc == "" {
-			t.Fatalf("tool %s must carry a description (Coze/Dify LLM digest)", name)
+			t.Fatalf("tool %s must carry a description (LLM client digest)", name)
 		}
 		schema, ok := tool["inputSchema"].(map[string]any)
 		if !ok || schema["type"] != "object" {
@@ -826,7 +826,7 @@ func TestStaticAssets(t *testing.T) {
 }
 
 // TestOpenAPISpecContractInvariants validates the spec structurally: unique
-// operationIds (Coze 硬性要求), a summary/description on every operation, and
+// operationIds (OpenAPI 工具导入要求), a summary/description on every operation, and
 // the A-08 invariant that the public spec documents zero /api/* admin paths
 // (the full admin plane lives in docs/openapi-admin.yaml, not embedded).
 func TestOpenAPISpecContractInvariants(t *testing.T) {
@@ -862,7 +862,7 @@ func TestOpenAPISpecContractInvariants(t *testing.T) {
 			}
 			seen[op.OperationID] = method + " " + path
 			if op.Summary == "" || op.Description == "" {
-				t.Fatalf("operation %s (%s %s) needs summary and description (Coze 导入要求)", op.OperationID, method, path)
+				t.Fatalf("operation %s (%s %s) needs summary and description (OpenAPI 导入要求)", op.OperationID, method, path)
 			}
 		}
 	}

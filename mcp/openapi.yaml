@@ -30,7 +30,7 @@ info:
     超限返回 `429 {"error":"too_many_requests"}` + `Retry-After`。
 servers:
   - url: https://your-host/web-tool
-    description: 自托管部署根(替换为你的域名;Dify/Coze 导入要求域名格式,禁用 IP)
+    description: 自托管部署根(替换为你的域名;Dify 等平台导入要求域名格式,禁用 IP)
 tags:
   - name: data-plane
     description: 数据平面 — 收录判定与搜索(/v1/*,/{engine}/search)
@@ -555,7 +555,7 @@ paths:
       tags: [agent-plane]
       operationId: getOpenApiSpec
       summary: 本 OpenAPI 3.1 规范(go:embed 静态资源,公开)
-      description: 供 Dify/Coze/n8n/LangChain OpenAPI toolkit 导入(Content-Type 为 application/yaml)。
+      description: 供 Dify/n8n/LangChain 等 OpenAPI toolkit 导入(Content-Type 为 application/yaml)。
       responses:
         "200":
           description: YAML 规范文件

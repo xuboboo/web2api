@@ -6,7 +6,7 @@
 
 - 鉴权方式:请求头 `X-API-Key: <你的密钥>`(计费)或 `Authorization: Bearer <管理员JWT>`(管理员,不计费)。密钥在管理控制台「API密钥」页创建。
 - 所有路径都在前缀 `/web-tool` 之下。本文中的链接为相对路径,请拼接你的部署域名,例如 `https://your-host/web-tool/mcp`。
-- OpenAPI 3.1 规范(供 Dify/Coze/n8n/LangChain OpenAPI toolkit 导入):[openapi.yaml](/web-tool/openapi.yaml)
+- OpenAPI 3.1 规范(供 Dify/n8n/LangChain 等 OpenAPI toolkit 导入):[openapi.yaml](/web-tool/openapi.yaml)
 - 管理控制台:`/web-tool/console/`(登录 / 总览 / API密钥 / 使用日志 / 引擎状态 / 在线调试 / Agent 集成 / 系统设置)
 
 ## MCP 接入(Agent 一等公民)

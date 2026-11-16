@@ -88,7 +88,7 @@ cors:
   enabled: true
   allow_origins: "*"
   allow_methods: "GET, POST, OPTIONS"
-  allow_headers: "Origin, Content-Type, Accept, Authorization, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant, X-Use-Profile"
+  allow_headers: "Origin, Content-Type, Accept, Authorization, X-API-Key, Mcp-Session-Id, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant, X-Use-Profile"
   max_age: 86400
 
 # ---------------------------------------------------------------------------

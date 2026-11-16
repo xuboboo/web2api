@@ -35,7 +35,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="assets/style.css?v=20261116p">
+<link rel="stylesheet" href="assets/style.css?v=20261116r">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
 <body>
@@ -224,7 +224,7 @@
         <div class="f-card reveal" style="--reveal-delay:480ms">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><polyline points="7 9 10 12 7 15"/><line x1="12" y1="15" x2="16" y2="15"/></svg></span><h3>Agent 一等公民</h3></div>
-            <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口,内置 llms.txt 能力清单;Claude / Dify / Coze / n8n / LangChain 直接导入。</p>
+            <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口,内置 llms.txt 能力清单;Claude、Cursor、VS Code、Gemini、Codex 等主流 Agent,Dify / n8n / LangChain 直接导入。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:720ms">
@@ -294,7 +294,7 @@
 
           <div class="code-panel active" data-panel="curl" role="tabpanel" id="panel-curl" aria-labelledby="tab-curl">
             <div class="block-label">请求 · REQUEST</div>
-            <pre class="code-block"><span class="tk-cmd">curl</span> <span class="tk-flag">-X POST</span> <span class="tk-str">http://127.0.0.1:7000/web-tool/v1/index/check</span> <span class="tk-punc">\</span>
+            <pre class="code-block"><span class="tk-cmd">curl</span> <span class="tk-flag">-X POST</span> <span class="tk-str">{{ORIGIN}}/web-tool/v1/index/check</span> <span class="tk-punc">\</span>
   <span class="tk-flag">-H</span> <span class="tk-str">"X-API-Key: sk-w2a-…"</span> <span class="tk-flag">-H</span> <span class="tk-str">"Content-Type: application/json"</span> <span class="tk-punc">\</span>
   <span class="tk-flag">-d</span> <span class="tk-str">'{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'</span></pre>
             <div class="code-gap"></div>
@@ -335,7 +335,7 @@
             <pre class="code-block"><span class="tk-cmd">import</span> requests
 
 res = requests.post(
-    <span class="tk-str">"http://127.0.0.1:7000/web-tool/v1/index/check"</span>,
+    <span class="tk-str">"{{ORIGIN}}/web-tool/v1/index/check"</span>,
     headers={<span class="tk-str">"X-API-Key"</span>: <span class="tk-str">"sk-w2a-…"</span>},
     json={<span class="tk-str">"urls"</span>: [<span class="tk-str">"https://example.com/post-1"</span>],
           <span class="tk-str">"engines"</span>: [<span class="tk-str">"baidu"</span>, <span class="tk-str">"bing"</span>]},
@@ -351,7 +351,7 @@ unit = data[<span class="tk-str">"results"</span>][<span class="tk-num">0</span>
 
           <div class="code-panel" data-panel="node" role="tabpanel" id="panel-node" aria-labelledby="tab-node" hidden>
             <div class="block-label">请求 · REQUEST</div>
-            <pre class="code-block"><span class="tk-cmd">const</span> res = <span class="tk-cmd">await</span> fetch(<span class="tk-str">"http://127.0.0.1:7000/web-tool/v1/index/check"</span>, {
+            <pre class="code-block"><span class="tk-cmd">const</span> res = <span class="tk-cmd">await</span> fetch(<span class="tk-str">"{{ORIGIN}}/web-tool/v1/index/check"</span>, {
   method: <span class="tk-str">"POST"</span>,
   headers: { <span class="tk-str">"X-API-Key"</span>: <span class="tk-str">"sk-w2a-…"</span>, <span class="tk-str">"Content-Type"</span>: <span class="tk-str">"application/json"</span> },
   body: JSON.stringify({ urls: [<span class="tk-str">"https://example.com/post-1"</span>], engines: [<span class="tk-str">"baidu"</span>, <span class="tk-str">"bing"</span>] }),
@@ -366,20 +366,23 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
 
           <div class="code-panel" data-panel="mcp" role="tabpanel" id="panel-mcp" aria-labelledby="tab-mcp" hidden>
             <div class="block-label">接入 · SETUP</div>
-            <pre class="code-block"><span class="tk-com"># Claude Code / CLI:一条命令注册</span>
-<span class="tk-cmd">claude</span> mcp add web2api <span class="tk-str">http://127.0.0.1:7000/web-tool/mcp</span>
+            <pre class="code-block"><span class="tk-com"># Claude Code / CLI:注册远程 MCP(必须带 --transport http 与鉴权 header)</span>
+<span class="tk-cmd">claude</span> mcp add --transport http web2api <span class="tk-str">{{ORIGIN}}/web-tool/mcp</span> \
+  --header <span class="tk-str">"X-API-Key: sk-w2a-你的密钥"</span>
 
-<span class="tk-com"># Claude Desktop:claude_desktop_config.json</span>
+<span class="tk-com"># Claude Desktop / Cursor / VS Code 等:通用 JSON 配置</span>
 {
   <span class="tk-key">"mcpServers"</span>: {
     <span class="tk-key">"web2api"</span>: {
-      <span class="tk-key">"url"</span>: <span class="tk-str">"http://127.0.0.1:7000/web-tool/mcp"</span>,
+      <span class="tk-key">"type"</span>: <span class="tk-str">"http"</span>,
+      <span class="tk-key">"url"</span>: <span class="tk-str">"{{ORIGIN}}/web-tool/mcp"</span>,
       <span class="tk-key">"headers"</span>: { <span class="tk-key">"X-API-Key"</span>: <span class="tk-str">"sk-w2a-…"</span> }
     }
   }
 }
 
-<span class="tk-com"># 内置 4 个工具:web_search / check_indexed / get_quota / list_engines</span></pre>
+<span class="tk-com"># 内置 4 个工具:web_search / check_indexed / get_quota / list_engines</span>
+<span class="tk-com"># 其余主流客户端(Cursor/Windsurf/Cline/Gemini CLI/Codex)均支持 type:http 远程 MCP</span></pre>
           </div>
 
           <div class="cw-foot">
@@ -419,7 +422,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             <p>AI Agent 一等公民:MCP Server 与 OpenAPI 规范双入口,自动可发现。</p>
             <div class="route-list">
               <div class="route"><code>POST /web-tool/mcp</code><span>MCP streamable HTTP,内置 4 个工具</span></div>
-              <div class="route"><code>GET /web-tool/openapi.yaml</code><span>OpenAPI 3.1 全端点规范</span></div>
+              <div class="route"><code>GET /web-tool/openapi.yaml</code><span>OpenAPI 3.1 数据面与 Agent 面规范</span></div>
               <div class="route"><code>GET /web-tool/llms.txt</code><span>Agent 能力清单</span></div>
             </div>
             <div class="plane-auth">鉴权:<code>X-API-Key</code> 或 JWT</div>
@@ -445,20 +448,22 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="container">
       <div class="sec-head center reveal">
         <span class="eyebrow">Agent 接入</span>
-        <h2>为 Agent 而生的三个入口</h2>
+        <h2>为 Agent 而生的两条入口</h2>
       </div>
       <div class="card-grid cols-2">
         <div class="dark-card reveal">
           <span class="dk-eyebrow">MCP · STREAMABLE HTTP</span>
-          <h3>Claude 直连 MCP Server</h3>
-          <p class="dk-desc">Claude / Claude Desktop 一条命令接入。协议为 MCP streamable HTTP、JSON-RPC 2.0,内置 <strong>web_search、check_indexed、get_quota、list_engines</strong> 四个工具,配额与冷却语义与 API 完全一致。</p>
+          <h3>一个 MCP Server,主流 Agent 通用</h3>
+          <p class="dk-desc">标准 MCP streamable HTTP(JSON-RPC 2.0),内置 <strong>web_search、check_indexed、get_quota、list_engines</strong> 四个工具。Claude Code / Claude Desktop、Cursor、VS Code Copilot、Windsurf、Cline、Gemini CLI、OpenAI Codex 等支持远程 MCP 的客户端均可接入。<strong>必须携带 API Key</strong>,无鉴权请求一律 401。</p>
           <div class="mini-term">
-            <code id="mcpCmd">claude mcp add web2api http://127.0.0.1:7000/web-tool/mcp</code>
+            <code id="mcpCmd">claude mcp add --transport http web2api {{ORIGIN}}/web-tool/mcp --header "X-API-Key: sk-w2a-你的密钥"</code>
             <button class="copy-btn" type="button" data-copy-target="#mcpCmd" aria-label="复制 MCP 接入命令">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
               <span class="copy-label">复制</span>
             </button>
           </div>
+          <p class="dk-desc" style="margin-top:12px;font-size:12.5px">其它客户端用等价配置(把 <code class="inline-code">{{ORIGIN}}</code> 换成你的服务地址):</p>
+          <pre class="dk-json">{"mcpServers":{"web2api":{"type":"http","url":"{{ORIGIN}}/web-tool/mcp","headers":{"X-API-Key":"sk-w2a-…"}}}}</pre>
           <div class="chip-row" aria-label="MCP 内置工具">
             <span class="chip">web_search</span>
             <span class="chip">check_indexed</span>
@@ -469,12 +474,12 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
         <div class="dark-card reveal" style="--reveal-delay:240ms">
           <span class="dk-eyebrow">OPENAPI · LLMS.TXT</span>
-          <h3>四大平台,导入即用</h3>
+          <h3>标准 OpenAPI,平台/框架直接导入</h3>
           <ul class="platform-list">
-            <li><b>Dify</b><span>「自定义工具 → 导入 OpenAPI」</span></li>
-            <li><b>Coze</b><span>「资源库 → 插件 → 导入」</span></li>
-            <li><b>n8n</b><span>「HTTP Request 节点 → 导入 cURL / OpenAPI」(选 Header Auth)</span></li>
-            <li><b>LangChain</b><span>「OpenAPI toolkit」</span></li>
+            <li><b>Dify</b><span>「自定义工具 → 导入 OpenAPI」,鉴权选 API Key / Header <code class="inline-code">X-API-Key</code></span></li>
+            <li><b>n8n</b><span>「HTTP Request 节点 → Import cURL」粘贴请求,选 Header Auth 填 X-API-Key</span></li>
+            <li><b>LangChain</b><span>「OpenAPI toolkit」加载 spec,或直接用 MCP 工具</span></li>
+            <li><b>ChatGPT / 自建 Agent</b><span>按 <code class="inline-code">llms.txt</code> 能力清单调用 REST 或挂载 MCP</span></li>
           </ul>
           <div class="pill-row">
             <a class="pill-white" href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档
@@ -484,7 +489,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
               <span class="eco-mono">llms.txt</span>
             </a>
           </div>
-          <p class="dk-auth">鉴权统一配 Header 型 API Key,Header 名 <code>X-API-Key</code>;spec 地址 <a class="dk-link" href="/web-tool/openapi.yaml"><code>/web-tool/openapi.yaml</code></a>(浏览器打开即网页视图,程序化导入自动取得原始 YAML)。</p>
+          <p class="dk-auth">鉴权:Header 型 API Key <code>X-API-Key</code>(计费),或 <code>Authorization: Bearer &lt;管理员JWT&gt;</code>(不计费,仅限管理员)。无鉴权请求一律 401,不暴露裸端点。spec 地址 <a class="dk-link" href="/web-tool/openapi.yaml"><code>/web-tool/openapi.yaml</code></a>(浏览器打开即网页视图,程序化导入自动取得原始 YAML)。请先在控制台创建密钥。</p>
         </div>
       </div>
     </div>
@@ -550,7 +555,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
               <span class="copy-label">复制</span>
             </button>
           </div>
-          <pre id="cmdCheck">curl -X POST http://127.0.0.1:7000/web-tool/v1/index/check \
+          <pre id="cmdCheck">curl -X POST {{ORIGIN}}/web-tool/v1/index/check \
   -H "X-API-Key: sk-w2a-…" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'</pre>
         </div>
@@ -631,6 +636,6 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   </div>
 </footer>
 
-<script src="assets/app.js?v=20261116p" defer></script>
+<script src="assets/app.js?v=20261116r" defer></script>
 </body>
 </html>

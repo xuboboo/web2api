@@ -34,12 +34,18 @@ type CORSConfig struct {
 const browserProfileIDHeader = "X-Browser-Profile-Id"
 const useProfileHeader = "X-Use-Profile"
 
-const exposedResponseHeaders = "X-Request-ID, X-Cache, X-Fallback-Engine, X-Proxy-Mode, X-Proxy-Tag, X-Proxy-Used, X-Proxy-Attempts, X-Network-Bytes, " + browserProfileIDHeader
+// Mcp-Session-Id is exposed so browser-based MCP clients can read the session
+// id from the initialize response (streamable HTTP clients need it for
+// follow-up requests / session termination).
+const exposedResponseHeaders = "X-Request-ID, X-Cache, X-Fallback-Engine, X-Proxy-Mode, X-Proxy-Tag, X-Proxy-Used, X-Proxy-Attempts, X-Network-Bytes, Mcp-Session-Id, " + browserProfileIDHeader
 
 // DefaultCORSAllowHeaders is the single source of truth for the CORS
 // allow-headers default, shared by DefaultCORSConfig and the viper defaults
 // in cmd/root.go so the two cannot drift.
-const DefaultCORSAllowHeaders = "Origin, Content-Type, Accept, Authorization, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant, X-Use-Profile"
+// X-API-Key is the data-plane credential; Mcp-Session-Id is returned by MCP
+// initialize. Both are needed for browser-based SDKs/clients to call the API
+// and MCP endpoints cross-origin (otherwise the CORS preflight rejects them).
+const DefaultCORSAllowHeaders = "Origin, Content-Type, Accept, Authorization, X-API-Key, Mcp-Session-Id, X-Use-Proxy, X-Proxy-URL, X-Proxy-Country, X-Proxy-Class, X-Proxy-Provider, X-Proxy-Session-ID, X-Request-ID, X-Tenant, X-Use-Profile"
 
 func DefaultCORSConfig() CORSConfig {
 	return CORSConfig{

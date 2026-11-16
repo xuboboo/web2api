@@ -233,7 +233,7 @@ func (s *sessionStore) pruneLocked(now time.Time) {
 //
 // auth wraps POST /mcp only: it performs credential validation, quota
 // precheck and billing (contract: 全部由 AuthAny 包装层负责). The two static
-// asset routes stay public so Dify/Coze/n8n can import the spec by URL
+// asset routes stay public so Dify/n8n/LangChain can import the spec by URL
 // without credentials. auth may be nil (bare test/loopback deployments).
 func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 	srv := &server{deps: deps, sessions: *newSessionStore(sessionTTL)}
@@ -251,7 +251,7 @@ func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 		})
 	})
 
-	app.Get("/openapi.yaml", serveAsset(openapiSpec, "application/yaml; charset=utf-8", "OpenAPI 3.1 规范", "Web2API 数据面与 Agent 面契约,Dify / Coze / n8n 可直接导入;管理面 /api/* 不在公开规范中"))
+	app.Get("/openapi.yaml", serveAsset(openapiSpec, "application/yaml; charset=utf-8", "OpenAPI 3.1 规范", "Web2API 数据面与 Agent 面契约,Dify / n8n / LangChain 可直接导入;管理面 /api/* 不在公开规范中"))
 	app.Get("/llms.txt", serveAsset(llmsText, "text/plain; charset=utf-8", "llms.txt · Agent 平台简介", "面向 AI Agent 的平台说明与端点清单"))
 	return nil
 }

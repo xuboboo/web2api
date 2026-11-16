@@ -24,7 +24,7 @@ var (
 
 // wantsHTML reports whether the caller is a human in a browser (Accept
 // advertises text/html) and the raw variant was not explicitly requested
-// via ?raw=1. Programmatic callers (Dify/Coze/curl/agents) never advertise
+// via ?raw=1. Programmatic callers (Dify/n8n/curl/agents) never advertise
 // text/html, so they keep receiving the raw bytes.
 func wantsHTML(c *fiber.Ctx) bool {
 	if c.Query("raw") == "1" {
@@ -99,7 +99,7 @@ pre{margin:0;background:transparent;padding:24px 26px;color:#D7D7DB;font:12.5px/
 <div class="card-head"><span class="dots"><i></i><i></i><i></i></span><span class="fname">` + html.EscapeString(title) + `</span><button class="btn" id="copyBtn" type="button">复制全文</button></div>
 <pre id="content">` + html.EscapeString(string(body)) + `</pre>
 </section>
-<p class="hint">程序化导入(Dify / Coze / curl / Agent)直接 <code>GET</code> 本地址即可获得原始规范字节;浏览器访问自动呈现此网页视图。</p>
+<p class="hint">程序化导入(Dify / n8n / curl / Agent)直接 <code>GET</code> 本地址即可获得原始规范字节;浏览器访问自动呈现此网页视图。</p>
 <div class="foot"><span>© Web2API 网站收录查询开放平台</span><a href="./">返回官网</a><a href="./console/">进入控制台</a></div>
 </main>
 <script>
