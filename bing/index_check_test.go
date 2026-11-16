@@ -20,23 +20,31 @@ func mustFailFetch(t *testing.T) core.IndexCheckFetcher {
 	}
 }
 
-// TestCheckIndexedQueryUsesBareURL locks in bing's index query contract: the
-// target URL is searched verbatim (no "url:" operator). The url: operator was
-// retired in 2026-11 after live probes showed cn.bing.com returning unrelated
-// pages for it (4/4 targets missed), while the bare URL kept root pages at #1.
-func TestCheckIndexedQueryUsesBareURL(t *testing.T) {
+// TestBingIndexQueryStripsScheme locks in bing's SERP query form: the scheme
+// is dropped because cn.bing.com mis-parses "https://" as a keyword (10-site
+// probe: full URL hit 4/10 vs scheme-less 7/10). No "url:" operator either.
+func TestBingIndexQueryStripsScheme(t *testing.T) {
 	t.Parallel()
 
-	target := "https://example.com/post/1"
-	q := core.IndexCheckQuery(target, core.Query{})
-	if q.Text != target {
-		t.Fatalf("query text=%q, want bare target %q", q.Text, target)
+	cases := []struct{ in, want string }{
+		{"https://example.com/post/1", "example.com/post/1"},
+		{"http://go.dev", "go.dev"},
+		{"example.com", "example.com"},       // already scheme-less
+		{"https://www.python.org/", "www.python.org/"},
 	}
-	if strings.HasPrefix(q.Text, "url:") {
-		t.Fatalf("bing index query must not use the retired url: operator, got %q", q.Text)
+	for _, tc := range cases {
+		if got := bingIndexQuery(tc.in); got != tc.want {
+			t.Errorf("bingIndexQuery(%q)=%q, want %q", tc.in, got, tc.want)
+		}
+		if strings.HasPrefix(bingIndexQuery(tc.in), "url:") {
+			t.Errorf("bing query must not use retired url: operator: %q", tc.in)
+		}
 	}
-	if q.Limit != core.IndexCheckLimit || q.Start != 0 || q.Features {
-		t.Fatalf("index SERP query must be plain with limit %d, got %+v", core.IndexCheckLimit, q)
+
+	// The SERP query itself stays plain (limit 10, no filters/features).
+	q := core.IndexCheckQuery(bingIndexQuery("https://example.com/post/1"), core.Query{})
+	if q.Text != "example.com/post/1" || q.Limit != core.IndexCheckLimit || q.Start != 0 || q.Features {
+		t.Fatalf("index SERP query must be scheme-less plain with limit %d, got %+v", core.IndexCheckLimit, q)
 	}
 }
 
