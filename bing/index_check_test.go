@@ -20,18 +20,20 @@ func mustFailFetch(t *testing.T) core.IndexCheckFetcher {
 	}
 }
 
-// TestCheckIndexedQueryUsesURLOperator locks in the contract's query rule for
-// bing: the query phrase is "url:<url>" with a depth of 10.
-func TestCheckIndexedQueryUsesURLOperator(t *testing.T) {
+// TestCheckIndexedQueryUsesBareURL locks in bing's index query contract: the
+// target URL is searched verbatim (no "url:" operator). The url: operator was
+// retired in 2026-11 after live probes showed cn.bing.com returning unrelated
+// pages for it (4/4 targets missed), while the bare URL kept root pages at #1.
+func TestCheckIndexedQueryUsesBareURL(t *testing.T) {
 	t.Parallel()
 
 	target := "https://example.com/post/1"
-	q := core.IndexCheckQuery("url:"+target, core.Query{})
-	if q.Text != "url:"+target {
-		t.Fatalf("query text=%q, want %q", q.Text, "url:"+target)
+	q := core.IndexCheckQuery(target, core.Query{})
+	if q.Text != target {
+		t.Fatalf("query text=%q, want bare target %q", q.Text, target)
 	}
-	if !strings.HasPrefix(q.Text, "url:") {
-		t.Fatalf("bing index query must use the url: operator, got %q", q.Text)
+	if strings.HasPrefix(q.Text, "url:") {
+		t.Fatalf("bing index query must not use the retired url: operator, got %q", q.Text)
 	}
 	if q.Limit != core.IndexCheckLimit || q.Start != 0 || q.Features {
 		t.Fatalf("index SERP query must be plain with limit %d, got %+v", core.IndexCheckLimit, q)

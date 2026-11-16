@@ -20,7 +20,7 @@ web2api 是 Go 实现的搜索 API 服务，基于 [Web2API](https://github.com/
 │   ├── parse_html.go           # goquery 解析（纯函数，无网络）
 │   ├── search.go               # 浏览器通道 + 双通道编排
 │   ├── search_raw.go           # 纯 HTTP 通道（国内引擎均有）
-│   ├── index_check.go          # 收录判定入口（URL 为查询词 / bing "url:"）
+│   ├── index_check.go          # 收录判定入口（四引擎均以 URL 为查询词）
 │   ├── features.go             # 可选：SERP 特性模块
 │   └── testdata/               # 真实 SERP 快照
 ├── core/
@@ -95,7 +95,7 @@ HTTP
 ```text
 APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1..20 URL）
  └─ RunIndexCheckUnits：每 URL×引擎并发（≤8 worker），经 ResilientSearcher
-      ├─ engine.CheckIndexed（URL 为查询词；bing 用 "url:<url>"）
+      ├─ engine.CheckIndexed（四引擎均以 URL 为查询词）
       └─ EvaluateIndexSERP：候选跳转解析（/link、bing /ck/a）→ 归一化匹配
            （host+path 相等 → indexed=true/exact，否则 none）
 ```
@@ -118,11 +118,11 @@ APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1.
 
 ## 收录判定（index check）
 
-- 查询词：baidu/sogou/so360 直接把目标 URL 当作查询词检索（limit 10）；bing 用 `"url:<url>"` 语法（最准）。
+- 查询词：四引擎一致，直接把目标 URL 当作查询词检索（limit 10）。bing 早期使用的 `"url:<url>"` 语法于 2026-11 停用——实测 cn.bing.com 对该操作符返回无关结果，裸 URL 才是可靠形态。
 - 候选跳转解析：sogou/so360 的 `/link` 在引擎内解析；漏网的 `baidu.com/link?url=`、`sogou.com/link`、`so.com/link` 由 core 复用 rawClickRequest 读 Location；bing 的 `/ck/a` 离线解码。
 - 归一化：协议与 host 小写、去默认端口、去 fragment、去尾部 `/`（根路径除外）、百分号解码；目标 URL 无 query 时忽略结果的 query，有 query 时参数排序后须相等。
 - 判定：host 与 path 相等 → `indexed=true, match="exact"`；否则 `indexed=false, match="none"`。
-- 准确率：以 URL 为查询词的引擎在“已收录但排名靠后”时会漏报（SERP 前 10 没有目标页）；bing 的 `url:` 语法最准。
+- 准确率：所有引擎在“已收录但排名靠后”时会漏报（SERP 前 10 没有目标页）；根路径 URL 命中率最高，深链接易漏。建议多引擎交叉验证，任一 `indexed=true` 即确认收录。
 
 ## 弹性与反爬
 
