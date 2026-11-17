@@ -341,7 +341,7 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 
 ## 5. Agent 平面
 
-三个入口，全部挂在 `/web-tool` 之下，是本平台对 AI Agent 的一等公民接口：
+三个入口，全部挂在 `/web-tool` 之下，是本平台供 AI Agent 直接调用的接口：
 
 | 入口 | 用途 |
 | --- | --- |

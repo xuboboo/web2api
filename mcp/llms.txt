@@ -9,14 +9,14 @@
 - OpenAPI 3.1 规范(供 Dify/n8n/LangChain 等 OpenAPI toolkit 导入):[openapi.yaml](/web-tool/openapi.yaml)
 - 管理控制台:`/web-tool/console/`(登录 / 总览 / 引擎状态 / API 密钥 / 使用日志 / 在线调试 / Agent 集成 / API 文档 / 系统设置)
 
-## MCP 接入(Agent 一等公民)
+## MCP 接入(Agent 直连)
 
 - MCP streamable HTTP 端点(仅 POST,JSON-RPC 2.0,响应式 JSON):[POST /mcp](/web-tool/mcp)
 - 鉴权:`X-API-Key` 请求头(计费)或 `Authorization: Bearer <JWT>`(管理员不计费)。
 - 握手:`initialize`(protocolVersion 默认 `2025-06-18`,serverInfo.name=`web2api`)→ 响应头取 `Mcp-Session-Id` → 发 `notifications/initialized`(HTTP 204)→ `tools/list` / `tools/call`。
 - 工具(4 个):
-  - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;每次调用计 1 unit。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
-  - `check_indexed{urls[1..20], engines?}` → 与 GET /v1/index/check 相同的 results 结构;计费 = urls×engines units。
+  - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;每次调用计 1 次。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
+  - `check_indexed{urls[1..20], engines?}` → 与 GET /v1/index/check 相同的 results 结构;计费 = 条数×引擎数次。
   - `get_quota{}` → 当前调用方配额对象(管理员不计费)。
   - `list_engines{}` → 四引擎及冷却/熔断状态。
 - tools/call 结果统一为 `{content:[{type:"text",text:"<JSON字符串>"}], isError}`;入参校验失败返回 JSON-RPC `-32602`。
@@ -38,7 +38,7 @@
 
 ### 数据平面(鉴权:X-API-Key,计费)
 
-- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定,`{"urls":[...],"engines":[...]}`,1..20 个 URL;计费 = urls×engines units。
+- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定,`{"urls":[...],"engines":[...]}`,1..20 个 URL;计费 = 条数×引擎数次。
 - [GET /v1/index/check](/web-tool/v1/index/check?url=…&engines=baidu,bing) — 单 URL 收录判定。
 - [GET /v1/quota](/web-tool/v1/quota) — 当前密钥配额与用量。
 - [GET /v1/engines](/web-tool/v1/engines) — 引擎列表与熔断状态。
@@ -71,7 +71,7 @@
 ## 示例
 
 ```bash
-# 批量收录判定(X-API-Key,计费 = 2 条 urls × 2 个 engines = 4 units)
+# 批量收录判定(X-API-Key,计费 = 2 条 URL × 2 个引擎 = 4 次)
 curl -X POST https://your-host/web-tool/v1/index/check \
   -H "X-API-Key: sk-w2a-你的密钥" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/a","https://example.com/b"],"engines":["baidu","bing"]}'

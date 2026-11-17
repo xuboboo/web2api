@@ -17,7 +17,7 @@ info:
 
     三个平面:
     * **数据平面** `/v1/*` — 国内四引擎(百度/搜狗/360/必应)收录判定与搜索,鉴权/配额/限流/冷却内建。
-    * **Agent 平面** `/mcp` + 本 spec + `llms.txt` — AI Agent 一等公民(MCP streamable HTTP,JSON-RPC 2.0)。
+    * **Agent 平面** `/mcp` + 本 spec + `llms.txt` — AI Agent 可直接调用(MCP streamable HTTP,JSON-RPC 2.0)。
     * **控制平面** `/api/*` — 管理面板后台(风控与用量治理台)。
 
     ## 三套错误信封

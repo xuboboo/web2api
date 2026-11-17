@@ -51,14 +51,14 @@
 
 **功能一览**：
 
-- **收录判定 API**：`POST /web-tool/v1/index/check` 一次提交最多 20 条 URL，逐引擎返回 `indexed` 与匹配详情；1 URL × 1 引擎 = 1 unit，计费口径清晰。
+- **收录判定 API**：`POST /web-tool/v1/index/check` 一次提交最多 20 条 URL，逐引擎返回 `indexed` 与匹配详情；1 条 URL × 1 个引擎 = 1 次，计费口径清晰。
 - **四引擎原始搜索**：`GET /web-tool/{engine}/search`，`format=json|markdown|text|ndjson`。
 - **Agent 双入口**：MCP streamable HTTP（4 个工具）+ OpenAPI 3.1 规范 + llms.txt 能力清单。
 - **管理控制台**：API 密钥、配额、用量日志、引擎风控看板、在线调试、系统设置。
 - **IP 风控内建**：桌面浏览器指纹、浏览器/HTTP 双通道兜底、CAPTCHA 门控、按引擎限速、熔断保护与引擎冷却状态机。
 - **零外部存储依赖**：bbolt 单文件保存全部状态，无数据库、无消息队列；构建产物是单个可执行文件（`./web2api serve`；浏览器模式需本机 Chrome/Chromium/Edge）。
 
-我们先说清楚**不做什么**：不做全球引擎覆盖、不做 Google 垂直矩阵、不做位置/语言参数、不做异步任务归档、没有 reranker 增值层。也如实说明两点：计费口径是**按成功单元计费**——HTTP 200 完成后按响应信封逐引擎核对，仅成功 unit 扣费；引擎级失败单元（`error` 字段，含 raw 模式 `not_implemented`）不计费，响应信封无法解析时按请求单元全额计费（兜底口径）；4xx / 429 / 503 不计费。批量判定为同步模式，单请求上限 20 URL。
+我们先说清楚**不做什么**：不做全球引擎覆盖、不做 Google 垂直矩阵、不做位置/语言参数、不做异步任务归档、没有 reranker 增值层。也如实说明两点：计费口径是**按成功单元计费**——HTTP 200 完成后按响应信封逐引擎核对，仅成功次数扣费；引擎级失败单元（`error` 字段，含 raw 模式 `not_implemented`）不计费，响应信封无法解析时按请求单元全额计费（兜底口径）；4xx / 429 / 503 不计费。批量判定为同步模式，单请求上限 20 URL。
 
 下面是功能级矩阵（✓=有，✗=无，部分=有但有明显限制）。**截至 2026-11，基于各家公开资料整理，未逐项复核**：
 
@@ -149,7 +149,7 @@ curl -s -X POST {BASE}/v1/index/check \
 # → results[].engines.<engine> 逐引擎给出 indexed / match / matched_result_url
 ```
 
-**怎么读结果**：`indexed:true` = 在该引擎前 10 条结果中命中；`indexed:false`（`match:"none"`）严格表示"前 10 条未命中"，**不等于未收录**——已收录但排名靠后（尤其深链接）会漏报，建议多引擎交叉验证（任一引擎 `indexed:true` 即确认已收录）。计费 = URL 数 × 引擎数 units，仅成功 unit 扣费。
+**怎么读结果**：`indexed:true` = 在该引擎前 10 条结果中命中；`indexed:false`（`match:"none"`）严格表示"前 10 条未命中"，**不等于未收录**——已收录但排名靠后（尤其深链接）会漏报，建议多引擎交叉验证（任一引擎 `indexed:true` 即确认已收录）。计费 = URL 数 × 引擎数次，仅成功次数扣费。
 
 MCP 一行接入（Claude Code）：
 
@@ -166,14 +166,14 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 | 平面 | 端点 | 鉴权 | 一句话 |
 | --- | --- | --- | --- |
 | 数据平面 | `/web-tool/v1/*`、`/web-tool/{engine}/search` | `X-API-Key`（search 仅当 `data_plane_auth:false` 时免鉴权，模板默认 true 需密钥） | 收录判定 + 四引擎搜索，配额/限流/冷却内建 |
-| Agent 平面 | `/web-tool/mcp`、`/web-tool/openapi.yaml`、`/web-tool/llms.txt` | `X-API-Key` 或 JWT | AI Agent 一等公民：Claude/Dify/n8n/LangChain 双入口接入 |
+| Agent 平面 | `/web-tool/mcp`、`/web-tool/openapi.yaml`、`/web-tool/llms.txt` | `X-API-Key` 或 JWT | AI Agent 可直接调用：Claude/Dify/n8n/LangChain 双入口接入 |
 | 控制平面 | `/web-tool/api/*` + `/web-tool/console/` 控制台 | JWT | 风控与用量治理台：密钥、配额、用量日志、引擎冷却看板、在线调试 |
 
 全部路径以 `/web-tool` 为前缀；请求/响应/错误码真实示例见 **[docs/API.md](docs/API.md)**。
 
 ```text
 数据平面（X-API-Key）
-  POST /web-tool/v1/index/check    批量收录判定（1..20 条 URL × 引擎，1 URL×1 引擎=1 unit）
+  POST /web-tool/v1/index/check    批量收录判定（1..20 条 URL × 引擎，1 条 URL×1 个引擎=1 次）
   GET  /web-tool/v1/index/check    单 URL 便捷版
   GET  /web-tool/v1/quota          配额查询
   GET  /web-tool/v1/engines        引擎与熔断状态
@@ -220,7 +220,7 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 
 Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP（streamable HTTP）的客户端可按各自文档接入，其余客户端以各自文档的远程传输支持为准。各客户端配置字段名略有差异，以各自文档为准。
 
-接入后 Agent 可直接调用 4 个工具：`web_search`（四引擎搜索，每次调用计 1 unit）、`check_indexed`（收录判定，URL 数 × 引擎数 units）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。**必须携带 API Key**，无鉴权请求一律 401。
+接入后 Agent 可直接调用 4 个工具：`web_search`（四引擎搜索，每次调用计 1 次）、`check_indexed`（收录判定，按 URL 数 × 引擎数计次）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。**必须携带 API Key**，无鉴权请求一律 401。
 
 ### Dify / n8n / LangChain（OpenAPI 导入）
 

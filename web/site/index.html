@@ -12,7 +12,7 @@
 <!-- A-18:og:url 为 YOUR-DOMAIN 占位,上线时替换为实际域名(与 sitemap.xml 同批填写);
      og:image 与 twitter:card 待 og.png 素材(1200×630)产出后再添加,避免指向 404 资源 -->
 <meta property="og:url" content="https://YOUR-DOMAIN/web-tool/">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='32' cy='29' r='16' fill='%23F5F8F5'/%3E%3Cpath d='M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z' fill='%23E05A5A'/%3E%3Cpath d='M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z' fill='%23E05A5A' opacity='.85'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='27.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Ccircle cx='38' cy='26' r='5' fill='%230B1210'/%3E%3Ccircle cx='36.5' cy='24.5' r='1.6' fill='%23FFFFFF'/%3E%3Cpath d='M28 36 L32 58 L36 36 Z' fill='%23F0B429'/%3E%3Ccircle cx='18' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3Ccircle cx='46' cy='34' r='2.4' fill='%23177E5B' opacity='.3'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='27' cy='27' r='13.5' fill='%23FFFFFF'/%3E%3Cpath d='M20.5 27.5 25.5 32.5 34 22.5' fill='none' stroke='%23177E5B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M37 37 47 47' fill='none' stroke='%23FFFFFF' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
 <script>
 /* 规范 URL 兜底:裸目录路径(无结尾斜杠)会让页面内相对资源(assets/*)解析到站点根,
  * 导致 CSS/JS 404、页面裸奔。服务端已对 /web-tool 与 /web-tool/status 做 301,
@@ -45,7 +45,7 @@
 <header class="site-nav" id="siteNav">
   <div class="container nav-inner">
     <a class="brand" href="#top" aria-label="Web2API 网站收录查询开放平台 · 返回顶部">
-      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><circle cx="32" cy="29" r="16" fill="#F5F8F5"/><path d="M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z" fill="#E05A5A"/><path d="M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z" fill="#E05A5A" opacity=".85"/><circle cx="26" cy="26" r="5" fill="#0B1210"/><circle cx="27.5" cy="24.5" r="1.6" fill="#FFFFFF"/><circle cx="38" cy="26" r="5" fill="#0B1210"/><circle cx="36.5" cy="24.5" r="1.6" fill="#FFFFFF"/><path d="M28 36 L32 58 L36 36 Z" fill="#F0B429"/><circle cx="18" cy="34" r="2.4" fill="#177E5B" opacity=".3"/><circle cx="46" cy="34" r="2.4" fill="#177E5B" opacity=".3"/></svg>
+      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><circle cx="27" cy="27" r="13.5" fill="#FFFFFF"/><path d="M20.5 27.5 25.5 32.5 34 22.5" fill="none" stroke="#177E5B" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 37 47 47" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/></svg>
       <span class="brand-name">Web2API</span>
       <span class="brand-sub">网站收录查询开放平台</span>
     </a>
@@ -212,7 +212,7 @@
         <div class="f-card reveal">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><polyline points="8.2 11.2 10.4 13.4 14.2 9"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></span><h3>一次调用,判定四引擎</h3></div>
-<p>POST /web-tool/v1/index/check 一次提交最多 20 条 URL,逐引擎返回 indexed 与匹配详情;1 URL × 1 引擎 = 1 unit,计费口径清晰。</p>
+<p>POST /web-tool/v1/index/check 一次提交最多 20 条 URL,逐引擎返回 indexed 与匹配详情;1 条 URL × 1 个引擎 = 1 次,计费口径清晰。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:240ms">
@@ -223,7 +223,7 @@
         </div>
         <div class="f-card reveal" style="--reveal-delay:480ms">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><polyline points="7 9 10 12 7 15"/><line x1="12" y1="15" x2="16" y2="15"/></svg></span><h3>Agent 一等公民</h3></div>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><polyline points="7 9 10 12 7 15"/><line x1="12" y1="15" x2="16" y2="15"/></svg></span><h3>Agent 直连</h3></div>
             <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口,内置 llms.txt 能力清单;Claude Code、ChatGPT、Codex、VS Code Copilot 等客户端可接远程 MCP,Dify / n8n / LangChain 可直接导入 OpenAPI 规范。</p>
           </div>
         </div>
@@ -389,7 +389,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
           <div class="cw-foot">
             <span>POST /web-tool/v1/index/check</span>
             <span class="cw-ok">200 OK</span>
-            <span class="cw-units">1 URL × 2 引擎 = 2 units</span>
+            <span class="cw-units">1 条 URL × 2 个引擎 = 2 次</span>
           </div>
         </div>
       </div>
@@ -420,7 +420,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         <div class="f-card reveal" style="--reveal-delay:240ms">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><h3>Agent 平面</h3></div>
-            <p>AI Agent 一等公民:MCP Server 与 OpenAPI 规范双入口,自动可发现。</p>
+            <p>AI Agent 可直接接入:MCP Server 与 OpenAPI 规范双入口,自动可发现。</p>
             <div class="route-list">
               <div class="route"><code>POST /web-tool/mcp</code><span>MCP streamable HTTP,内置 4 个工具</span></div>
               <div class="route"><code>GET /web-tool/openapi.yaml</code><span>OpenAPI 3.1 数据面与 Agent 面规范</span></div>
@@ -582,7 +582,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
       </div>
       <div class="qs-notes reveal" style="--reveal-delay:480ms">
-<p class="qs-note">结果字段:<span class="inline-code">indexed</span> 是否收录 · <span class="inline-code">match</span> 匹配精度(exact / none) · <span class="inline-code">meta.units</span> 本次计费 unit 数(1 URL × 1 引擎 = 1 unit;按成功单元计费,失败单元不计费)。引擎级失败不拖垮整体,对应项返回 error。</p>
+<p class="qs-note">结果字段:<span class="inline-code">indexed</span> 是否收录 · <span class="inline-code">match</span> 匹配精度(exact / none) · <span class="inline-code">meta.units</span> 本次计费次数,字段 units(1 条 URL × 1 个引擎 = 1 次;按成功单元计费,失败单元不计费)。引擎级失败不拖垮整体,对应项返回 error。</p>
         <p class="qs-note">更多端点:GET 单 URL 判定、GET <span class="inline-code">/web-tool/v1/quota</span> 配额查询、GET <span class="inline-code">/{engine}/search</span> 四引擎搜索 —— 全部见 <a href="/web-tool/openapi.yaml">API 文档(OpenAPI 3.1)</a>。</p>
         <p class="qs-note">AI Agent 接入:MCP Server 一条命令即用,见上方 <a href="#agents">Agent 接入区</a>。</p>
       </div>
@@ -618,7 +618,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="foot-top">
       <div class="foot-brand">
         <a class="brand" href="#top" aria-label="Web2API 网站收录查询开放平台 · 返回顶部">
-      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><circle cx="32" cy="29" r="16" fill="#F5F8F5"/><path d="M20 18 C 18 9, 26 5, 32 9 C 28 13, 28 16, 29 20 Z" fill="#E05A5A"/><path d="M32 9 C 38 5, 46 9, 44 18 C 40 17, 37 18, 35 21 Z" fill="#E05A5A" opacity=".85"/><circle cx="26" cy="26" r="5" fill="#0B1210"/><circle cx="27.5" cy="24.5" r="1.6" fill="#FFFFFF"/><circle cx="38" cy="26" r="5" fill="#0B1210"/><circle cx="36.5" cy="24.5" r="1.6" fill="#FFFFFF"/><path d="M28 36 L32 58 L36 36 Z" fill="#F0B429"/><circle cx="18" cy="34" r="2.4" fill="#177E5B" opacity=".3"/><circle cx="46" cy="34" r="2.4" fill="#177E5B" opacity=".3"/></svg>
+      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--brand)"/><circle cx="27" cy="27" r="13.5" fill="#FFFFFF"/><path d="M20.5 27.5 25.5 32.5 34 22.5" fill="none" stroke="#177E5B" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 37 47 47" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/></svg>
           <span class="brand-name">Web2API</span>
         </a>
         <p class="foot-tagline">自托管的网站收录查询开放平台 —— 收录判定、四引擎搜索、Agent 双入口(MCP + OpenAPI)。</p>

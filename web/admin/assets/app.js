@@ -544,6 +544,10 @@
 
   var memToken = '';
   var memTokenExp = 0;
+  /* /api/me 验证通过的会话标记:cookie 会话对前端不可读,F5 后内存 token 必然
+   * 为空,登录态以服务端 /api/me 结果为准(见 boot)。由 boot 成功分支置位,
+   * clearAuth 统一清除(登出 / 401 拦截 / boot 401 全部经过 clearAuth)。 */
+  var meVerified = false;
 
   function getToken() {
     return memToken;
@@ -568,6 +572,7 @@
   function clearAuth() {
     memToken = '';
     memTokenExp = 0;
+    meVerified = false;
     try {
       localStorage.removeItem(LS_TOKEN);
       localStorage.removeItem(LS_TOKEN_EXP);
@@ -593,7 +598,7 @@
   /* 登录态判定改为服务端权威: cookie 对前端不可读,登录与否以 /api/me 结果
    * 为准(见 boot)。内存 token 仅用于提前渲染与 Bearer 双轨。 */
   function isLoggedIn() {
-    return !!memToken && !tokenExpired();
+    return meVerified || (!!memToken && !tokenExpired());
   }
 
   /* 机器可读错误 → 面向管理员的中文提示。
@@ -1059,15 +1064,15 @@
     var defs;
     if (hasNew) {
       defs = [
-        { label: '今日有效调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
-        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
+        { label: '今日有效调用', value: fmtNumber(stats.today_calls), sub: '今日 ' + fmtNumber(stats.today_units) + ' 次' },
+        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 ' + fmtNumber(stats.total_units) + ' 次' },
         { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
         { label: '有效成功率(24h)', value: fmtPercent(stats.success_rate_24h), sub: '全部请求 ' + fmtNumber(stats.today_calls_all) + ' 次,拒绝 ' + fmtNumber(stats.rejected_today_24h) + ' 次' }
       ];
     } else {
       defs = [
-        { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '今日 units ' + fmtNumber(stats.today_units) },
-        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 units ' + fmtNumber(stats.total_units) },
+        { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '今日 ' + fmtNumber(stats.today_units) + ' 次' },
+        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 ' + fmtNumber(stats.total_units) + ' 次' },
         { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
         { label: '24h 成功率', value: fmtPercent(stats.success_rate_24h), sub: '近 24 小时请求成功率' }
       ];
@@ -1098,7 +1103,7 @@
     body.appendChild(barChart(series));
     var legend = el('div', { class: 'chart-legend' },
       el('span', null, el('span', { class: 'dot' }), '调用次数'),
-      el('span', { class: 'muted', text: '悬停柱形可查看 units 与成功数' }));
+      el('span', { class: 'muted', text: '悬停柱形可查看次数与成功数' }));
     body.appendChild(legend);
     return card;
   }
@@ -1153,7 +1158,7 @@
       var dateStr = String(d.date || '');
 
       var title = s('title');
-      title.textContent = dateStr + ' · 调用 ' + v + ' · units ' + (Number(d.units) || 0) + ' · 成功 ' + (Number(d.ok) || 0);
+      title.textContent = dateStr + ' · 调用 ' + v + ' · ' + (Number(d.units) || 0) + ' 次 · 成功 ' + (Number(d.ok) || 0);
 
       var rect;
       if (h > 0) {
@@ -2052,7 +2057,7 @@
       el('div', { class: 'field' },
         el('label', { class: 'field-label', text: '日配额(次 / 天)' }),
         quotaInput,
-        el('div', { class: 'form-hint', text: '1 URL × 1 引擎 = 1 unit;留空或 0 表示不限量。' })),
+        el('div', { class: 'form-hint', text: '1 条 URL × 1 个引擎 = 1 次;留空或 0 表示不限量。' })),
       el('div', { class: 'field' },
         el('label', { class: 'field-label', text: '过期时间(可选)' }),
         expiryInput,
@@ -2138,7 +2143,7 @@
       el('div', { class: 'field' },
         el('label', { class: 'field-label', text: '日配额(次 / 天)' }),
         quotaInput,
-        el('div', { class: 'form-hint', text: '1 URL × 1 引擎 = 1 unit;留空或 0 表示不限量。' })),
+        el('div', { class: 'form-hint', text: '1 条 URL × 1 个引擎 = 1 次;留空或 0 表示不限量。' })),
       el('div', { class: 'field' },
         el('label', { class: 'field-label', text: '过期时间' }),
         expiryInput,
@@ -2446,7 +2451,7 @@
     { key: 'endpoint', label: '端点', num: false, val: function (it) { return String(it.endpoint || ''); } },
     { key: 'engines', label: '引擎', num: false, val: function (it) { return fmtEngines(it.engines); } },
     { key: 'urls', label: 'URL 数', num: true, val: function (it) { return Number(it.urls) || 0; } },
-    { key: 'units', label: 'Units', num: true, val: function (it) { return Number(it.units) || 0; } },
+    { key: 'units', label: '次数', num: true, val: function (it) { return Number(it.units) || 0; } },
     { key: 'status', label: 'HTTP 状态', num: true, val: function (it) { return Number(it.status) || 0; } },
     { key: 'took_ms', label: '耗时', num: true, val: function (it) { return Number(it.took_ms) || 0; } }
   ];
@@ -2844,7 +2849,7 @@
       if (data.meta) {
         if (data.meta.request_id) metaBits.push('request_id ' + data.meta.request_id);
         if (data.meta.took_ms !== undefined) metaBits.push('耗时 ' + fmtDuration(data.meta.took_ms));
-        if (data.meta.units !== undefined) metaBits.push('units ' + data.meta.units);
+        if (data.meta.units !== undefined) metaBits.push('计费 ' + data.meta.units + ' 次');
       }
       var metaRow = el('div', { class: 'pg-meta', style: 'margin-bottom:14px;' });
       metaBits.forEach(function (b) {
@@ -2983,8 +2988,8 @@
         el('div', { class: 'docs-note', text: '管理员也可改用 Authorization: Bearer <JWT>(面板登录获得)。管理员发起的 MCP 调用不计费。' }),
         p('计费口径(仅 API 密钥调用计费;管理员 JWT 调用不计费):'),
         el('dl', { class: 'spec-list' },
-          el('div', null, el('dt', { text: 'web_search' }), el('dd', null, '1 unit/次')),
-          el('div', null, el('dt', { text: 'check_indexed' }), el('dd', null, 'URL 数 × 引擎数 units')),
+          el('div', null, el('dt', { text: 'web_search' }), el('dd', null, '每次调用计 1 次')),
+          el('div', null, el('dt', { text: 'check_indexed' }), el('dd', null, '按 URL 数 × 引擎数计次')),
           el('div', null, el('dt', { text: 'get_quota、list_engines' }), el('dd', null, '不计费'))),
         el('div', { class: 'agent-links' },
           el('a', { href: OPENAPI_URL, target: '_blank', rel: 'noopener noreferrer', html: ICONS.external + '<span>openapi.yaml(OpenAPI 3.1 全端点)</span>' }),
@@ -3001,7 +3006,7 @@
           ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
           ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
-        p('计费:web_search 1 unit/次;check_indexed 计 URL 数 × 引擎数 units;get_quota 与 list_engines 不计费。'),
+        p('计费:web_search 每次调用计 1 次;check_indexed 按 URL 数 × 引擎数计次;get_quota 与 list_engines 不计费。'),
         p('提示:引擎冷却期间,check_indexed 中对应引擎的查询会返回 <code>engine_cooldown</code> 错误。可先调用 <code>list_engines</code> 确认可用性。'))));
 
     /* ---- Claude Desktop / Claude Code ---- */
@@ -3299,7 +3304,7 @@ async def run():
       title: '/v1/index/check',
       sub: '批量查询收录状态',
       children: [
-        p('提交 1–20 条 URL,查询各引擎收录情况。计费按 unit:1 URL × 1 引擎 = 1 unit。'),
+        p('提交 1–20 条 URL,查询各引擎收录情况。计费按次:1 条 URL × 1 个引擎 = 1 次。'),
         paramTable([
           ['urls', 'array[string]', '是', '待查询 URL 列表,1–20 条'],
           ['engines', 'array[string]', '否', '引擎列表,默认 <code>["baidu","sogou","so360","bing"]</code>;接受别名 <code>"360"</code>(等同 so360)']
@@ -3369,7 +3374,7 @@ async def run():
           ['results[].engines.&lt;engine&gt;.total_results', 'SERP 返回的结果总数'],
           ['results[].engines.&lt;engine&gt;.took_ms', '该引擎耗时(毫秒)'],
           ['results[].engines.&lt;engine&gt;.error', '引擎级失败信息,如 <code>{"code":"blocked","message":"…"}</code>;不影响整体,HTTP 仍为 200'],
-          ['meta.request_id / meta.took_ms / meta.units', '请求 ID(UUID)/ 总耗时(ms)/ 计费 units(URL 数 × 引擎数)'],
+          ['meta.request_id / meta.took_ms / meta.units', '请求 ID(UUID)/ 总耗时(ms)/ 计费次数(URL 数 × 引擎数)'],
           ['meta.engines_cooldown', '处于冷却期的引擎列表:<code>engine / until(恢复时间)/ reason</code>;冷却引擎的单元快速失败并返回 <code>engine_cooldown</code>']
         ])
       ]
@@ -3460,7 +3465,7 @@ async def run():
         p('服务端通过 <code>Mcp-Session-Id</code> 响应头下发会话 ID,后续请求需原样带回。'),
         paramTable([
           ['web_search', 'object', 'query 必填', '按关键词搜索,返回 rank、title、url、snippet。engine 可选 baidu|sogou|so360|bing,默认 baidu;limit 默认 10'],
-          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–20 条 URL,返回结构与 /v1/index/check 相同;计费 URL 数 × 引擎数 units'],
+          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–20 条 URL,返回结构与 /v1/index/check 相同;计费按 URL 数 × 引擎数计次'],
           ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
           ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
@@ -4080,6 +4085,7 @@ async def run():
 
     api('GET', '/api/me', null, { skipAuthRedirect: true })
       .then(function (me) {
+        meVerified = true; // 服务端确认会话有效:F5 后由此恢复登录态
         if (me && me.username) {
           state.username = me.username;
           try { localStorage.setItem(LS_USERNAME, me.username); } catch (e) { /* 忽略 */ }

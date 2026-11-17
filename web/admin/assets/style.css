@@ -1640,11 +1640,12 @@ html:not(.dark) .login-hint { color: #9a5408; }
 /* 引擎级结果单元 */
 .vcell { display: inline-flex; align-items: center; gap: 6px; }
 .vcell .vecode { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-fg); }
-.cell-err { color: var(--destructive); font-size: 12.5px; line-height: 1.4; }
+.cell-err { color: var(--destructive); font-size: 12.5px; line-height: 1.4; min-width: 13em; }
 .cell-err .ecode { font-family: var(--font-mono); font-weight: 600; }
-.cell-err .emsg { color: var(--muted-fg); }
-.cell-cd { color: var(--warning); font-size: 12.5px; line-height: 1.4; }
+.cell-err .emsg { color: var(--muted-fg); word-break: normal; overflow-wrap: anywhere; }
+.cell-cd { color: var(--warning); font-size: 12.5px; line-height: 1.4; min-width: 13em; }
 .cell-cd .ecode { font-family: var(--font-mono); font-weight: 600; }
+.cell-cd .emsg { word-break: normal; overflow-wrap: anywhere; }
 .cell-ok { color: var(--fg); font-weight: 600; }
 .cell-no { color: var(--muted-fg); }
 

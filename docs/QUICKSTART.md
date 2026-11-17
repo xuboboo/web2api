@@ -103,7 +103,7 @@ export W2A_KEY='<YOUR_API_KEY>'
 | --- | --- |
 | `key` | 完整密钥，**仅创建时返回**；之后要用它调 `/v1/*` |
 | `prefix` | 密钥前缀，列表/日志里用来识别是哪把钥匙 |
-| `daily_quota` | 每日 unit 上限；`0` = 不限 |
+| `daily_quota` | 每日调用次数上限；`0` = 不限 |
 | `allowed_ips` | IP 白名单，空数组 = 不限制 |
 | `expires_at` | 过期时间，`null` = 永不过期 |
 
@@ -183,7 +183,7 @@ curl -X POST {BASE}/v1/index/check \
 | `matched_result_url` | 命中的真实地址 | 命中时给出，`none` 时是空串 `""` |
 | `total_results` | 该引擎返回的 organic 结果数 | 参考值 |
 | `took_ms` | 该引擎耗时（毫秒） | 排查慢查询 |
-| `meta.units` | 本次计费 unit 数 | = URL 数 × 引擎数，这里是 2×2=4 |
+| `meta.units` | 本次计费次数(字段 units)| = URL 数 × 引擎数，这里是 2×2=4 |
 | `meta.request_id` | 请求 ID | 报错时拿着它找运维 |
 
 > ⚠️ **`indexed:false` 不等于「没收录」**：它严格表示"前 10 条结果里没有"。
@@ -245,7 +245,7 @@ curl "{BASE}/api/usage?limit=3" -H "Authorization: Bearer $ADMIN_TOKEN"
 }
 ```
 
-**计费口径**：`outcome:"billed"` 表示成功计费；引擎级失败（如 `blocked`、`captcha_detected`）对应的 `units` 记 0，不扣费。
+**计费口径**：`outcome:"billed"` 表示成功计费；引擎级失败（如 `blocked`、`captcha_detected`）对应的计费次数记 0，不扣费。
 
 ---
 
