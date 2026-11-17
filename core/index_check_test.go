@@ -196,6 +196,22 @@ func TestEvaluateIndexSERPResolvesWrappedLink(t *testing.T) {
 	}
 }
 
+func TestIndexSERPContains(t *testing.T) {
+	t.Parallel()
+
+	results := []SearchResult{
+		{Rank: 1, URL: "https://www.bing.com/ck/a?u=a1" + base64.RawURLEncoding.EncodeToString([]byte("https://www.onlinedown.net/article/10047660.htm")), Title: "wrapped"},
+		{Rank: 2, URL: "https://other.org/x", Title: "other"},
+	}
+	candidate, found := IndexSERPContains("https://www.onlinedown.net/article/10047660.htm", results)
+	if !found || candidate == "" {
+		t.Fatalf("expected bing click hit, got found=%v candidate=%q", found, candidate)
+	}
+	if _, found := IndexSERPContains("https://absent.example.cn/x", results); found {
+		t.Fatal("unexpected hit for absent target")
+	}
+}
+
 func fetchCalls(t *testing.T, mu *sync.Mutex, counter *int) int {
 	t.Helper()
 	mu.Lock()

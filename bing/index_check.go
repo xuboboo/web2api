@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sirupsen/logrus"
 	"github.com/xuboboo/web2api/core"
 )
 
@@ -17,19 +18,68 @@ var _ core.IndexChecker = (*Bing)(nil)
 // so browser fingerprints and captcha handling stay in effect. runtime carries
 // proxy/TLS settings selected by the resilience layer.
 //
-// Query form (2026-11 实测,十轮真实网站对照):
+// Query form (2026-11 实测):
 //   - 历史 "url:<url>" 操作符在 cn.bing.com 已失效(4/4 miss,返回无关页),弃用;
-//   - 带 scheme 的完整 URL 亦不稳: "https://go.dev" 被 Bing 当成 "https 是什么",
-//     命中百度百科;10 站对照 "完整 URL 命中 4/10 vs 去 scheme 命中 7/10"。
-//   - 故查询词去掉 scheme 前缀(保留 host+path),匹配仍由 core 用原 URL 归一化,
-//     两者不冲突:查询词只用于 Bing 检索,候选匹配用原始 targetURL。
-// 其它引擎用完整 URL 正常,仅 Bing 需要去 scheme。深链接前 10 条漏报属已知约束。
+//   - 单一查询词不稳: 带 scheme 的完整 URL 对 go.dev 等域名会被当成 "https 是什么"
+//     命中百科,而去 scheme 的 www.xxx 深链接(如 onlinedown.net/article/...)
+//     会被当成 "www 是什么" 命中百科。两种形式各有盲区。
+//   - 故按优先级依次尝试带引号的完整 URL、完整 URL、去 scheme 的 host+path;
+//     任一 SERP 含目标 URL 的精确候选即早停返回,全部未命中才返回最后一次结果。
+//     匹配始终由 core 用原始 targetURL 归一化,查询词只影响 Bing 检索。
 func (bing *Bing) CheckIndexed(ctx context.Context, targetURL string, runtime core.Query) ([]core.SearchResult, error) {
 	targetURL = strings.TrimSpace(targetURL)
 	if targetURL == "" {
 		return nil, fmt.Errorf("%w: index check target URL is empty", core.ErrEngineInternal)
 	}
-	return bing.Search(ctx, core.IndexCheckQuery(bingIndexQuery(targetURL), runtime))
+
+	queries := bingIndexQueries(targetURL)
+	var union []core.SearchResult
+	for i, queryText := range queries {
+		results, err := bing.Search(ctx, core.IndexCheckQuery(queryText, runtime))
+		if err != nil {
+			// Technical failures (captcha/timeout) are returned immediately so the
+			// resilience layer can classify them; a non-final empty SERP is not an
+			// error - try the next query form.
+			if i == 0 || core.IsContextDone(err) {
+				return nil, err
+			}
+			logrus.WithField("engine", "bing").WithError(err).Debug("index check query variant failed")
+			continue
+		}
+		if candidate, found := core.IndexSERPContains(targetURL, results); found {
+			logrus.WithFields(logrus.Fields{"engine": "bing", "query_variant": i, "candidate": candidate}).Debug("index check hit")
+			return results, nil
+		}
+		union = append(union, results...)
+	}
+	// No form produced a direct hit. Return the union so core's pass 2 (opaque
+	// redirect resolution) and total_results still see every candidate observed.
+	return core.DeduplicateResults(union), nil
+}
+
+// bingIndexQueries returns the SERP query forms to try, most reliable first.
+// 2026-11 live probe: the quoted full URL is a strict superset of every other
+// form (10/10 indexed URLs hit vs 9/10 unquoted full, 8/10 scheme-stripped).
+// It is therefore primary; the other two are fallbacks for upstream drift.
+// The retired "url:" operator is intentionally absent.
+func bingIndexQueries(targetURL string) []string {
+	forms := []string{"\"" + targetURL + "\""}
+	if targetURL != "" && !containsString(forms, targetURL) {
+		forms = append(forms, targetURL)
+	}
+	if stripped := bingIndexQuery(targetURL); stripped != targetURL && !containsString(forms, stripped) {
+		forms = append(forms, stripped)
+	}
+	return forms
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 // bingIndexQuery strips the URL scheme for the SERP query phrase. Bing treats

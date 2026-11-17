@@ -70,6 +70,38 @@ func TestClassifySearchHTTPStatus(t *testing.T) {
 	}
 }
 
+func TestReadRawSearchBodyCaptchaRedirect(t *testing.T) {
+	cases := []struct {
+		name     string
+		location string
+		want     error
+	}{
+		{name: "360 captcha", location: "http://qcaptcha.so.com/?ret=...", want: ErrCaptcha},
+		{name: "sogou captcha", location: "https://www.sogou.com/captcha/?m=1", want: ErrCaptcha},
+		{name: "antispider", location: "https://www.so.com/antispider", want: ErrCaptcha},
+		{name: "normal redirect is parser failure in raw mode", location: "https://www.example.com/search?q=x", want: ErrParser},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     http.Header{"Location": []string{tc.location}},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}
+			_, err := ReadRawSearchBody(resp)
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("expected nil error, got %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 func TestDrainAndCloseResponseNilSafe(t *testing.T) {
 	DrainAndCloseResponse(nil)
 	DrainAndCloseResponse(&http.Response{})

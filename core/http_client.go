@@ -224,10 +224,29 @@ func ReadRawSearchBody(resp *http.Response) ([]byte, error) {
 	if resp == nil {
 		return nil, fmt.Errorf("%w: nil raw search response", ErrEngineInternal)
 	}
+	if location, ok := redirectLocation(resp); ok && LocationLooksLikeCaptcha(location) {
+		return nil, fmt.Errorf("%w: search engine redirected to captcha", ErrCaptcha)
+	}
 	if err := ClassifySearchHTTPStatus(resp.StatusCode); err != nil {
 		return nil, err
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// LocationLooksLikeCaptcha reports whether a redirect Location targets a known
+// anti-bot verification endpoint shared by the supported engines.
+func LocationLooksLikeCaptcha(location string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(location))
+	if lowered == "" {
+		return false
+	}
+	markers := [...]string{"qcaptcha", "captcha", "antispider", "wappass", "/verify"}
+	for _, marker := range markers {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func ClassifySearchHTTPStatus(status int) error {

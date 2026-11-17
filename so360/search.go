@@ -128,6 +128,7 @@ func (eng *So360) Search(ctx context.Context, query core.Query) ([]core.SearchRe
 			eng.logger.WithRequest(ctx).Info("360 browser path failed (%v); served %d results over HTTP", err, len(raw))
 			return raw, nil
 		}
+		eng.logger.WithRequest(ctx).Debug("360 raw fallback failed")
 	}
 	return nil, err
 }

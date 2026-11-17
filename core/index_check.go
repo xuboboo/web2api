@@ -206,17 +206,11 @@ func EvaluateIndexSERP(ctx context.Context, targetURL string, results []SearchRe
 	verdict.TotalResults = CountOrganicResults(results)
 
 	// Pass 1: offline normalization only.
-	for _, r := range results {
-		if r.Ad || r.URL == "" {
-			continue
-		}
-		candidate := unwrapIndexCandidateOffline(r.URL)
-		if key, ok := indexURLKeyFrom(candidate); ok && indexURLsMatch(target, key) {
-			verdict.Indexed = true
-			verdict.Match = IndexMatchExact
-			verdict.MatchedResultURL = candidate
-			return verdict
-		}
+	if candidate, found := IndexSERPContains(targetURL, results); found {
+		verdict.Indexed = true
+		verdict.Match = IndexMatchExact
+		verdict.MatchedResultURL = candidate
+		return verdict
 	}
 
 	// Pass 2: resolve opaque wrapped links (network) until first match.
@@ -251,6 +245,28 @@ func EvaluateIndexSERP(ctx context.Context, targetURL string, results []SearchRe
 		}
 	}
 	return verdict
+}
+
+// IndexSERPContains reports whether targetURL appears in results under the
+// platform normalization rules, using offline unwrapping only (no network I/O).
+// It is exported so engines can try several SERP query forms and stop as soon
+// as one contains a direct hit. The returned string is the candidate URL that
+// matched, suitable for matched_result_url.
+func IndexSERPContains(targetURL string, results []SearchResult) (string, bool) {
+	target, ok := indexURLKeyFrom(targetURL)
+	if !ok {
+		return "", false
+	}
+	for _, r := range results {
+		if r.Ad || r.URL == "" {
+			continue
+		}
+		candidate := unwrapIndexCandidateOffline(r.URL)
+		if key, ok := indexURLKeyFrom(candidate); ok && indexURLsMatch(target, key) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // indexURLKey is the canonical comparison key for one URL.

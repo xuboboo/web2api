@@ -143,6 +143,7 @@ func (sog *Sogou) Search(ctx context.Context, query core.Query) ([]core.SearchRe
 			sog.logger.WithRequest(ctx).Info("sogou browser path failed (%v); served %d results over HTTP", err, len(raw))
 			return raw, nil
 		}
+		sog.logger.WithRequest(ctx).Debug("sogou raw fallback failed")
 	}
 	return nil, err
 }

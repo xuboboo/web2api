@@ -29,7 +29,7 @@ func TestBingIndexQueryStripsScheme(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"https://example.com/post/1", "example.com/post/1"},
 		{"http://go.dev", "go.dev"},
-		{"example.com", "example.com"},       // already scheme-less
+		{"example.com", "example.com"}, // already scheme-less
 		{"https://www.python.org/", "www.python.org/"},
 	}
 	for _, tc := range cases {
@@ -45,6 +45,61 @@ func TestBingIndexQueryStripsScheme(t *testing.T) {
 	q := core.IndexCheckQuery(bingIndexQuery("https://example.com/post/1"), core.Query{})
 	if q.Text != "example.com/post/1" || q.Limit != core.IndexCheckLimit || q.Start != 0 || q.Features {
 		t.Fatalf("index SERP query must be scheme-less plain with limit %d, got %+v", core.IndexCheckLimit, q)
+	}
+}
+
+// TestBingIndexQueriesCoversBothForms verifies the multi-query fallback tries
+// the full URL first (needed for www.* deep links like onlinedown.net) and the
+// scheme-less form second (needed for bare domains like go.dev).
+func TestBingIndexQueriesCoversBothForms(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in        string
+		wantFirst string
+		wantAll   []string
+	}{
+		{
+			in:        "https://www.onlinedown.net/article/10047660.htm",
+			wantFirst: "\"https://www.onlinedown.net/article/10047660.htm\"",
+			wantAll: []string{
+				"\"https://www.onlinedown.net/article/10047660.htm\"",
+				"https://www.onlinedown.net/article/10047660.htm",
+				"www.onlinedown.net/article/10047660.htm",
+			},
+		},
+		{
+			in:        "https://go.dev",
+			wantFirst: "\"https://go.dev\"",
+			wantAll: []string{
+				"\"https://go.dev\"",
+				"https://go.dev",
+				"go.dev",
+			},
+		},
+		{
+			in:        "example.com",
+			wantFirst: "\"example.com\"",
+			wantAll: []string{
+				"\"example.com\"",
+				"example.com",
+			},
+		},
+	}
+	for _, tc := range cases {
+		got := bingIndexQueries(tc.in)
+		if len(got) == 0 || got[0] != tc.wantFirst {
+			t.Errorf("bingIndexQueries(%q) first=%q, want %q", tc.in, got, tc.wantFirst)
+		}
+		if len(got) != len(tc.wantAll) {
+			t.Errorf("bingIndexQueries(%q) len=%d, want %d (%v)", tc.in, len(got), len(tc.wantAll), got)
+			continue
+		}
+		for i, want := range tc.wantAll {
+			if got[i] != want {
+				t.Errorf("bingIndexQueries(%q)[%d]=%q, want %q", tc.in, i, got[i], want)
+			}
+		}
 	}
 }
 
