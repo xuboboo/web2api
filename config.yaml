@@ -29,8 +29,9 @@ app:
   leave_head: false # Keep tabs open after request
   block_resources: "image,font,css,media" # Block heavy subresources in browser mode
   block_trackers: true # Block known tracker domains
-  max_processes: 6 # Concurrent Chrome processes
-  idle_ttl: 5m # close a Chrome that has not served traffic for this long
+  max_concurrent_requests: 2 # 0=unlimited; cap in-flight requests to bound peak browser memory
+  max_processes: 1 # Concurrent Chrome processes (低内存: 每代理一个 Chrome, 1.4G 机器保持 1)
+  idle_ttl: 45s # close idle Chrome quickly: saves ~300MB steady-state on small servers
 
 proxies:
   allow_request_proxy_url: false # B-03 出厂安全姿态(默认翻转): 调用方自带代理 URL 会放大算力滥用面,非必要保持关闭;如需自带代理请显式打开并限制来源

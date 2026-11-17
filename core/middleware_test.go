@@ -5,11 +5,53 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
+func TestConcurrencyLimitMiddleware(t *testing.T) {
+	app := fiber.New()
+	app.Use(ConcurrencyLimitMiddleware(0))
+	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+	resp, err := app.Test(httptest.NewRequest("GET", "/", nil))
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("disabled limiter: status=%d err=%v", resp.StatusCode, err)
+	}
+	var inFlight, maxInFlight int32
+	app2 := fiber.New()
+	app2.Use(ConcurrencyLimitMiddleware(1))
+	app2.Get("/", func(c *fiber.Ctx) error {
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			old := atomic.LoadInt32(&maxInFlight)
+			if cur <= old || atomic.CompareAndSwapInt32(&maxInFlight, old, cur) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		atomic.AddInt32(&inFlight, -1)
+		return c.SendString("ok")
+	})
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, e := app2.Test(httptest.NewRequest("GET", "/", nil))
+			if e == nil {
+				r.Body.Close()
+			}
+		}()
+	}
+	wg.Wait()
+	if maxInFlight != 1 {
+		t.Fatalf("max in-flight = %d, want 1", maxInFlight)
+	}
+}
 func TestStatusText(t *testing.T) {
 	tests := []struct {
 		code     int

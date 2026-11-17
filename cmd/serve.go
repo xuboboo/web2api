@@ -474,11 +474,12 @@ func buildFingerprintBrowserOptions() core.BrowserOpts {
 // cspInlineScriptHashes lists the sha256 hashes of every inline <script> this
 // binary serves outside the admin console (审计 A-19:哈希法,无需 unsafe-inline).
 // 已核实的内联脚本面(改动任一脚本内容必须同步更新哈希):
-//   1. 官网/状态页/404 页共用的主题预置脚本(web/site/index.html、
-//      web/site/status/index.html、web/site/404.html,三处逐字一致);
-//   2. 状态页引擎看板脚本(web/site/status/index.html)—— 2026-11-17 冷却原因
-//      文案改映射(REASON_CN,内部枚举不直出公众页),哈希随之更新;
-//   3. openapi.yaml / llms.txt 浏览器视图的复制脚本(mcp/assets.go assetView)。
+//  1. 官网/状态页/404 页共用的主题预置脚本(web/site/index.html、
+//     web/site/status/index.html、web/site/404.html,三处逐字一致);
+//  2. 状态页引擎看板脚本(web/site/status/index.html)—— 2026-11-17 冷却原因
+//     文案改映射(REASON_CN,内部枚举不直出公众页),哈希随之更新;
+//  3. openapi.yaml / llms.txt 浏览器视图的复制脚本(mcp/assets.go assetView)。
+//
 // 控制台(web/admin)的内联脚本面未逐项核验,对其只下发 Report-Only,不阻断。
 const cspInlineScriptHashes = "'sha256-FneMDt+RQl3mtgKESJPgeSkA7sAw8Abzx8e9WL0SZvg=' " +
 	"'sha256-7bxcJ1DCPtpI0CkqsVSW8dBEXlYAjzUnZ378OsV5tJw=' " +
@@ -539,6 +540,7 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		FingerprintBrowserOpts: fingerprintBrowserOpts,
 		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
 		ResolveConfig:          core.DefaultURLResolveConfig(),
+		MaxConcurrentRequests:  config.App.MaxConcurrentRequests,
 		ExtraMiddleware:        []fiber.Handler{securityHeadersHandler()},
 		Resilience: core.ResilientConfig{
 			Retry: retryCfg,

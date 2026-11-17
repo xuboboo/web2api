@@ -89,6 +89,8 @@ type AppConfig struct {
 	LogBackups   int           `mapstructure:"log_backups"`
 	MaxProcesses int           `mapstructure:"max_processes"`
 	IdleTTL      time.Duration `mapstructure:"idle_ttl"`
+	// MaxConcurrentRequests caps in-flight search/index requests (0 = unlimited).
+	MaxConcurrentRequests int `mapstructure:"max_concurrent_requests"`
 }
 
 type EngineConfig struct {
@@ -445,6 +447,7 @@ var knownConfigKeys = map[string]bool{
 	"app.debug_endpoints": true, "app.log_format": true, "app.log_level": true,
 	"app.save_log": true, "app.log_max_mb": true, "app.log_backups": true,
 	"app.max_processes": true, "app.idle_ttl": true,
+	"app.max_concurrent_requests": true,
 
 	"proxies.global": true, "proxies.entries": true,
 	"proxies.allow_request_proxy_url":  true,
@@ -573,6 +576,7 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("app.debug_endpoints", false)
 	v.SetDefault("app.max_processes", 4)
 	v.SetDefault("app.idle_ttl", "10m")
+	v.SetDefault("app.max_concurrent_requests", 0)
 
 	v.SetDefault("proxies.entries", []interface{}{})
 	v.SetDefault("proxies.global", "")

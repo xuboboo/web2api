@@ -90,6 +90,31 @@ func RequestTimeoutMiddleware(timeout time.Duration) fiber.Handler {
 	}
 }
 
+// ConcurrencyLimitMiddleware caps the number of in-flight search/index requests.
+// It bounds peak browser memory on small servers without changing engine
+// behavior, fingerprint, or result - excess requests queue instead of opening
+// more renderer contexts. limit<=0 disables the gate.
+func ConcurrencyLimitMiddleware(limit int) fiber.Handler {
+	if limit <= 0 {
+		return func(c *fiber.Ctx) error { return c.Next() }
+	}
+	sem := make(chan struct{}, limit)
+	return func(c *fiber.Ctx) error {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+			return c.Next()
+		default:
+		}
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+			return c.Next()
+		case <-c.UserContext().Done():
+			return fiber.NewError(fiber.StatusServiceUnavailable, "server busy")
+		}
+	}
+}
 func CORSMiddleware(cfg CORSConfig) fiber.Handler {
 	cfg = normalizeCORSConfig(cfg)
 

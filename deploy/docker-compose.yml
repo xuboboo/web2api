@@ -27,8 +27,9 @@ services:
   web2api:
     container_name: serp
     init: true
-    # Chrome OOMs on page loads when /dev/shm is the default 64MB.
-    shm_size: 2gb
+    # Chrome needs more than the default 64MB /dev/shm. 2gb is safe on normal hosts;
+    # on 1.4GB-RAM servers use 512mb (launch already passes --disable-dev-shm-usage).
+    shm_size: 512mb
     image: web2api:local
     build:
       context: ..
@@ -39,6 +40,8 @@ services:
     command: serve
     volumes:
       - ../config.yaml:/usr/src/app/config.yaml:ro
+      # Persist API keys / usage / JWT secret across container recreation.
+      - web2api-data:/usr/src/app/data
     environment:
       WEB2API_SERVER_HOST: "0.0.0.0"
       WEB2API_SERVER_PORT: 7000
@@ -53,3 +56,6 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+
+volumes:
+  web2api-data:

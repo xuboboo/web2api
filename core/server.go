@@ -97,6 +97,10 @@ type ServerOptions struct {
 	// derives it from the engine timeout and retry budget via
 	// RequestTimeoutForRetries instead of exposing a separate config knob.
 	RequestTimeout time.Duration
+	// MaxConcurrentRequests bounds in-flight search/index requests to cap peak
+	// browser memory on small servers. Zero disables the gate.
+	MaxConcurrentRequests int
+
 	// ResolveConfig configures wrapped result URL resolution limits.
 	ResolveConfig URLResolveConfig
 	// MetricsToken guards GET <BasePath>/metrics (S4-GAP 运维指标). Empty =
@@ -214,6 +218,9 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 		app.Use(CORSMiddleware(opts.CORS))
 	}
 	app.Use(RequestLoggerMiddleware())
+	if opts.MaxConcurrentRequests > 0 {
+		app.Use(ConcurrencyLimitMiddleware(opts.MaxConcurrentRequests))
+	}
 
 	// Every route — health/stats endpoints, dedicated engine search, and the
 	// platform /api /v1 groups mounted later by the serve command — lives under

@@ -50,7 +50,8 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `block_trackers` | `false` | `true` | 屏蔽已知追踪域名 |
 | `debug_endpoints` | `false` | — | 开启 `/debug/fingerprint-check` |
 | `max_processes` | `4` | `6` | 并发 Chrome 进程上限 |
-| `idle_ttl` | `10m` | `5m` | 空闲 Chrome 回收时间 |
+| `idle_ttl` | `10m` | `45s` | 空闲 Chrome 回收时间（低内存优化；默认 10m） |
+| `max_concurrent_requests` | `0`（不限） | `2` | 在途搜索/收录请求并发上限，0=不限。小内存机器用它压峰值内存，超出排队 |
 
 ## platform（收录查询平台：管理控制台 + /v1/* 公网 API + /api/* 管理 API）
 

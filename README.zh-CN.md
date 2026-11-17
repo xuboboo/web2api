@@ -84,7 +84,7 @@
 
 ## 2. 收录判定是怎么做的
 
-1. **检索**：以目标 URL 为查询词在引擎内检索前 10 条结果——baidu/sogou/so360 用完整 URL；bing 去掉 scheme 后用 host+path 检索（实测 10 站对照：完整 URL 命中 4/10、去 scheme 命中 7/10，`https://` 前缀会被 Bing 当成关键词）。bing 早期的 `url:<url>` 语法已于 2026-11 停用（返回无关结果）。全部走各引擎现有搜索管道，桌面指纹、双通道、CAPTCHA 门控、限速、熔断照常生效。
+1. **检索**：以目标 URL 为查询词在引擎内检索前 10 条结果——baidu/sogou/so360 用完整 URL；bing 依次尝试多种查询形式并命中早停（优先带引号的完整 URL，其次完整 URL、去 scheme 的 host+path），任一 SERP 含精确匹配即返回；单一形式均有盲区。bing 早期的 `url:<url>` 语法已于 2026-11 停用（返回无关结果）。全部走各引擎现有搜索管道，桌面指纹、双通道、CAPTCHA 门控、限速、熔断照常生效。
 2. **跳转解析**：候选结果里的跳转链接（`baidu.com/link?url=`、`sogou.com/link`、`so.com/link`、bing `/ck/a`）先还原成真实地址，再参与匹配。
 3. **归一化匹配**：协议与 host 小写、去默认端口、去 fragment、去尾部 `/`（根路径除外）、百分号解码；目标 URL 无 query 时忽略结果的 query，有 query 时参数排序后须相等。host 与 path 相等 → `indexed=true` 且 `match="exact"`，否则 `indexed=false` 且 `match="none"`。
 4. **准确率说明**：所有引擎在**已收录但排名靠后（未进前 10）时会漏报**；`match="none"` 的严格含义是"检索前 10 条结果中没有该页面"，不等于"未收录"。根路径 URL（如 `https://example.com`）命中率最高；带深层路径的 URL 若未进前 10 会漏报。建议对同一 URL **多引擎交叉验证**：任一引擎 `indexed=true` 即可确认已收录。

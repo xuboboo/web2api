@@ -31,11 +31,11 @@ curl.exe -s http://127.0.0.1:7000/web-tool/health
 - 容器名 `serp`，镜像 `web2api:local`（构建自仓库 `Dockerfile`，运行时为 `chromedp/headless-shell`）
 - 官网入口 **`http://127.0.0.1:7000/web-tool/`**；管理控制台 **`http://127.0.0.1:7000/web-tool/console/`**（根路径 `/` 无任何路由）
 - 端口 `127.0.0.1:7000`（仅回环；需要外部访问时改 compose 里的映射或在前面加反向代理,见下文 nginx 示例）
-- `shm_size: 2gb`（Chrome 渲染必需）、`init: true`（tini 回收 Chrome 子进程）
+- `shm_size: 512mb`（Chrome 渲染所需共享内存；配合已启用的 `--disable-dev-shm-usage`，1.4G 小内存机器可安全使用。内存充足的机器可调回 `2gb`）、`init: true`（tini 回收 Chrome 子进程）
 - 配置以只读方式挂载：`../config.yaml:/usr/src/app/config.yaml:ro`
 - 健康检查：容器内 `wget --spider http://127.0.0.1:7000/web-tool/health`，30s 间隔
 - 日志：json-file，单文件 20MB × 3
-- 平台数据（API key、用量、JWT 密钥）写在容器 `/usr/src/app/data`;重建容器会丢失,需要保留时自行加 volume
+- 平台数据（API key、用量、JWT 密钥）写在容器 `/usr/src/app/data`;已挂载命名卷 `web2api-data` 做持久化,重建容器数据不丢失。首次升级从旧版（无卷）迁移时,旧容器内的数据不会自动进入新卷,请在升级前用 `docker cp serp:/usr/src/app/data ./data` 备份,升级后再写回卷
 
 > 修改 `config.yaml` 后需要 `--force-recreate` 才生效（挂载的是文件而非目录）。
 
@@ -58,7 +58,9 @@ location /web-tool/ {
 | `server.host/port` | `0.0.0.0:7000` | 容器内监听，宿主机映射回环 |
 | `server.insecure` | `true` | 容器缺企业根证书，浏览器/HTTP 通道需放宽 TLS |
 | `app.block_resources` | `image,font,css,media` | 降低渲染开销 |
-| `app.max_processes` | `6` | 并发 Chrome 上限 |
+| `app.max_processes` | `1` | 并发 Chrome 上限（1.4G 低内存优化，原默认 6） |
+| `app.idle_ttl` | `45s` | 空闲 Chrome 回收时间（低内存优化，原默认 5m） |
+| `app.max_concurrent_requests` | `2` | 在途请求并发上限，0=不限；超出排队以压峰值内存 |
 | `cache.ttl_seconds` | `120` | 专用端点 JSON 缓存 |
 | `resilience.max_retries` | `1` | 反爬场景下重试收益低，避免放大封禁 |
 | `circuit_breaker` | `8 / 20s / 1` | 放宽阈值、缩短恢复，适配国内引擎波动 |
@@ -109,7 +111,7 @@ go test ./...
 ## 6. 已知限制
 
 1. **单出口 IP 的吞吐上限**：百度/搜狗/360 对同 IP 高频访问会弹验证码。实测连续压测后需要约 20–40 分钟静默才恢复；持续抓取请配代理或降低频率。
-2. **收录判定准确率**:baidu/sogou/so360 以完整 URL 为查询词,bing 去 scheme 用 host+path 检索;已收录但排名靠后(未进前 10)时会漏报(详见根 README)。
+2. **收录判定准确率**:四引擎均以 URL 为查询词检索前 10 条; bing 采用多查询形式回退 + 命中早停(带引号完整 URL 优先);已收录但排名靠后(未进前 10)时会漏报(详见根 README)。
 3. **参数支持差异**：`date` 仅百度/Bing；`lang/region` 仅 Bing 真正生效（其余引擎会告警忽略）；`site:` 在百度/Bing 生效，搜狗会忽略（已实测）。
 4. **SERP 结构变化**：国内引擎改版频繁，解析器选择器集中在各引擎 `selectors.go`，改版时优先修这里并补 testdata 快照。
 

@@ -60,7 +60,7 @@ go test ./...
 - `docs/CONFIGURATION.md`（新增配置项）
 - `docs/TESTING.md`（新增/调整用例）
 
-**文档同步清单（唯一口径三则）**：计费 = 按成功单元（`platform/middleware.go:219-241`）；search 鉴权 = 随 `security.data_plane_auth`（`cmd/serve.go:554-559` + `config.yaml`）；bing 查询词 = 去 scheme 后的 host+path（`bing/index_check.go:22-37`）。改任一口径必须同步六个文件：`README.md`、`README.zh-CN.md`、`docs/API.md`、`docs/AGENT-README.md`、`mcp/llms.txt`、`mcp/openapi.yaml`。
+**文档同步清单（唯一口径三则）**：计费 = 按成功单元（`platform/middleware.go:219-241`）；search 鉴权 = 随 `security.data_plane_auth`（`cmd/serve.go:554-559` + `config.yaml`）；bing 查询词 = 多查询形式回退 + 命中早停（`bing/index_check.go`，`bingIndexQueries`）。改任一口径必须同步六个文件：`README.md`、`README.zh-CN.md`、`docs/API.md`、`docs/AGENT-README.md`、`mcp/llms.txt`、`mcp/openapi.yaml`。
 
 `docs/` 只放对外文档，内部资产（openapi-admin.yaml、audits、design）入 `docs/internal/`。
 

@@ -118,7 +118,7 @@ APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1.
 
 ## 收录判定（index check）
 
-- 查询词：baidu/sogou/so360 用完整 URL，bing 去掉 scheme 后用 host+path 检索（实测 10 站对照：完整 URL 命中 4/10、去 scheme 命中 7/10）。bing 早期使用的 `"url:<url>"` 语法于 2026-11 停用——实测 cn.bing.com 对该操作符返回无关结果。
+- 查询词：baidu/sogou/so360 用完整 URL；bing 依次尝试多种查询形式并命中早停（优先带引号的完整 URL，其次完整 URL、去 scheme 的 host+path），任一 SERP 含精确匹配即返回。bing 早期使用的 `"url:<url>"` 语法于 2026-11 停用——实测 cn.bing.com 对该操作符返回无关结果。
 - 候选跳转解析：sogou/so360 的 `/link` 在引擎内解析；漏网的 `baidu.com/link?url=`、`sogou.com/link`、`so.com/link` 由 core 复用 rawClickRequest 读 Location；bing 的 `/ck/a` 离线解码。
 - 归一化：协议与 host 小写、去默认端口、去 fragment、去尾部 `/`（根路径除外）、百分号解码；目标 URL 无 query 时忽略结果的 query，有 query 时参数排序后须相等。
 - 判定：host 与 path 相等 → `indexed=true, match="exact"`；否则 `indexed=false, match="none"`。
