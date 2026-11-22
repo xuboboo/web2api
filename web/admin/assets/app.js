@@ -2810,33 +2810,97 @@
         return;
       }
       pgState.lastReq = { urls: urls, engines: engines.slice() };
-      /* 首进骨架;此后旧结果原位降透明 */
-      if (!termBody.childElementCount) {
+      /* 首次检测显示骨架屏(空态节点不占位);此后旧结果原位降透明 */
+      if (!pgState.lastData) {
         termBody.innerHTML = '';
+        termBody.style.padding = '';
         termBody.appendChild(skeletonBlock([{ w: 'w30' }, { big: true, w: 'w50' }, { w: 'w80' }, { w: 'w70' }]));
       } else {
         termBody.classList.add('is-busy');
       }
       setFootStatus(null);
       setBtnLoading(submitBtn, true, '检测中…');
-      api('POST', '/api/playground/check', { urls: urls, engines: engines })
-        .then(function (data) {
-          pgState.lastData = data || {};
-          pgState.lastStatus = 200;
-          setFootStatus(200);
+      runBatchCheck(urls, engines, Date.now());
+    });
+
+    /* 分块串行检测:结果按块渐进上表,不再整包等待大转圈。
+     * 引擎限流(如百度 12 次/分钟)是批量耗时的瓶颈,块间串行让令牌
+     * 在块与块之间连续累积,块内排队时间被请求预算覆盖;任一块失败
+     * 即停,保留已出的结果并标注失败批次。 */
+    var PG_CHUNK_SIZE = 6;
+
+    function runBatchCheck(urls, engines, startedAt) {
+      var chunks = [];
+      for (var i = 0; i < urls.length; i += PG_CHUNK_SIZE) {
+        chunks.push(urls.slice(i, i + PG_CHUNK_SIZE));
+      }
+      var acc = { id: '', cooldowns: null, results: [], done: 0, total: chunks.length };
+
+      function merge(chunkData) {
+        chunkData = chunkData || {};
+        var meta = chunkData.meta || {};
+        if (!acc.id && meta.request_id) acc.id = meta.request_id;
+        if (meta.engines_cooldown) acc.cooldowns = meta.engines_cooldown;
+        if (Array.isArray(chunkData.results)) acc.results = acc.results.concat(chunkData.results);
+        acc.done += 1;
+      }
+
+      function currentData(final) {
+        var meta = {
+          request_id: acc.id,
+          took_ms: Date.now() - startedAt,
+          units: urls.length * engines.length
+        };
+        if (acc.cooldowns) meta.engines_cooldown = acc.cooldowns;
+        if (!final) meta.progress = { chunk: acc.done, chunks: acc.total };
+        if (acc.err) meta.error = { chunk: acc.failed, message: acc.err.message || '' };
+        return { id: acc.id, results: acc.results, meta: meta };
+      }
+
+      function renderProgress() {
+        pgState.lastData = currentData(false);
+        pgState.lastStatus = 200;
+        setFootStatus(200);
+        renderResult();
+      }
+
+      var chain = Promise.resolve();
+      chunks.forEach(function (chunk, idx) {
+        chain = chain.then(function () {
+          return api('POST', '/api/playground/check', { urls: chunk, engines: engines })
+            .then(function (data) {
+              merge(data);
+              renderProgress();
+            })
+            .catch(function (e) {
+              acc.err = e;
+              acc.failed = idx + 1;
+              throw e;
+            });
+        });
+      });
+
+      chain.then(function () {
+        pgState.lastData = currentData(true);
+        pgState.lastStatus = 200;
+        setFootStatus(200);
+        renderResult();
+      }).catch(function () {
+        pgState.lastStatus = typeof acc.err.status === 'number' ? acc.err.status : 0;
+        setFootStatus(pgState.lastStatus);
+        if (acc.results.length) {
+          /* 部分批次已出结果:保留已有行,失败批次以警示条标注 */
+          pgState.lastData = currentData(true);
           renderResult();
-        })
-        .catch(function (e) {
-          pgState.lastStatus = typeof e.status === 'number' ? e.status : 0;
-          setFootStatus(pgState.lastStatus);
+        } else {
           termBody.classList.remove('is-busy');
           termBody.innerHTML = '';
-          termBody.appendChild(errorNode(e, function () { submitBtn.click(); }));
-        })
-        .then(function () {
-          setBtnLoading(submitBtn, false);
-        });
-    });
+          termBody.appendChild(errorNode(acc.err, function () { submitBtn.click(); }));
+        }
+      }).then(function () {
+        setBtnLoading(submitBtn, false);
+      });
+    }
 
     /* 结果渲染:表格 / JSON 双视图 */
     function renderResult() {
@@ -2845,16 +2909,28 @@
       termBody.innerHTML = '';
       termBody.style.padding = '';
 
+      var results = Array.isArray(data.results) ? data.results : [];
       var metaBits = [];
       if (data.meta) {
         if (data.meta.request_id) metaBits.push('request_id ' + data.meta.request_id);
         if (data.meta.took_ms !== undefined) metaBits.push('耗时 ' + fmtDuration(data.meta.took_ms));
-        if (data.meta.units !== undefined) metaBits.push('计费 ' + data.meta.units + ' 次');
+        /* 计量口径 B-01:只实扣无错误的单元;分块进行中显示批次进度 */
+        if (data.meta.progress) {
+          metaBits.push('第 ' + data.meta.progress.chunk + '/' + data.meta.progress.chunks + ' 批 · 已出 ' + okUnitCount(results) + '/' + data.meta.units + ' 条');
+        } else if (data.meta.units !== undefined) {
+          metaBits.push('计费 ' + okUnitCount(results) + ' / ' + data.meta.units + ' 次');
+        }
       }
       var metaRow = el('div', { class: 'pg-meta', style: 'margin-bottom:14px;' });
       metaBits.forEach(function (b) {
         metaRow.appendChild(el('span', { class: 'mchip', text: b }));
       });
+      if (data.meta && data.meta.error) {
+        metaRow.appendChild(el('span', {
+          class: 'mchip warn',
+          text: '第 ' + data.meta.error.chunk + ' 批失败' + (data.meta.error.message ? ':' + truncate(data.meta.error.message, 48) : '')
+        }));
+      }
       var cdList = (data.meta && Array.isArray(data.meta.engines_cooldown)) ? data.meta.engines_cooldown : [];
       cdList.forEach(function (cd) {
         metaRow.appendChild(el('span', {
@@ -2865,7 +2941,6 @@
       });
       if (metaBits.length || cdList.length) termBody.appendChild(metaRow);
 
-      var results = Array.isArray(data.results) ? data.results : [];
       if (pgState.view === 'json') {
         termBody.innerHTML = '';
         termBody.style.padding = '0';
@@ -2940,6 +3015,18 @@
     function truncate(s, n) {
       s = String(s || '');
       return s.length > n ? s.slice(0, n - 1) + '…' : s;
+    }
+
+    /* okUnitCount 统计无错误的 (URL × 引擎) 单元数,与 B-01 实扣口径一致 */
+    function okUnitCount(results) {
+      var n = 0;
+      (results || []).forEach(function (r) {
+        var m = (r && r.engines && typeof r.engines === 'object') ? r.engines : {};
+        Object.keys(m).forEach(function (k) {
+          if (!(m[k] && m[k].error)) n += 1;
+        });
+      });
+      return n;
     }
   }
 
@@ -3549,7 +3636,7 @@ async def run():
           ['429', 'captcha_detected', '引擎返回验证码(引擎级 429 不影响批量其它引擎)'],
           ['503', 'engine_cooldown', '引擎冷却中:<code>{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}</code>;带 <code>Retry-After</code>'],
           ['503', 'circuit_open / proxy_*', '熔断开启或代理类失败(auth / connect / timeout / unavailable)'],
-          ['504', 'search_timeout / request_timeout', '引擎搜索超时或整体请求超时'],
+          ['504', 'search_timeout / request_timeout / engine_queue_exceeded', '引擎搜索超时 / 整体请求超时 / 批量限流排队超出请求预算'],
           ['501', 'not_implemented', '该引擎未实现所请求的能力'],
           ['502', 'parser_failure / engine_internal / all_engines_failed', '解析失败 / 引擎内部错误 / 全部引擎失败'],
           ['500', 'server_error', '服务端内部错误']
@@ -3562,6 +3649,7 @@ async def run():
           ['200', 'engine_cooldown', '该引擎处于冷却窗口,快速失败'],
           ['200', 'circuit_open', '熔断器开启,未发起真实请求'],
           ['200', 'search_timeout', '引擎搜索超时'],
+          ['200', 'engine_queue_exceeded', '该单元在引擎限流队列中等待超预算,未发起真实查询'],
           ['200', 'not_implemented', '引擎未实现该能力'],
           ['200', 'proxy_auth / proxy_connect / proxy_timeout / proxy_unavailable', '代理链路失败'],
           ['200', 'parser_failure', 'SERP 解析失败'],

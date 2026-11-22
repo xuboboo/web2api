@@ -97,6 +97,12 @@ type ServerOptions struct {
 	// derives it from the engine timeout and retry budget via
 	// RequestTimeoutForRetries instead of exposing a separate config knob.
 	RequestTimeout time.Duration
+	// IndexRequestTimeout is the wall-clock cap for index-check batch routes
+	// (/v1/index/check, /api/playground/check). A batch's engine rate-limiter
+	// queue time scales with unit count, so these routes need a larger budget
+	// than the base RequestTimeout; CheckIndexBatch narrows it per request to
+	// the projected queue time. Zero keeps the base timeout everywhere.
+	IndexRequestTimeout time.Duration
 	// MaxConcurrentRequests bounds in-flight search/index requests to cap peak
 	// browser memory on small servers. Zero disables the gate.
 	MaxConcurrentRequests int
@@ -165,8 +171,12 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 		// body on a slow link; handler time is governed separately by the
 		// request-timeout middleware, and keep-alive Concurrency is left at
 		// fasthttp defaults so in-process rate-limiter queuing still works.
+		// WriteTimeout must cover the handler: fasthttp arms the write
+		// deadline before the handler runs, so a full index-check batch
+		// (queue time scales with unit count, capped by
+		// IndexRequestTimeout) would otherwise lose its response at 60s.
 		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		WriteTimeout: writeTimeoutFor(opts),
 		IdleTimeout:  120 * time.Second,
 	})
 
@@ -212,7 +222,7 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	}
 	app.Use(RequestContextMiddleware())
 	if opts.RequestTimeout > 0 {
-		app.Use(RequestTimeoutMiddleware(opts.RequestTimeout))
+		app.Use(RequestTimeoutMiddleware(opts.RequestTimeout, opts.IndexRequestTimeout))
 	}
 	if opts.EnableCORS {
 		app.Use(CORSMiddleware(opts.CORS))
@@ -443,6 +453,11 @@ func mapSearchError(err error) searchErrorSpec {
 		return searchErrorSpec{status: fiber.StatusBadGateway, code: "all_engines_failed", message: "all search engines failed"}
 	case errors.Is(err, ErrCircuitOpen):
 		return searchErrorSpec{status: fiber.StatusServiceUnavailable, code: "circuit_open", message: "engine circuit breaker is open"}
+	// 限流排队死亡: the unit's projected rate-limiter token wait exceeded the
+	// remaining request budget, so it never reached the engine. Reporting it
+	// as request_timeout would blame the engine for a queue-budget problem.
+	case IsRateLimiterQueueErr(err):
+		return searchErrorSpec{status: fiber.StatusGatewayTimeout, code: "engine_queue_exceeded", message: "engine rate-limiter queue exceeded the request budget (unit never reached the engine)"}
 	case errors.Is(err, context.DeadlineExceeded):
 		return searchErrorSpec{status: fiber.StatusGatewayTimeout, code: "request_timeout", message: "request timed out"}
 	case errors.Is(err, context.Canceled):
@@ -1192,6 +1207,23 @@ func (s *Server) CheckIndexBatch(ctx context.Context, urls []string, engines []s
 	if selErr != nil {
 		WithRequest(requestCtx).WithField("reason", selErr.Reason).Warn("Invalid index check engines")
 		return nil, selErr
+	}
+
+	// 收录批量预算: the middleware base budget covers one unit's retry cycle,
+	// not the batch's rate-limiter queue time (baidu issues one token per 5s).
+	// Narrow the index-route cap to the projected queue time so the batch
+	// genuinely completes; when the request carries its own shorter deadline
+	// (MCP caller), context.WithTimeout keeps the tighter one.
+	if s.opts.RequestTimeout > 0 {
+		if dl := IndexCheckBatchDeadline(s.opts.RequestTimeout, len(urls), selected, s.resilient.retryCfg.MaxRetries); dl > s.opts.RequestTimeout {
+			var cancel context.CancelFunc
+			requestCtx, cancel = context.WithTimeout(requestCtx, dl)
+			defer cancel()
+			WithRequest(requestCtx).WithFields(logrus.Fields{
+				"batch_deadline_ms": dl.Milliseconds(),
+				"units":             len(urls) * len(selected),
+			}).Debug("Index check batch deadline scaled to rate-limiter queue time")
+		}
 	}
 
 	requestID := RequestIDFromContext(requestCtx)

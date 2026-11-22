@@ -80,14 +80,52 @@ func RequestContextMiddleware() fiber.Handler {
 
 // RequestTimeoutMiddleware bounds wall-clock time per request by attaching a
 // deadline to the user context, which fasthttp never cancels on client
-// disconnect.
-func RequestTimeoutMiddleware(timeout time.Duration) fiber.Handler {
+// disconnect. Index-check batch routes get indexTimeout instead of the base
+// timeout when it is larger: a batch's rate-limiter queue time scales with
+// unit count (e.g. baidu issues one token per 5s), so the base per-request
+// retry budget cannot cover a full 20-URL batch and the queued tail would
+// fail without ever reaching the engine.
+func RequestTimeoutMiddleware(timeout, indexTimeout time.Duration) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		ctx, cancel := context.WithTimeout(c.UserContext(), timeout)
+		limit := timeout
+		if indexTimeout > timeout && IsIndexCheckPath(c.Path()) {
+			limit = indexTimeout
+		}
+		ctx, cancel := context.WithTimeout(c.UserContext(), limit)
 		defer cancel()
 		c.SetUserContext(ctx)
 		return c.Next()
 	}
+}
+
+// IsIndexCheckPath reports whether the request path targets an index-check
+// batch endpoint: the dedicated /v1/index/check route and the console
+// playground check. Both are registered under the fixed base path, so the
+// route segment is matched anywhere in the path.
+func IsIndexCheckPath(p string) bool {
+	return strings.Contains(p, "/v1/index/check") || strings.Contains(p, "/playground/check")
+}
+
+// IndexCheckDeadlineCap is the wall-clock ceiling for index-check batch
+// requests. It covers the worst realistic batch: 20 URLs × 2 attempts
+// (max_retries=1) × the slowest engine token interval (sogou 7.5s) ≈ 300s —
+// clamped so a pathological config cannot hold a request open indefinitely.
+const IndexCheckDeadlineCap = 4 * time.Minute
+
+// writeTimeoutFor derives the fasthttp write timeout: fasthttp arms the write
+// deadline before the handler runs, so it must cover the longest handler —
+// an index-check batch capped by IndexRequestTimeout (plus response-write
+// margin). Everything else is bounded by the base RequestTimeout well under
+// 60s, so non-index routes keep the bounded default.
+func writeTimeoutFor(opts ServerOptions) time.Duration {
+	limit := 60 * time.Second
+	if opts.RequestTimeout > limit {
+		limit = opts.RequestTimeout
+	}
+	if opts.IndexRequestTimeout > limit {
+		limit = opts.IndexRequestTimeout + 30*time.Second
+	}
+	return limit
 }
 
 // ConcurrencyLimitMiddleware caps the number of in-flight search/index requests.

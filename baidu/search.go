@@ -40,20 +40,8 @@ func (baid *Baidu) Name() string {
 // page, so both paths can't drift. ErrEmptyResult is not a block: callers
 // handle that themselves once they've also checked for parsed results.
 func (baid *Baidu) classifyBlockPage(page *rod.Page, url string) error {
-	// Baidu answers throttled or flagged clients by navigating to its 图形验证码
-	// page (wappass.baidu.com/static/captcha/...). Detect it by URL so callers
-	// get ErrCaptcha (429 captcha_detected) instead of a misleading timeout.
-	if page != nil {
-		if info, err := page.Info(); err == nil {
-			if u, err := neturl.Parse(info.URL); err == nil {
-				host := strings.ToLower(u.Hostname())
-				path := strings.ToLower(u.Path)
-				if strings.Contains(host, "wappass") || strings.Contains(path, "captcha") || strings.Contains(path, "verify") {
-					baid.logger.Error("Captcha detected: %s", info.URL)
-					return core.ErrCaptcha
-				}
-			}
-		}
+	if err := baid.securityInterstitialErr(page); err != nil {
+		return err
 	}
 	err := core.ClassifyFromPage(page, classifyBaiduDocument)
 	if errors.Is(err, core.ErrEmptyResult) {
@@ -63,6 +51,42 @@ func (baid *Baidu) classifyBlockPage(page *rod.Page, url string) error {
 		baid.logger.Error("Page classified as %v: %s", err, url)
 	}
 	return err
+}
+
+// securityInterstitialErr recognizes Baidu's challenge pages by URL and page
+// title so callers get ErrCaptcha (429 captcha_detected) instead of a
+// misleading timeout. Two shapes exist in the wild: the classic wappass
+// 图形验证码 redirect, and the newer bio-capability interstitial (百度安全验证),
+// which JS-redirects to the bioc-static/seccaptcha CDN (ds_svcp.html). The
+// redirect can happen while the caller is still polling for result cards, so
+// the wait loop runs this check on every poll. The page title is the most
+// variant-proof signal: it survives future CDN bucket moves.
+func (baid *Baidu) securityInterstitialErr(page *rod.Page) error {
+	if page == nil {
+		return nil
+	}
+	info, err := page.Info()
+	if err != nil || info == nil {
+		return nil
+	}
+	if u, perr := neturl.Parse(info.URL); perr == nil {
+		host := strings.ToLower(u.Hostname())
+		path := strings.ToLower(u.Path)
+		if strings.Contains(host, "wappass") ||
+			strings.Contains(host, "seccaptcha") ||
+			strings.Contains(host, "bioc-static") ||
+			strings.Contains(path, "captcha") ||
+			strings.Contains(path, "verify") ||
+			strings.Contains(path, "ds_svcp") {
+			baid.logger.Error("Captcha detected: %s", info.URL)
+			return core.ErrCaptcha
+		}
+	}
+	if strings.Contains(info.Title, "安全验证") {
+		baid.logger.Error("Captcha detected by page title: %s", info.Title)
+		return core.ErrCaptcha
+	}
+	return nil
 }
 
 // Search executes a Baidu web search and returns normalized search results.
@@ -155,6 +179,14 @@ func (baid *Baidu) waitForParsedSearchResults(ctx context.Context, page *rod.Pag
 	var lastErr error
 
 	for {
+		// The security-check interstitial usually JS-redirects after Navigate
+		// returns, mid-poll. Catch it here so the challenge surfaces as
+		// ErrCaptcha within one poll cycle instead of burning the whole
+		// selector deadline on a page that will never show result cards.
+		if blockErr := baid.securityInterstitialErr(page); blockErr != nil {
+			return nil, blockErr
+		}
+
 		html, err := page.HTML()
 		if err == nil {
 			results, parseErr := ParseHTML(strings.NewReader(html))

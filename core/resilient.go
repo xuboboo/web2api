@@ -296,6 +296,16 @@ func normalizeLimiterWaitErr(ctx context.Context, err error) error {
 	return err
 }
 
+// IsRateLimiterQueueErr reports whether err is the normalized limiter-wait
+// failure: the unit's projected token wait exceeded the remaining request
+// budget, so the unit never reached the engine. The bare ctx-error shape (the
+// context already done when Wait returned) is intentionally excluded — that
+// one IS a genuine request timeout. Matching by message is the only option:
+// rate.Wait's error carries no sentinel.
+func IsRateLimiterQueueErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "rate: Wait(n=")
+}
+
 // invokeEngine is the single panic-recovery point for every engine call made
 // through the resilient pipeline (browser, raw, and any future engine method).
 // A rod/CDP panic surfaces as ErrEngineInternal instead of killing the process.

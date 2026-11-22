@@ -539,6 +539,10 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		FingerprintArtifactDir: core.DefaultFingerprintArtifactDir,
 		FingerprintBrowserOpts: fingerprintBrowserOpts,
 		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
+		// 收录批量(1–20 条 URL)的限流排队时间随单元数线性增长,基础
+		// 重试预算盖不住 20 条的尾部;批量路由放宽到独立上限,再由
+		// CheckIndexBatch 按实际单元数收窄。
+		IndexRequestTimeout:    core.IndexCheckDeadlineCap,
 		ResolveConfig:          core.DefaultURLResolveConfig(),
 		MaxConcurrentRequests:  config.App.MaxConcurrentRequests,
 		ExtraMiddleware:        []fiber.Handler{securityHeadersHandler()},

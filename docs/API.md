@@ -153,7 +153,8 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 - 成功单元：`indexed`（是否收录）、`match`（仅 `exact` / `none` 两种取值）、`matched_result_url`（命中的候选地址，`match=none` 时字段存在但为空串 `""`，解析方按空串判断即可）、`total_results`（SERP 内 organic 条数）、`took_ms`（该单元耗时）。
 - 失败单元：`error.code` / `error.message`，错误码与搜索端点同表（见 §7.2），例如 `blocked`、`captcha_detected`、`circuit_open`、`not_implemented`。
-- `meta.units = len(urls) × len(engines)`，即本次计费 unit 数。
+- `meta.units = len(urls) × len(engines)`，即本次请求的 unit 总数（计费口径为**实扣**：带 `error` 的单元不扣费）。
+- **批量超时预算**：引擎限流（防验证码，不可调高）决定了批量的串行吞吐——如百度 12 次/分钟（约每 5 秒放行一个查询），20 条 URL 的百度批量需要约 2 分钟的令牌排队。请求预算按批量规模动态放宽：`基础重试预算 + (单元数 × 最大尝试次数 − 1) × 最慢所选引擎的令牌间隔`，上限 4 分钟。正常批量在此预算内真实跑完；若仍超出（极端配置），排队单元返回 `engine_queue_exceeded`（§7.2），未发起真实查询、不计费。
 - `meta.engines_cooldown`：请求发出时已处于冷却期的引擎列表，元素为 `{"engine","until","reason"}`；`reason` 为 `COOLDOWN`（自然冷却）或 `FORCED`（运维强制冷却）。冷却中的引擎不会对真实引擎发请求——若**部分**引擎冷却，其余单元照常执行（200 信封内冷却单元的 `error.code` 为 `engine_cooldown`，附 `retry_after_seconds`）；若**所选引擎全部**冷却，整个请求 503（§1.3）。
 
 **错误响应**
@@ -736,6 +737,7 @@ curl -X POST {BASE}/api/playground/check \
 | `all_engines_failed` | 502 | 多引擎全失败（endpoint fallback 场景） |
 | `not_implemented` | 501 | 该引擎不支持该能力（例：`raw_requests=true` 时所有引擎不支持收录判定——每个单元返回此错误） |
 | `request_timeout` | 504 | 请求级超时（context deadline） |
+| `engine_queue_exceeded` | 504 | 该单元在引擎限流队列中等待超出请求预算，**未发起真实查询**即失败（批量限流排队时间随单元数线性增长，如百度 12 次/分钟 → 每令牌 5 秒；服务端会按批量规模动态放宽请求预算，见 §2.1） |
 | `request_canceled` | 503 | 客户端取消 |
 
 参数校验类（核心信封，`error=bad_request`、`code=400`、`reason` 取下列值）：

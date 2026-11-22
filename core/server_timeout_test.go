@@ -15,7 +15,7 @@ import (
 // RequestTimeoutMiddleware, regardless of the route.
 func TestRequestTimeoutMiddlewareSetsDeadline(t *testing.T) {
 	app := fiber.New()
-	app.Use(RequestTimeoutMiddleware(time.Minute))
+	app.Use(RequestTimeoutMiddleware(time.Minute, 0))
 
 	deadlines := map[string]bool{}
 	// c.Path() aliases fasthttp's reusable buffer, so capture the path

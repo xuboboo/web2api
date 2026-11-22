@@ -30,6 +30,12 @@ func classifyBaiduDocument(doc *goquery.Document) error {
 	if doc.Find(Selectors.Captcha).Length() > 0 {
 		return core.ErrCaptcha
 	}
+	// 百度安全验证: the bio-capability interstitial's <title> is the stable
+	// marker when the raw path fetches its HTML (URL markers can't apply —
+	// the raw fetcher follows the redirect to the challenge document).
+	if strings.Contains(doc.Find("title").First().Text(), "安全验证") {
+		return core.ErrCaptcha
+	}
 	if doc.Find(Selectors.Timeout).Length() > 0 {
 		return core.ErrSearchTimeout
 	}

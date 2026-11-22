@@ -475,6 +475,44 @@ func (rs *ResilientSearcher) CheckIndexWithProtection(ctx context.Context, engin
 // is additionally serialized by each engine's own rate limiter.
 const indexCheckWorkerLimit = 8
 
+// IndexCheckBatchDeadline derives the request deadline for one index-check
+// batch: the base per-request retry budget (which covers one unit's attempt
+// cycle, slack included) plus the projected rate-limiter queue time of the
+// LAST token — (units × worst-case attempts − 1) × the slowest selected
+// engine's token interval — clamped to IndexCheckDeadlineCap. The first
+// token never queues (burst or accrued), so it stays covered by the base
+// budget; a batch that outgrows the cap still fails honestly
+// (engine_queue_exceeded) instead of hanging to the cap.
+func IndexCheckBatchDeadline(base time.Duration, urls int, engines []SearchEngine, maxRetries int) time.Duration {
+	if base <= 0 || urls <= 0 {
+		return base
+	}
+	worst := time.Duration(0)
+	for _, engine := range engines {
+		limiter := engine.GetRateLimiter()
+		if limiter == nil || limiter.Limit() <= 0 {
+			continue
+		}
+		interval := time.Duration(float64(time.Second) / float64(limiter.Limit()))
+		if interval > worst {
+			worst = interval
+		}
+	}
+	if worst <= 0 {
+		return base
+	}
+	attempts := maxRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	tokens := urls * attempts
+	deadline := base + time.Duration(tokens-1)*worst
+	if deadline > IndexCheckDeadlineCap {
+		deadline = IndexCheckDeadlineCap
+	}
+	return deadline
+}
+
 // RunIndexCheckUnits evaluates every URL against every engine concurrently
 // (up to indexCheckWorkerLimit workers) and returns one result row per URL in
 // input order. Engine-level failures become per-unit error outcomes; the batch

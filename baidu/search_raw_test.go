@@ -56,6 +56,7 @@ func TestBaiduClassifyRawHTML(t *testing.T) {
 	}{
 		{name: "no results", fixture: "search_no_results.html", want: core.ErrEmptyResult},
 		{name: "captcha page", fixture: "search_captcha.html", want: core.ErrCaptcha},
+		{name: "security verification interstitial", fixture: "search_security_verify.html", want: core.ErrCaptcha},
 	}
 
 	for _, tt := range tests {
