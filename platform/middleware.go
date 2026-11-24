@@ -194,6 +194,12 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 		c.Locals(localKeyUnits, units)
 		c.Locals(localKeyURLs, urls)
 		c.Locals(localKeyEngines, engines)
+		// Bind the key to the request context so async index jobs are scoped to
+		// their owner (core.JobOwner). Without this any key could read or cancel
+		// another key's batch.
+		c.Locals(localAuthType, "api_key")
+		c.Locals(localKeyID, key.ID)
+		c.SetUserContext(core.WithJobOwner(c.UserContext(), key.ID))
 
 		handlerErr := c.Next()
 

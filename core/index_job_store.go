@@ -58,13 +58,17 @@ type IndexJob struct {
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 	FinishedAt *time.Time     `json:"finished_at,omitempty"`
-	Engines    []string       `json:"engines"`
-	Total      int            `json:"total"`
-	Completed  int            `json:"completed"`
-	Indexed    int            `json:"indexed"`
-	NotIndexed int            `json:"not_indexed"`
-	Failed     int            `json:"failed"`
-	Retrying   int            `json:"retrying"`
+	// OwnerKeyID is the API key that submitted the batch. Job state is
+	// tenant-scoped: another key can neither read nor cancel it. Empty means an
+	// admin (JWT) submission, which is allowed to see every job.
+	OwnerKeyID string   `json:"owner_key_id,omitempty"`
+	Engines    []string `json:"engines"`
+	Total      int      `json:"total"`
+	Completed  int      `json:"completed"`
+	Indexed    int      `json:"indexed"`
+	NotIndexed int      `json:"not_indexed"`
+	Failed     int      `json:"failed"`
+	Retrying   int      `json:"retrying"`
 	// WaitSeconds is the remaining cooldown the runner is waiting out.
 	WaitSeconds int    `json:"wait_seconds,omitempty"`
 	LastError   string `json:"last_error,omitempty"`

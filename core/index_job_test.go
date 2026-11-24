@@ -12,13 +12,13 @@ func waitForJob(t *testing.T, m *IndexJobManager, id string, timeout time.Durati
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		job, ok := m.Get(id)
+		job, ok := m.Get(id, "")
 		if ok && job.Status.Terminal() {
 			return job
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	job, _ := m.Get(id)
+	job, _ := m.Get(id, "")
 	if job != nil {
 		t.Fatalf("job %s did not finish, status=%s completed=%d/%d", id, job.Status, job.Completed, job.Total)
 	}
@@ -41,10 +41,10 @@ func TestIndexJobSubmitValidation(t *testing.T) {
 	eng := &indexEngineMock{name: "baidu", initialized: true}
 	m, _ := newTestJobManager(t, t.TempDir(), []SearchEngine{eng})
 
-	if _, apiErr := m.Submit(nil, nil); apiErr == nil || apiErr.Reason != "EMPTY_QUERY" {
+	if _, apiErr := m.Submit(context.Background(), nil, nil); apiErr == nil || apiErr.Reason != "EMPTY_QUERY" {
 		t.Fatalf("empty batch: got %+v", apiErr)
 	}
-	if _, apiErr := m.Submit([]string{"not a url"}, nil); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
+	if _, apiErr := m.Submit(context.Background(), []string{"not a url"}, nil); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
 		t.Fatalf("invalid url: got %+v", apiErr)
 	}
 
@@ -52,12 +52,12 @@ func TestIndexJobSubmitValidation(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = "https://example.test/" + time.Duration(i).String()
 	}
-	if _, apiErr := m.Submit(tooMany, nil); apiErr == nil || apiErr.Reason != "TOO_MANY_URLS" {
+	if _, apiErr := m.Submit(context.Background(), tooMany, nil); apiErr == nil || apiErr.Reason != "TOO_MANY_URLS" {
 		t.Fatalf("oversized batch: got %+v", apiErr)
 	}
 
 	// Duplicates collapse so the same page is never queried twice.
-	job, apiErr := m.Submit([]string{"https://example.test/a", " https://example.test/a ", "https://example.test/b"}, nil)
+	job, apiErr := m.Submit(context.Background(), []string{"https://example.test/a", " https://example.test/a ", "https://example.test/b"}, nil)
 	if apiErr != nil {
 		t.Fatalf("submit: %+v", apiErr)
 	}
@@ -78,7 +78,7 @@ func TestIndexJobRunsToDone(t *testing.T) {
 	}
 	m, _ := newTestJobManager(t, t.TempDir(), []SearchEngine{eng})
 
-	job, apiErr := m.Submit([]string{
+	job, apiErr := m.Submit(context.Background(), []string{
 		"https://example.test/1", "https://example.test/2", "https://example.test/3",
 	}, []string{"baidu"})
 	if apiErr != nil {
@@ -171,19 +171,19 @@ func TestIndexJobCancel(t *testing.T) {
 	m, _ := newTestJobManager(t, t.TempDir(), []SearchEngine{eng})
 	t.Cleanup(func() { close(block) })
 
-	job, apiErr := m.Submit([]string{"https://example.test/1", "https://example.test/2"}, []string{"baidu"})
+	job, apiErr := m.Submit(context.Background(), []string{"https://example.test/1", "https://example.test/2"}, []string{"baidu"})
 	if apiErr != nil {
 		t.Fatalf("submit: %+v", apiErr)
 	}
 	time.Sleep(50 * time.Millisecond)
-	if !m.Cancel(job.ID) {
+	if !m.Cancel(job.ID, "") {
 		t.Fatal("cancel reported no running job")
 	}
 	done := waitForJob(t, m, job.ID, 5*time.Second)
 	if done.Status != IndexJobCancelled {
 		t.Fatalf("status = %s, want cancelled", done.Status)
 	}
-	if m.Cancel(job.ID) {
+	if m.Cancel(job.ID, "") {
 		t.Fatal("cancelling a terminal job must report false")
 	}
 }
@@ -248,6 +248,52 @@ func TestIndexJobCSV(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "captcha_detected") {
 		t.Errorf("error row must carry the code: %q", lines[2])
+	}
+}
+
+// Jobs are tenant-scoped: another API key must not read, list or cancel them.
+// Regression for the audit finding where any key could cancel any batch.
+func TestIndexJobIsScopedToOwner(t *testing.T) {
+	eng := &indexEngineMock{
+		name: "baidu", initialized: true,
+		serpFn: func(_ context.Context, targetURL string, _ Query) ([]SearchResult, error) {
+			return []SearchResult{{Rank: 1, URL: targetURL, Title: "self"}}, nil
+		},
+	}
+	m, _ := newTestJobManager(t, t.TempDir(), []SearchEngine{eng})
+
+	ownerA := WithJobOwner(context.Background(), "key_owner_a")
+	job, apiErr := m.Submit(ownerA, []string{"https://example.test/tenant-a"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatalf("submit: %+v", apiErr)
+	}
+	if job.OwnerKeyID != "key_owner_a" {
+		t.Fatalf("owner not recorded: %q", job.OwnerKeyID)
+	}
+	waitForJob(t, m, job.ID, 5*time.Second)
+
+	if _, ok := m.Get(job.ID, "key_owner_a"); !ok {
+		t.Fatal("the owning key must see its own job")
+	}
+	if _, ok := m.Get(job.ID, "key_owner_b"); ok {
+		t.Fatal("a foreign key must not see the job (reports not-found)")
+	}
+	if m.Cancel(job.ID, "key_owner_b") {
+		t.Fatal("a foreign key must not cancel the job")
+	}
+	if visible := m.List("key_owner_b", 10); len(visible) != 0 {
+		t.Fatalf("foreign key listed %d jobs", len(visible))
+	}
+	if visible := m.List("key_owner_a", 10); len(visible) != 1 {
+		t.Fatalf("owning key listed %d jobs, want 1", len(visible))
+	}
+
+	// Admin (empty owner) keeps full visibility.
+	if _, ok := m.Get(job.ID, ""); !ok {
+		t.Fatal("admin must see every job")
+	}
+	if visible := m.List("", 10); len(visible) != 1 {
+		t.Fatalf("admin listed %d jobs, want 1", len(visible))
 	}
 }
 

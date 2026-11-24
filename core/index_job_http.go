@@ -61,7 +61,7 @@ type indexJobView struct {
 
 // submitIndexJob queues an oversized batch and answers 202.
 func (s *Server) submitIndexJob(c *fiber.Ctx, requestCtx context.Context, urls, engines []string) error {
-	job, apiErr := s.jobs.Submit(urls, engines)
+	job, apiErr := s.jobs.Submit(requestCtx, urls, engines)
 	if apiErr != nil {
 		WithRequest(requestCtx).WithField("reason", apiErr.Reason).Warn("Invalid index job parameters")
 		return apiErr
@@ -96,7 +96,7 @@ func (s *Server) IndexJobListHandler(c *fiber.Ctx) error {
 			limit = n
 		}
 	}
-	jobs := s.jobs.List(limit)
+	jobs := s.jobs.List(JobOwner(c.UserContext()), limit)
 	views := make([]indexJobView, 0, len(jobs))
 	for i := range jobs {
 		views = append(views, s.jobView(c, &jobs[i]))
@@ -149,10 +149,10 @@ func (s *Server) IndexJobCancelHandler(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if !s.jobs.Cancel(job.ID) {
+	if !s.jobs.Cancel(job.ID, JobOwner(c.UserContext())) {
 		return &APIError{HTTPStatus: 409, ErrorCode: "conflict", Reason: "CONFLICT", Message: "job already finished"}
 	}
-	updated, _ := s.jobs.Get(job.ID)
+	updated, _ := s.jobs.Get(job.ID, JobOwner(c.UserContext()))
 	if updated == nil {
 		updated = job
 	}
@@ -165,7 +165,7 @@ func (s *Server) lookupJob(c *fiber.Ctx) (*IndexJob, error) {
 		return nil, &APIError{HTTPStatus: 501, ErrorCode: "not_implemented", Reason: "NOT_IMPLEMENTED", Message: "index jobs are not enabled"}
 	}
 	id := strings.TrimSpace(c.Params("id"))
-	job, ok := s.jobs.Get(id)
+	job, ok := s.jobs.Get(id, JobOwner(c.UserContext()))
 	if !ok {
 		return nil, &APIError{HTTPStatus: 404, ErrorCode: "not_found", Reason: "NOT_FOUND", Message: "job not found"}
 	}

@@ -182,8 +182,12 @@ func (m *IndexJobManager) resume(ctx context.Context) {
 	}
 }
 
-// Submit validates and queues a batch.
-func (m *IndexJobManager) Submit(urls []string, engines []string) (*IndexJob, *APIError) {
+// Submit validates and queues a batch for the caller identified by ctx.
+//
+// The owner is read from the request context (core.WithJobOwner), so a job is
+// bound to the API key that paid for it: another key cannot read, list or cancel
+// it. An empty owner means an admin submission (JWT), which may see every job.
+func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []string) (*IndexJob, *APIError) {
 	if m == nil {
 		return nil, &APIError{HTTPStatus: 501, ErrorCode: "not_implemented", Reason: "NOT_IMPLEMENTED", Message: "index jobs are not enabled"}
 	}
@@ -209,13 +213,14 @@ func (m *IndexJobManager) Submit(urls []string, engines []string) (*IndexJob, *A
 
 	now := time.Now().UTC()
 	job := IndexJob{
-		ID:        newIndexJobID(now),
-		Status:    IndexJobQueued,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Engines:   append([]string(nil), engines...),
-		Total:     len(clean),
-		URLs:      clean,
+		ID:         newIndexJobID(now),
+		Status:     IndexJobQueued,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		OwnerKeyID: JobOwner(ctx),
+		Engines:    append([]string(nil), engines...),
+		Total:      len(clean),
+		URLs:       clean,
 	}
 	if err := m.store.SaveMeta(&job); err != nil {
 		return nil, &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot persist the job"}
@@ -232,13 +237,18 @@ func (m *IndexJobManager) Submit(urls []string, engines []string) (*IndexJob, *A
 	return &out, nil
 }
 
-// Get returns one job's snapshot.
-func (m *IndexJobManager) Get(id string) (*IndexJob, bool) {
+// Get returns one job's snapshot, but only when ownerKeyID may see it. A
+// foreign job reports "not found" — never "forbidden" — so the endpoint does not
+// confirm that somebody else's batch exists.
+func (m *IndexJobManager) Get(id, ownerKeyID string) (*IndexJob, bool) {
 	m.mu.Lock()
 	st, ok := m.jobs[id]
 	m.mu.Unlock()
 	if ok {
 		snap := st.snapshot()
+		if !jobVisibleTo(snap.OwnerKeyID, ownerKeyID) {
+			return nil, false
+		}
 		return &snap, true
 	}
 	// Not resident (previous process): fall back to disk.
@@ -246,12 +256,15 @@ func (m *IndexJobManager) Get(id string) (*IndexJob, bool) {
 	if err != nil {
 		return nil, false
 	}
+	if !jobVisibleTo(meta.OwnerKeyID, ownerKeyID) {
+		return nil, false
+	}
 	meta.URLs = nil
 	return meta, true
 }
 
-// List returns resident + stored jobs, newest first.
-func (m *IndexJobManager) List(limit int) []IndexJob {
+// List returns the jobs visible to ownerKeyID, newest first.
+func (m *IndexJobManager) List(ownerKeyID string, limit int) []IndexJob {
 	m.mu.Lock()
 	resident := make([]IndexJob, 0, len(m.jobs))
 	for _, st := range m.jobs {
@@ -263,11 +276,14 @@ func (m *IndexJobManager) List(limit int) []IndexJob {
 	seen := make(map[string]bool, len(resident))
 	out := make([]IndexJob, 0, len(metas)+len(resident))
 	for _, job := range resident {
+		if !jobVisibleTo(job.OwnerKeyID, ownerKeyID) {
+			continue
+		}
 		seen[job.ID] = true
 		out = append(out, job)
 	}
 	for _, meta := range metas {
-		if seen[meta.ID] {
+		if seen[meta.ID] || !jobVisibleTo(meta.OwnerKeyID, ownerKeyID) {
 			continue
 		}
 		snap := *meta
@@ -286,8 +302,8 @@ func (m *IndexJobManager) Results(id string) ([]IndexCheckURLResult, error) {
 	return m.store.LoadResults(id)
 }
 
-// Cancel stops a queued or running job.
-func (m *IndexJobManager) Cancel(id string) bool {
+// Cancel stops a queued or running job owned by ownerKeyID.
+func (m *IndexJobManager) Cancel(id, ownerKeyID string) bool {
 	m.mu.Lock()
 	st, ok := m.jobs[id]
 	m.mu.Unlock()
@@ -295,6 +311,10 @@ func (m *IndexJobManager) Cancel(id string) bool {
 		return false
 	}
 	st.mu.Lock()
+	if !jobVisibleTo(st.job.OwnerKeyID, ownerKeyID) {
+		st.mu.Unlock()
+		return false
+	}
 	if st.job.Status.Terminal() {
 		st.mu.Unlock()
 		return false

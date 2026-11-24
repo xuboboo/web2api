@@ -388,6 +388,9 @@ func (p *Platform) AuthAny() fiber.Handler {
 				c.Locals(localAuthType, "api_key")
 				c.Locals(localKeyID, key.ID)
 				c.Locals(localKeyName, *key)
+				// Scope async jobs to the paying key (core.JobOwner): the MCP
+				// check_indexed tool submits through this context.
+				c.SetUserContext(core.WithJobOwner(c.UserContext(), key.ID))
 				started := time.Now()
 				handlerErr := c.Next()
 				if status := c.Response().StatusCode(); status == fiber.StatusOK && handlerErr == nil && units > 0 {
