@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/time/rate"
 )
@@ -31,8 +32,9 @@ import (
 // results as candidates.
 const IndexCheckLimit = 10
 
-// MaxIndexCheckURLs is the platform contract maximum for one /v1/index/check
-// request (1..20 URLs).
+// MaxIndexCheckURLs is how many URLs one /v1/index/check request answers
+// synchronously. Larger batches are accepted into the async job queue instead
+// (see index_job_manager.go), so this is a latency boundary, not a hard limit.
 const MaxIndexCheckURLs = 20
 
 // IndexMatchExact / IndexMatchNone are the only match values defined by the
@@ -98,6 +100,12 @@ type IndexCheckEngineOutcome struct {
 	success *IndexCheckSuccess
 	// err is set when the engine failed for this unit.
 	err *IndexCheckEngineError
+}
+
+// Verdict exposes the union members for in-process callers (the job runner and
+// the CSV exporter) that must not depend on the JSON projection.
+func (o IndexCheckEngineOutcome) Verdict() (*IndexCheckSuccess, *IndexCheckEngineError) {
+	return o.success, o.err
 }
 
 // MarshalJSON implements the contract's union shape.
@@ -189,7 +197,27 @@ type IndexResolveOptions struct {
 	// Fetch overrides the opaque-redirect fetcher; nil uses production.
 	// Test-only hook so unit tests never touch the network.
 	Fetch IndexCheckFetcher
+	// TitleMatch marks an engine whose SERP phrase was the target page title
+	// rather than the URL. The evaluator then matches result titles and treats
+	// the title probe as authoritative: no title hit means not indexed, and the
+	// expensive per-candidate redirect resolution is skipped.
+	TitleMatch bool
+	// Title overrides the cached page title (tests, and engines that already
+	// hold the probe phrase). Empty means "fetch from cache".
+	Title string
 }
+
+// TitleProbeEngine is implemented by engines whose index check searches the
+// target page title instead of the URL phrase.
+type TitleProbeEngine interface {
+	IndexUsesTitleProbe() bool
+}
+
+// IndexTitleMatchThreshold is the minimum normalized title similarity that
+// counts as "this SERP row is our page". Measured against 767 real lookups:
+// 0.679 missed a Baidu-truncated title (leading ellipsis) that 0.96 after
+// normalization; every true positive scored >= 0.727.
+const IndexTitleMatchThreshold = 0.72
 
 // EvaluateIndexSERP decides whether targetURL is present in the parsed SERP
 // candidates. Pass 1 matches purely offline (Bing click / Google plaintext
@@ -210,6 +238,19 @@ func EvaluateIndexSERP(ctx context.Context, targetURL string, results []SearchRe
 		verdict.Indexed = true
 		verdict.Match = IndexMatchExact
 		verdict.MatchedResultURL = candidate
+		return verdict
+	}
+
+	// Title probe: the SERP was queried with the page title, so a matching
+	// result title is the verdict. It is authoritative for these engines — the
+	// URL phrase path is what under-detects, and resolving 10 opaque wrappers on
+	// every negative is what burns the exit IP.
+	if opts.TitleMatch {
+		if candidate, found := matchIndexResultTitle(ctx, targetURL, results, opts); found {
+			verdict.Indexed = true
+			verdict.Match = IndexMatchExact
+			verdict.MatchedResultURL = candidate
+		}
 		return verdict
 	}
 
@@ -245,6 +286,181 @@ func EvaluateIndexSERP(ctx context.Context, targetURL string, results []SearchRe
 		}
 	}
 	return verdict
+}
+
+// matchIndexResultTitle looks for a SERP row whose title is the probed page
+// title. The candidate's redirect is resolved (at most once, and only for
+// rows that already cleared the threshold) so matched_result_url is the real
+// destination; when the destination belongs to a different host the row is a
+// reprint, not our page, and is skipped.
+func matchIndexResultTitle(ctx context.Context, targetURL string, results []SearchResult, opts IndexResolveOptions) (string, bool) {
+	title := strings.TrimSpace(opts.Title)
+	if title == "" {
+		fetched, ok := FetchPageTitle(ctx, targetURL, opts.Query)
+		if !ok {
+			return "", false
+		}
+		title = fetched
+	}
+	target, hasTarget := indexURLKeyFrom(targetURL)
+
+	for _, r := range results {
+		if r.Ad || r.URL == "" {
+			continue
+		}
+		if TitleMatchScore(title, r.Title) < IndexTitleMatchThreshold {
+			continue
+		}
+		candidate := unwrapIndexCandidateOffline(r.URL)
+		if isOpaqueWrappedIndexURL(candidate) {
+			fetch := opts.Fetch
+			if fetch == nil {
+				fetch = indexRedirectFetch
+			}
+			if dest, err := resolveOpaqueIndexRedirect(ctx, candidate, opts.Query, fetch); err == nil {
+				candidate = dest
+			}
+		}
+		if hasTarget {
+			if key, ok := indexURLKeyFrom(candidate); ok && !isOpaqueWrappedIndexURL(candidate) {
+				if indexSiteKey(key.host) != indexSiteKey(target.host) {
+					// Same headline published elsewhere: not our page.
+					continue
+				}
+			}
+		}
+		return candidate, true
+	}
+	return "", false
+}
+
+// TitleMatchScore compares a probed page title with a SERP row title on a 0..1
+// scale after normalization (punctuation, whitespace, full-width forms and the
+// source suffix Baidu appends are removed). Values >= IndexTitleMatchThreshold
+// mean "same article".
+func TitleMatchScore(probed, result string) float64 {
+	a := normalizeIndexTitle(probed)
+	b := normalizeIndexTitle(result)
+	if a == "" || b == "" {
+		return 0
+	}
+	short, long := a, b
+	if len([]rune(short)) > len([]rune(long)) {
+		short, long = long, short
+	}
+	if len([]rune(short)) < 6 {
+		return 0
+	}
+	// Baidu truncates long headlines with a leading ellipsis; normalization
+	// already dropped it, so containment catches the truncated form.
+	if strings.Contains(long, short) {
+		return 0.96
+	}
+	if prefix := commonRunePrefix(a, b); float64(prefix)/float64(len([]rune(short))) >= 0.9 {
+		return float64(prefix) / float64(len([]rune(short)))
+	}
+	return diceBigrams(a, b)
+}
+
+// normalizeIndexTitle lowercases and strips everything that differs between a
+// page <title>, Baidu's rendered row title and the spreadsheet's headline.
+func normalizeIndexTitle(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, ".。…· ")
+	if s == "" {
+		return ""
+	}
+	// Drop a short trailing source label ("_华军软件园", " - 某某网").
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == '_' || r == '|' || r == '｜' || r == '·'
+	})
+	if len(parts) > 1 {
+		longest := parts[0]
+		for _, part := range parts[1:] {
+			part = strings.TrimSpace(part)
+			if len([]rune(part)) > len([]rune(longest)) {
+				longest = part
+			}
+		}
+		s = longest
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsSpace(r), unicode.IsPunct(r), unicode.IsSymbol(r):
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func commonRunePrefix(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	n := len(ra)
+	if len(rb) < n {
+		n = len(rb)
+	}
+	i := 0
+	for i < n && ra[i] == rb[i] {
+		i++
+	}
+	return i
+}
+
+// diceBigrams is the Sørensen–Dice coefficient over rune bigrams.
+func diceBigrams(a, b string) float64 {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) < 2 || len(rb) < 2 {
+		return 0
+	}
+	ga := map[string]int{}
+	for i := 0; i < len(ra)-1; i++ {
+		ga[string(ra[i:i+2])]++
+	}
+	inter := 0
+	total := len(ra) - 1
+	for i := 0; i < len(rb)-1; i++ {
+		gram := string(rb[i : i+2])
+		if ga[gram] > 0 {
+			ga[gram]--
+			inter++
+		}
+	}
+	total += len(rb) - 1
+	if total == 0 {
+		return 0
+	}
+	return 2 * float64(inter) / float64(total)
+}
+
+// indexSiteKey reduces a host to its registrable site so desktop and mobile
+// hosts of the same publisher compare equal: Baidu ranks "m.onlinedown.net"
+// for an article whose canonical URL is "www.onlinedown.net", and treating
+// those as different sites produced false "not indexed" verdicts.
+func indexSiteKey(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimSuffix(host, ".")
+	for _, prefix := range []string{"www.", "m.", "wap.", "mobile."} {
+		host = strings.TrimPrefix(host, prefix)
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) >= 3 && twoLevelPublicSuffix[parts[len(parts)-2]+"."+parts[len(parts)-1]] {
+		return strings.Join(parts[len(parts)-3:], ".")
+	}
+	if len(parts) >= 2 {
+		return strings.Join(parts[len(parts)-2:], ".")
+	}
+	return host
+}
+
+// twoLevelPublicSuffix lists the multi-label public suffixes seen in Baidu's
+// result set; anything else falls back to "last two labels".
+var twoLevelPublicSuffix = map[string]bool{
+	"com.cn": true, "net.cn": true, "org.cn": true, "gov.cn": true,
+	"edu.cn": true, "com.hk": true, "com.tw": true, "co.uk": true,
+	"co.jp": true, "com.au": true,
 }
 
 // IndexSERPContains reports whether targetURL appears in results under the
@@ -467,12 +683,15 @@ func (l *indexLookupEngine) runtimeQuery() Query {
 // same proxy the SERP used.
 func (rs *ResilientSearcher) CheckIndexWithProtection(ctx context.Context, engine SearchEngine, targetURL string) ([]SearchResult, Query, error) {
 	lookup := &indexLookupEngine{engine: engine, targetURL: targetURL}
-	results, _, err := rs.searchWithProtection(ctx, lookup, Query{})
+	// Index units get their own (single-retry) budget: a blocked lookup should
+	// fail fast, not quadruple the request count against the same exit IP.
+	results, _, err := rs.searchWithProtectionCfg(ctx, lookup, Query{}, rs.indexRetryCfg)
 	return results, lookup.runtimeQuery(), err
 }
 
-// indexCheckWorkerLimit caps concurrent (URL × engine) units. Per-engine load
-// is additionally serialized by each engine's own rate limiter.
+// indexCheckWorkerLimit is retained for compatibility with callers that sized
+// their batches against it. Unit dispatch is now per-engine serial, so the
+// effective concurrency is len(selected engines).
 const indexCheckWorkerLimit = 8
 
 // IndexCheckBatchDeadline derives the request deadline for one index-check
@@ -528,22 +747,22 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 		return out
 	}
 
-	type unit struct{ urlIdx, engineIdx int }
-	units := make(chan unit)
+	// One goroutine per engine, one in-flight request per engine. Engines are
+	// rate-limited per token anyway, so a mixed worker pool only added spiky
+	// bursts against the same exit IP (the main captcha trigger); serialising
+	// per engine keeps the request rate flat while selected engines still run
+	// in parallel.
 	var (
 		wg      sync.WaitGroup
 		writeMu sync.Mutex
 	)
-	workers := indexCheckWorkerLimit
-	if total := len(urls) * len(engines); workers > total {
-		workers = total
-	}
-	for w := 0; w < workers; w++ {
+	for ei := range engines {
+		engine := engines[ei]
+		titleMatch := engineUsesTitleProbe(engine)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for u := range units {
-				engine := engines[u.engineIdx]
+			for ui := range urls {
 				startedAt := time.Now()
 				var outcome IndexCheckEngineOutcome
 
@@ -560,7 +779,7 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 					if gate.IsProbe() {
 						probeErr = errProbeIncomplete
 					}
-					serp, runtimeQ, err := rs.CheckIndexWithProtection(ctx, engine, out[u.urlIdx].URL)
+					serp, runtimeQ, err := rs.CheckIndexWithProtection(ctx, engine, out[ui].URL)
 					if gate.IsProbe() {
 						probeErr = err
 						gate.FinishProbe(probeErr)
@@ -568,26 +787,31 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 					if err != nil {
 						outcome = indexCheckErrorOutcome(ctx, err)
 					} else {
-						success := EvaluateIndexSERP(ctx, out[u.urlIdx].URL, serp, IndexResolveOptions{Query: runtimeQ})
+						success := EvaluateIndexSERP(ctx, out[ui].URL, serp, IndexResolveOptions{
+							Query:      runtimeQ,
+							TitleMatch: titleMatch,
+						})
 						outcome = IndexCheckEngineOutcome{success: &success}
 					}
 				}
 				outcome.success.setTookIfSuccess(time.Since(startedAt).Milliseconds())
-
 				writeMu.Lock()
-				out[u.urlIdx].Engines[engine.Name()] = outcome
+				out[ui].Engines[engine.Name()] = outcome
 				writeMu.Unlock()
 			}
 		}()
 	}
-	for ui := range urls {
-		for ei := range engines {
-			units <- unit{urlIdx: ui, engineIdx: ei}
-		}
-	}
-	close(units)
 	wg.Wait()
 	return out
+}
+
+// engineUsesTitleProbe reports whether engine builds its index-check SERP from
+// the target page title.
+func engineUsesTitleProbe(engine SearchEngine) bool {
+	if probe, ok := engine.(TitleProbeEngine); ok {
+		return probe.IndexUsesTitleProbe()
+	}
+	return false
 }
 
 // setTookIfSuccess stamps TookMs on success verdicts only.

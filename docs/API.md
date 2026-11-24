@@ -101,7 +101,11 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 ### 2.1 POST /web-tool/v1/index/check
 
-批量收录判定：每个 (URL × 引擎) 单元以目标 URL 为查询词在引擎内检索前 10 条结果并做归一化匹配。
+批量收录判定：每个 (URL × 引擎) 单元在引擎内检索前 10 条结果并做归一化匹配。
+
+> **判定口径（baidu）**：百度开启 `baidu.index_title_probe`（默认开启）后，检索词是目标页面的 `<title>`（同域 HTTP 抓取，不经过百度），结果按标题相似度匹配（阈值 0.72，已归一化标点/空格/来源后缀/截断省略号），并校验命中结果的主机与目标一致（同标题转载不算本页）。之所以不用 `wd=<URL>`：实测已收录文章用 URL 当检索词也常返回空结果，会把"已收录"判成"未收录"。标题抓取失败时自动回退到 URL 短语检索。
+>
+> 百度明确返回"没有相关结果"（`div.content_none`）时本单元判 `indexed:false`，不再按超时重试；收录单元默认只重试 1 次（`stability.index_check.max_retries`）。
 
 **请求体**
 
@@ -112,7 +116,11 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 }
 ```
 
-- `urls`：1–20 条（超出 → 400 `TOO_MANY_URLS`，为空 → 400 `EMPTY_QUERY`）。
+- `urls`：1 条以上，上限为 `index_jobs.max_urls`（默认 5000）。
+  - **≤ 20 条**：同步返回 200（本节形状）。
+  - **> 20 条**：请求被接收入队，返回 **202** + `job_id`（异步任务，见 §2.2b）；调用方随后查进度/取结果。
+  - 未开启任务队列（`index_jobs.enabled=false`）时，> 20 条仍返回 400 `TOO_MANY_URLS`。
+  - 为空 → 400 `EMPTY_QUERY`；非法 URL → 400 `INVALID_PARAM`。
 - `engines`：可选，缺省 = 全部可用引擎；接受别名 `360`；含未知引擎 → 400 `INVALID_PARAM`。
 
 **200 响应**（引擎级失败不拖垮整体——该单元给 `error` 字段，HTTP 仍 200）
@@ -152,18 +160,22 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 字段说明：
 
 - 成功单元：`indexed`（是否收录）、`match`（仅 `exact` / `none` 两种取值）、`matched_result_url`（命中的候选地址，`match=none` 时字段存在但为空串 `""`，解析方按空串判断即可）、`total_results`（SERP 内 organic 条数）、`took_ms`（该单元耗时）。
+  - 百度按标题判定命中时，`matched_result_url` 可能是同一站点的移动域（如 `m.example.com` 命中 `www.example.com` 的文章）；判定已按可注册域名校验同站，不会把转载站算成本页。
 - 失败单元：`error.code` / `error.message`，错误码与搜索端点同表（见 §7.2），例如 `blocked`、`captcha_detected`、`circuit_open`、`not_implemented`。
 - `meta.units = len(urls) × len(engines)`，即本次请求的 unit 总数（计费口径为**实扣**：带 `error` 的单元不扣费）。
-- **批量超时预算**：引擎限流（防验证码，不可调高）决定了批量的串行吞吐——如百度 12 次/分钟（约每 5 秒放行一个查询），20 条 URL 的百度批量需要约 2 分钟的令牌排队。请求预算按批量规模动态放宽：`基础重试预算 + (单元数 × 最大尝试次数 − 1) × 最慢所选引擎的令牌间隔`，上限 4 分钟。正常批量在此预算内真实跑完；若仍超出（极端配置），排队单元返回 `engine_queue_exceeded`（§7.2），未发起真实查询、不计费。
+- **批量超时预算**：引擎限流（防验证码，经实测标定）决定了批量的串行吞吐——百度默认 `5 次/分钟`（约每 12 秒放行一个查询），20 条 URL 的百度批量需要约 4 分钟的令牌排队。请求预算按批量规模动态放宽：`基础重试预算 + (单元数 × 最大尝试次数 − 1) × 最慢所选引擎的令牌间隔`，**上限 12 分钟**。正常批量在此预算内真实跑完；若仍超出（极端配置），排队单元返回 `engine_queue_exceeded`（§7.2），未发起真实查询、不计费。
+- 超过 20 条的批量不要靠提高预算硬撑，走 §2.2b 的异步任务：同样的节奏，但不受单次 HTTP 连接寿命限制。
 - `meta.engines_cooldown`：请求发出时已处于冷却期的引擎列表，元素为 `{"engine","until","reason"}`；`reason` 为 `COOLDOWN`（自然冷却）或 `FORCED`（运维强制冷却）。冷却中的引擎不会对真实引擎发请求——若**部分**引擎冷却，其余单元照常执行（200 信封内冷却单元的 `error.code` 为 `engine_cooldown`，附 `retry_after_seconds`）；若**所选引擎全部**冷却，整个请求 503（§1.3）。
 
 **错误响应**
 
 | HTTP | 信封 | 场景 |
 | --- | --- | --- |
+| 200 | 见上 | ≤ 20 条，同步结果 |
+| 202 | `{"job_id",…}`（§2.2b） | > 20 条且已开启任务队列，已入队 |
 | 400 | `{"error":"bad_request",…,"reason":"EMPTY_QUERY"}` | `urls` 为空 |
-| 400 | `{"error":"bad_request",…,"reason":"TOO_MANY_URLS"}` | `urls` 超过 20 条 |
-| 400 | `{"error":"bad_request",…,"reason":"INVALID_PARAM"}` | 含未知引擎等 |
+| 400 | `{"error":"bad_request",…,"reason":"TOO_MANY_URLS"}` | 超过 20 条但**未开启任务队列**，或超过 `index_jobs.max_urls` |
+| 400 | `{"error":"bad_request",…,"reason":"INVALID_PARAM"}` | 含未知引擎、非法 URL 等 |
 | 401 | `{"error":"unauthorized"}` | key 缺失 / 未知 / 禁用 |
 | 429 | `{"error":"quota_exceeded"}`（`Retry-After` 头） | 当日配额用尽 |
 | 503 | `{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":600}`（`Retry-After` 头） | 所选引擎全部处于冷却期 |
@@ -171,7 +183,7 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 > **本端点 400 的信封现状（实测）**：契约目标形状是上面的三字段平台信封（`platform/errors.go` 注释与 §1.2），管理端 `/api/*` 的 400 已是该形状；但 `/web-tool/v1/index/check` 的参数校验当前由核心 index 处理器应答，实测返回的是 §1.1 核心信封：
 >
 > ```json
-> {"error":"bad_request","code":400,"request_id":"01a1db49-…","message":"TOO_MANY_URLS: urls accepts at most 20 entries, got 21","reason":"TOO_MANY_URLS"}
+> {"error":"bad_request","code":400,"request_id":"01a1db49-…","message":"TOO_MANY_URLS: urls accepts at most 5000 entries per job, got 6000","reason":"TOO_MANY_URLS"}
 > ```
 >
 > 两种形状的 `error` 恒为 `bad_request`、`reason` 同值——**客户端按 `reason` 字段分支即可两代兼容**（仓库自带 e2e 也是按 `reason` 断言的）。信封统一列入集成收尾清单。
@@ -204,6 +216,71 @@ curl "{BASE}/v1/index/check?url=https%3A%2F%2Fexample.com%2F&engines=360" \
 
 - `url`：必填（URL 编码）；`engines`：可选，逗号分隔，别名 `360` 可用。
 - 该请求计费 unit 数恒为 `1 × len(engines)`（缺省引擎时为 4）。
+
+### 2.2b 批量提交（异步任务）
+
+> 一次提交整张表，服务端排队跑完。**≤20 条仍然是同步返回**（2.1），所以现有调用一行都不用改；只有超过 20 条时才会拿到一个任务号。
+
+`POST /v1/index/check` 的请求体不变，只是 `urls` 允许超过 20 条（默认上限 5000，见 `index_jobs.max_urls`）：
+
+```json
+{ "urls": ["https://www.onlinedown.net/article/10048973.html", "…共 800 条"], "engines": ["baidu"] }
+```
+
+**202 Accepted**
+
+```json
+{
+  "job_id": "job_20261124T054613_379221272c",
+  "status": "queued",
+  "total": 30,
+  "engines": ["baidu"],
+  "created_at": "2026-11-24T05:46:13Z",
+  "poll_url": "/web-tool/v1/index/check/jobs/job_20261124T054613_379221272c",
+  "results_url": "/web-tool/v1/index/check/jobs/job_20261124T054613_379221272c/results",
+  "csv_url": "/web-tool/v1/index/check/jobs/job_20261124T054613_379221272c/results?format=csv",
+  "note": "queued; the server drains this batch at the engine's safe pace. Poll poll_url for progress."
+}
+```
+
+服务端按引擎实测节奏串行执行（百度 12s/条），遇到验证码冷却会**等冷却结束再继续**（`status:"waiting"` + `wait_seconds`），不会把剩余 URL 全判成失败；被冷却/验证码挡住的单条会重排（`max_unit_retries`）。
+
+**GET `/v1/index/check/jobs/{id}`** — 进度
+
+```json
+{
+  "job_id": "job_…", "status": "running",
+  "progress": 0.66, "total": 30, "completed": 20,
+  "indexed": 12, "not_indexed": 8, "failed": 0, "retrying": 0,
+  "eta_seconds": 120, "interval_ms": 12000,
+  "engines": ["baidu"], "wait_seconds": 0,
+  "created_at": "…", "updated_at": "…", "finished_at": null,
+  "poll_url": "…", "results_url": "…", "csv_url": "…"
+}
+```
+
+`status`：`queued` → `running` →（冷却时 `waiting`）→ `done` | `cancelled` | `failed`。
+
+**GET `/v1/index/check/jobs/{id}/results`** — 结果
+
+- 默认 JSON：`{"job_id","status","total","offset","count","results":[…]}`，`results` 与 2.1 的行结构完全一致，支持 `?offset=&limit=` 分页。
+- `?format=csv`：直接下载 Excel 可打开的 CSV（UTF-8 BOM + CRLF），列形如 `url,baidu_indexed,baidu_match,baidu_matched_result_url,baidu_total_results,baidu_error`。
+
+**GET `/v1/index/check/jobs`** — 最近任务（`?limit=` 默认 50，最大 500）
+
+```json
+{ "count": 2, "jobs": [ { "job_id": "job_…", "status": "running", "progress": 0.66, … } ] }
+```
+
+**DELETE `/v1/index/check/jobs/{id}`** — 取消；成功返回该任务的进度对象（`status:"cancelled"`），已结束的任务返回 409 `conflict`，未知 id 返回 404 `not_found`。
+
+其它约定：
+
+- 计费：202 时按提交的 `urls × engines` 计 units（服务端确实会消耗这么多引擎调用）；查询任务进度/结果、取消均不计费。
+- 断点续跑：任务状态与逐条结果落在 `index_jobs.dir`（默认 `<platform.data_dir>/index_jobs`），进程重启后自动续跑，已完成的 URL 不会重复查询。
+- 同一时刻只跑一个任务（引擎按出口 IP 限速，并发只会互相抢令牌）；其余任务 FIFO 排队。
+- 单个 URL 连续被冷却/验证码挡住时，最多重排 `index_jobs.max_unit_retries` 次（默认 6）；用尽后该条以 `error` 计入 `failed`，任务继续。
+- 控制台在线调试（`POST /api/playground/check`）仍是 **1–20 条同步**，不返回任务号——它的界面只渲染同步信封。
 
 ### 2.3 GET /web-tool/v1/quota
 
@@ -431,14 +508,39 @@ curl -X POST {BASE}/mcp \
       },
       {
         "name": "check_indexed",
-        "description": "批量判定 URL 是否被国内引擎收录（每个 URL × 引擎一个结论）",
+        "description": "批量判定 URL 是否被国内引擎收录（每个 URL × 引擎一个结论）；超过 20 条自动转异步任务",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "urls": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 20, "description": "目标 URL 列表" },
+            "urls": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 5000, "description": "目标 URL 列表（>20 条转异步任务，返回 job_id）" },
             "engines": { "type": "array", "items": { "type": "string", "enum": ["baidu", "sogou", "so360", "bing"] }, "description": "引擎列表，缺省为全部" }
           },
           "required": ["urls"]
+        }
+      },
+      {
+        "name": "get_index_job",
+        "description": "查询异步收录任务的进度；include_results=true 时附带结果行",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "description": "check_indexed 返回的 job_id" },
+            "include_results": { "type": "boolean", "description": "true = 一并返回结果行" },
+            "offset": { "type": "integer", "description": "结果行起点" },
+            "limit": { "type": "integer", "description": "返回多少行，缺省全部" }
+          },
+          "required": ["job_id"]
+        }
+      },
+      {
+        "name": "cancel_index_job",
+        "description": "取消排队中或运行中的收录任务",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "job_id": { "type": "string", "description": "check_indexed 返回的 job_id" }
+          },
+          "required": ["job_id"]
         }
       },
       {
@@ -495,6 +597,21 @@ curl -X POST {BASE}/mcp \
 #### tools/call —— check_indexed
 
 `{"name":"check_indexed","arguments":{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}}` → 输出结构与 `/web-tool/v1/index/check` 的 `results` 完全一致（§2.1）。计费：**len(urls) × len(engines) units**。
+
+`urls` 超过 20 条且部署开启了 `index_jobs` 时，工具不再报“最多 20 条”，而是把整批放进服务端队列并立即返回：
+
+```json
+{ "job_id": "job_20261124T054613_379221272c", "status": "queued", "total": 800,
+  "engines": ["baidu"], "created_at": "…", "note": "queued; … Call get_index_job …" }
+```
+
+计费仍按提交条数 `len(urls) × len(engines)`（服务端确实会执行这么多引擎调用）。
+
+#### tools/call —— get_index_job / cancel_index_job
+
+- `get_index_job{"job_id":"…","include_results":true,"offset":0,"limit":200}` → 默认返回进度（`status`/`progress`/`completed`/`indexed`/`not_indexed`/`failed`/`wait_seconds`/`eta_seconds`）；`include_results=true` 时附带 `{job_id,offset,count,results:[…]}`，行结构与 §2.1 一致。
+- `cancel_index_job{"job_id":"…"}` → 取消排队中/运行中的任务；已结束的任务返回工具错误 `isError:true`。
+- 二者均**不计费**；任务本身按 §2.2b 的节奏在服务端推进（遇到验证码冷却会等待，不会把剩余 URL 判失败）。
 
 #### tools/call —— get_quota 与 list_engines
 
@@ -727,7 +844,7 @@ curl -X POST {BASE}/api/playground/check \
 | --- | --- | --- |
 | `blocked` | 403 | 引擎反爬拦截（浏览器验证/风控页） |
 | `blocked` | 429 | 引擎返回 HTTP 429（`meta.upstream_status=429`） |
-| `captcha_detected` | 429 | 引擎弹出图形验证码（同时触发该引擎 10 分钟冷却，见 §8.1） |
+| `captcha_detected` | 429 | 引擎弹出图形验证码（同时触发该引擎首档冷却，默认 10 分钟，百度 2 分钟，见 §8.1） |
 | `circuit_open` | 503 | 该引擎熔断器处于 open（连续失败达阈值） |
 | `engine_cooldown` | 503 | 该引擎处于冷却期。两种出现方式：整请求 503（所选引擎全部冷却，§1.3 信封带 `meta.engines_cooldown`）；或批量判定 200 信封内的**单元级**错误 `{"error":{"code":"engine_cooldown","message":…,"retry_after_seconds":N}}`（部分引擎冷却时其余单元照常执行） |
 | `search_timeout` | 504 | 搜索超时 |
@@ -737,7 +854,7 @@ curl -X POST {BASE}/api/playground/check \
 | `all_engines_failed` | 502 | 多引擎全失败（endpoint fallback 场景） |
 | `not_implemented` | 501 | 该引擎不支持该能力（例：`raw_requests=true` 时所有引擎不支持收录判定——每个单元返回此错误） |
 | `request_timeout` | 504 | 请求级超时（context deadline） |
-| `engine_queue_exceeded` | 504 | 该单元在引擎限流队列中等待超出请求预算，**未发起真实查询**即失败（批量限流排队时间随单元数线性增长，如百度 12 次/分钟 → 每令牌 5 秒；服务端会按批量规模动态放宽请求预算，见 §2.1） |
+| `engine_queue_exceeded` | 504 | 该单元在引擎限流队列中等待超出请求预算，**未发起真实查询**即失败（批量限流排队时间随单元数线性增长，如百度 5 次/分钟 → 每令牌 12 秒；服务端会按批量规模动态放宽请求预算，上限 12 分钟，见 §2.1） |
 | `request_canceled` | 503 | 客户端取消 |
 
 参数校验类（核心信封，`error=bad_request`、`code=400`、`reason` 取下列值）：
@@ -752,7 +869,7 @@ curl -X POST {BASE}/api/playground/check \
 | `UNKNOWN_FORMAT` | `format` 取值不在 json/markdown/text/ndjson |
 | `REQUEST_PROXY_URL_DISABLED` | 请求级代理被配置禁用 |
 | `UNSUPPORTED_PROXY_SCHEME` | 代理 URL 协议不支持 |
-| `TOO_MANY_URLS` | 收录判定 urls 超过 20 条 |
+| `TOO_MANY_URLS` | 收录判定 urls 超过 20 条（未开启任务队列时）或超过 `index_jobs.max_urls` |
 
 ### 7.3 冷却信封（503）
 
@@ -779,10 +896,11 @@ curl -X POST {BASE}/api/playground/check \
 
 - **触发**：引擎返回 blocked（403）/ 429 / captcha。
 - **连续升级**：连续第 1 次触发冷却 **10 分钟**，第 2 次 **30 分钟**，第 3 次及以上 **120 分钟**（`stability.engine_cooldown.steps_minutes: [10,30,120]`）。
+- **按引擎覆盖**：`stability.engine_cooldown.per_engine.<engine>.steps_minutes` 可单独给某个引擎换档位。本仓库给百度配的是 **[2, 10, 30]**（实测单次验证码停 ~2 分钟即可恢复，10 分钟首档会明显拖低吞吐）。
 - **计数归零**：连续无拦截达 **240 分钟**（`stability.engine_cooldown.reset_after_minutes`）后，连续计数归零重新从第 1 档起算。
 - **冷却期内**：该引擎所有 search/check 快速失败（503 冷却信封），**不消耗真实引擎请求、不消耗代理与浏览器资源**。
 - **到期探测**：冷却到期后放行一个探测请求——成功即恢复 `ok`；失败则进入下一档冷却。
-- **行为级提示**：浏览器验证码页（无论人工还是自动触发）都会被判定为拦截并启动最短 10 分钟冷却。这是以牺牲短时可用性换取单出口 IP 存活率的刻意设计；高频使用方应配置代理池（[CONFIGURATION.md](CONFIGURATION.md) `proxies` 节）。
+- **行为级提示**：浏览器验证码页（无论人工还是自动触发）都会被判定为拦截并启动首档冷却（默认 10 分钟；百度 2 分钟，见 §8.1）。这是以牺牲短时可用性换取单出口 IP 存活率的刻意设计；高频使用方应配置代理池（[CONFIGURATION.md](CONFIGURATION.md) `proxies` 节）。
 - 运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset`（强制恢复）、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}`（强制冷却），见 §6.8；控制台「引擎状态」页（`#/engines`）提供同能力。
 
 熔断器（`circuit_breaker.{failures,recovery_seconds,successes}`）与冷却状态机是**两套独立机制**：熔断针对连续请求失败（技术性失败），冷却针对反爬拦截（blocked/captcha）。两者同时生效时，冷却检查在前（不发真实请求）。
@@ -791,8 +909,8 @@ curl -X POST {BASE}/api/playground/check \
 
 ## 9. 计费口径
 
-- 口径：**1 URL × 1 引擎 = 1 unit**。`/web-tool/v1/index/check` 计 `len(urls) × len(engines)` units；MCP `web_search` 每次调用计 1 unit；MCP `check_indexed` 计 `len(urls) × len(engines)` units。`/web-tool/v1/quota`、`/web-tool/v1/engines`、MCP `get_quota`、`list_engines`、管理 API、`/web-tool/api/playground/check` 不计费。
-- **扣费时点**：请求以 **HTTP 200 完成**即扣费，但按响应信封**逐引擎核对，仅成功单元计费**——200 信封内引擎级失败的单元（`results[].engines.<engine>.error`，含 `engine_cooldown` 冷却、`circuit_open` 熔断等）**不计费**。响应信封无法解析时按请求单元全额计费（兜底口径）。4xx（401/400）与配额预检 429、冷却 503 **不扣费**。MCP 平面与 `/v1` 同口径：`check_indexed` 的工具结果（`result.content[].text`）携带逐引擎明细时按成功单元计费；明细不可解析（`web_search` 结果、工具级错误信封）时按请求单元全额计费。
+- 口径：**1 URL × 1 引擎 = 1 unit**。`/web-tool/v1/index/check` 计 `len(urls) × len(engines)` units（>20 条转异步任务时，按提交条数在 202 当次计费）；MCP `web_search` 每次调用计 1 unit；MCP `check_indexed` 计 `len(urls) × len(engines)` units。`/web-tool/v1/quota`、`/web-tool/v1/engines`、任务进度/结果下载（`GET /v1/index/check/jobs…`）、MCP `get_index_job`/`cancel_index_job`/`get_quota`/`list_engines`、管理 API、`/web-tool/api/playground/check` 不计费。
+- **扣费时点**：请求以 **HTTP 200 完成**即扣费，但按响应信封**逐引擎核对，仅成功单元计费**——200 信封内引擎级失败的单元（`results[].engines.<engine>.error`，含 `engine_cooldown` 冷却、`circuit_open` 熔断等）**不计费**。响应信封无法解析时按请求单元全额计费（兜底口径）。**202 入队的批量按提交单元全额计费**（服务端确实会执行这么多次引擎调用；单条失败由任务重试机制消化，不退回）。4xx（401/400）与配额预检 429、冷却 503 **不扣费**。MCP 平面与 `/v1` 同口径：`check_indexed` 的工具结果（`result.content[].text`）携带逐引擎明细时按成功单元计费；明细不可解析（`web_search` 结果、工具级错误信封、**入队回执**）时按请求单元全额计费。
 - **用量日志如实化（B-01）**：被拒绝的请求（400 参数错误、401/403、429 配额与限速、503 冷却/熔断快速失败）同样写入用量日志，但 `status` 记录真实终态码、`units=0`（计 0 unit），并携带 `outcome` 字段：`billed`（200 完成）/ `engine_failed`（5xx 引擎失败）/ `rejected`（未进入业务逻辑）。MCP 计费记录的 `outcome` 与 `/v1` 同规则落账。S4 之前的存量记录无 `outcome` 字段，按 reached 计。
 - **管理统计口径（P-01）**：`GET /api/stats/overview` 的 `today_calls`/`total_calls`/`success_rate_24h` 统计**有效调用**（到达业务逻辑的 billed+engine_failed），参数错误、配额与限速拒绝、冷却拒绝不计入；`today_calls_all`（今日全部请求）与 `rejected_today_24h`（24h 内拒绝数）为 additive 字段。口径变化在发布说明中说明,历史记录无法回填。
 - 对账：`GET /api/reconcile` 按日核对「落账次数」与「逐引擎成功单元数」；携带逐引擎明细的记录逐条核对，无明细的记录（MCP `web_search`、信封解析失败的存量数据）按落账口径计入、不判 mismatch。
@@ -807,10 +925,14 @@ curl -X POST {BASE}/api/playground/check \
 
 ```
 数据平面（X-API-Key）
-  POST /web-tool/v1/index/check        批量收录判定（1..20 URL × 引擎）
-  GET  /web-tool/v1/index/check        单 URL 收录判定（?url=&engines=）
-  GET  /web-tool/v1/quota              当前 key 配额
-  GET  /web-tool/v1/engines            引擎与熔断状态
+  POST /web-tool/v1/index/check         批量收录判定（≤20 条同步；>20 条转异步任务，202）
+  GET  /web-tool/v1/index/check         单 URL 收录判定（?url=&engines=）
+  GET  /web-tool/v1/index/check/jobs    异步任务列表（?limit=）
+  GET  /web-tool/v1/index/check/jobs/:id          任务进度（status/progress/eta_seconds）
+  GET  /web-tool/v1/index/check/jobs/:id/results  任务结果（?offset=&limit=；?format=csv 下载）
+  DELETE /web-tool/v1/index/check/jobs/:id        取消任务
+  GET  /web-tool/v1/quota               当前 key 配额
+  GET  /web-tool/v1/engines             引擎与熔断状态
 
 搜索（鉴权随 `security.data_plane_auth`：模板默认需 X-API-Key；不计费）
   GET  /web-tool/{baidu|sogou|so360|bing|360}/search?text=&limit=&format=
@@ -844,7 +966,7 @@ Agent 平面
   DELETE /web-tool/api/sessions/:id                                    撤销会话（撤销当前会话=退出, S4）
   GET    /web-tool/api/audit?limit=&offset=                            安全审计轨迹（S4）
   GET    /web-tool/api/admin/backup                                    下载数据一致性快照（S4）
-  POST   /web-tool/api/playground/check                                控制台在线调试（不计费）
+  POST   /web-tool/api/playground/check                                控制台在线调试（不计费；仍是 1–20 条同步，不走任务队列）
 
 健康与观测
   GET  /web-tool/health  /web-tool/ready  /web-tool/stats

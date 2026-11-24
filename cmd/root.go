@@ -29,6 +29,7 @@ type Config struct {
 	App            AppConfig            `mapstructure:"app"`
 	Proxies        core.ProxiesConfig   `mapstructure:"proxies"`
 	Cache          CacheConfig          `mapstructure:"cache"`
+	IndexJobs      IndexJobsConfig      `mapstructure:"index_jobs"`
 	Resilience     ResilienceConfig     `mapstructure:"resilience"`
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
 	CORS           CORSConfig           `mapstructure:"cors"`
@@ -112,6 +113,20 @@ type CacheConfig struct {
 	// IndexCheckTTLSeconds caches index/check batch responses for this long
 	// (S4-GAP 性能项 a). 0 = off (每次真实打引擎, 现语义保持).
 	IndexCheckTTLSeconds int `mapstructure:"index_check_ttl_seconds"`
+}
+
+// IndexJobsConfig is the `index_jobs:` node: the asynchronous batch queue used
+// when /v1/index/check receives more URLs than one synchronous request can hold.
+type IndexJobsConfig struct {
+	Enabled bool `mapstructure:"enabled"`
+	// Dir is where job state is persisted (default <platform.data_dir>/index_jobs).
+	Dir string `mapstructure:"dir"`
+	// MaxURLs caps one submission.
+	MaxURLs int `mapstructure:"max_urls"`
+	// Chunk sizes one progress write.
+	Chunk int `mapstructure:"chunk"`
+	// MaxUnitRetries retries a URL blocked by a transient engine condition.
+	MaxUnitRetries int `mapstructure:"max_unit_retries"`
 }
 
 type ResilienceConfig struct {
@@ -458,6 +473,10 @@ var knownConfigKeys = map[string]bool{
 	"cache.ttl_seconds": true, "cache.max_size": true,
 	"cache.index_check_ttl_seconds": true,
 
+	"index_jobs.enabled": true, "index_jobs.dir": true,
+	"index_jobs.max_urls": true, "index_jobs.chunk": true,
+	"index_jobs.max_unit_retries": true,
+
 	"resilience.max_retries": true, "resilience.allow_endpoint_fallback": true,
 	"circuit_breaker.failures": true, "circuit_breaker.recovery_seconds": true,
 	"circuit_breaker.successes": true,
@@ -473,6 +492,8 @@ var knownConfigKeys = map[string]bool{
 
 	"stability.engine_cooldown.steps_minutes":       true,
 	"stability.engine_cooldown.reset_after_minutes": true,
+	"stability.engine_cooldown.per_engine":          true,
+	"stability.index_check.max_retries":             true,
 
 	"security.admin_rate_per_minute": true, "security.admin_rate_per_ip": true,
 	"security.api_rate_per_minute": true, "security.unauth_rate_per_minute": true,
@@ -491,6 +512,7 @@ func init() {
 		for _, opt := range []string{
 			"rate_requests", "rate_seconds", "rate_burst", "selector_timeout",
 			"captcha", "profile", "proxy", "disabled",
+			"index_title_probe", "cookie_rotate_every", "homepage_warm_on_rotate",
 		} {
 			knownConfigKeys[engine+"."+opt] = true
 		}
@@ -504,6 +526,11 @@ func validateUnknownConfigKeys(v *viper.Viper) error {
 	var unknown []string
 	for _, key := range v.AllKeys() {
 		if knownConfigKeys[key] {
+			continue
+		}
+		// Per-engine cooldown overrides are an open map: every
+		// stability.engine_cooldown.per_engine.<engine>.* key is valid.
+		if strings.HasPrefix(key, "stability.engine_cooldown.per_engine.") {
 			continue
 		}
 		unknown = append(unknown, key)
@@ -612,6 +639,23 @@ func setConfigDefaults(v *viper.Viper) {
 	// Stability (契约 A: 引擎冷却状态机) defaults mirror core.DefaultStabilityConfig.
 	v.SetDefault("stability.engine_cooldown.steps_minutes", []int{10, 30, 120})
 	v.SetDefault("stability.engine_cooldown.reset_after_minutes", 240)
+	// 百度实测: 单次验证码停 ~2 分钟 + 清 Cookie 即可恢复，首档 10 分钟把吞吐打崩；
+	// 其余引擎沿用 10/30/120 的惩罚性默认。
+	v.SetDefault("stability.engine_cooldown.per_engine", map[string]interface{}{
+		"baidu": map[string]interface{}{"steps_minutes": []int{2, 10, 30}},
+	})
+	v.SetDefault("stability.index_check.max_retries", 1)
+	// 批量收录任务: 一次可提交整张表，服务端按引擎节奏排队跑完。
+	v.SetDefault("index_jobs.enabled", true)
+	v.SetDefault("index_jobs.dir", "")
+	v.SetDefault("index_jobs.max_urls", 5000)
+	v.SetDefault("index_jobs.chunk", 10)
+	v.SetDefault("index_jobs.max_unit_retries", 6)
+	// 收录查询的节奏与判定策略（见 docs/CONFIGURATION.md）：
+	// 标题探测消除 URL 短语漏判，Cookie 每 8 次轮换把验证码触发压到 ~1/130。
+	v.SetDefault("baidu.index_title_probe", true)
+	v.SetDefault("baidu.cookie_rotate_every", 8)
+	v.SetDefault("baidu.homepage_warm_on_rotate", true)
 	// Security (契约 B + S4) defaults mirror platform.DefaultSecurityConfig.
 	v.SetDefault("security.admin_rate_per_minute", 60)
 	v.SetDefault("security.admin_rate_per_ip", 30)

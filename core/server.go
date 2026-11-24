@@ -69,6 +69,9 @@ type Server struct {
 	// storageKind is injected by the serve command ("bbolt"/"json") for
 	// /health.storage (B-06).
 	storageKind atomic.Pointer[string]
+	// jobs runs large index-check batches (see index_job_manager.go). Nil when
+	// ServerOptions.IndexJobDir is empty.
+	jobs *IndexJobManager
 }
 
 // ServerOptions configures HTTP server middleware and resilience behavior.
@@ -126,6 +129,18 @@ type ServerOptions struct {
 	// for site-wide security headers (审计 A-19) so even the API routes core
 	// registers at construction time carry them.
 	ExtraMiddleware []fiber.Handler
+	// IndexJobDir enables the asynchronous index-check job queue when non-empty:
+	// batches larger than MaxIndexCheckURLs are accepted with 202 + job id and
+	// drained at the engine's rate, with their state persisted under this
+	// directory so a restart resumes them.
+	IndexJobDir string
+	// IndexJobMaxURLs caps one job (0 = DefaultIndexJobMaxURLs).
+	IndexJobMaxURLs int
+	// IndexJobChunk sizes one progress write (0 = 10 URLs).
+	IndexJobChunk int
+	// IndexJobMaxRetries retries a URL blocked by a transient engine condition
+	// such as a cooldown or a captcha (0 = 6).
+	IndexJobMaxRetries int
 }
 
 // DefaultServerOptions returns production-oriented defaults for cache, CORS,
@@ -206,6 +221,20 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 			"cache_ttl":      opts.IndexCheckCacheTTL.String(),
 			"cache_max_size": opts.CacheMaxSize,
 		}).Info("Index-check response cache enabled")
+	}
+	if opts.IndexJobDir != "" {
+		serv.jobs = NewIndexJobManager(opts.IndexJobDir, searchEngines, serv.resilient, IndexJobOptions{
+			MaxURLs:        opts.IndexJobMaxURLs,
+			Chunk:          opts.IndexJobChunk,
+			MaxUnitRetries: opts.IndexJobMaxRetries,
+		})
+		serv.jobs.Start(context.Background())
+		logrus.WithFields(logrus.Fields{
+			"dir":       opts.IndexJobDir,
+			"max_urls":  serv.jobs.opts.MaxURLs,
+			"chunk":     serv.jobs.opts.Chunk,
+			"max_tries": serv.jobs.opts.MaxUnitRetries,
+		}).Info("Index-check job queue enabled")
 	}
 
 	// Defense-in-depth: engine panics are recovered in the resilient layer
@@ -1113,9 +1142,11 @@ type indexCheckRequestBody struct {
 
 // parseIndexCheckRequest reads the request parameters for both supported
 // shapes: POST body {"urls":[...],"engines":[...]} and GET
-// ?url=...&engines=baidu,bing. It returns the URL list (trimmed, 1..20), the
-// requested engine names (may be empty = all engines), or a 400 APIError with
-// reason EMPTY_QUERY | TOO_MANY_URLS | INVALID_PARAM.
+// ?url=...&engines=baidu,bing. It returns the URL list (trimmed, at least one
+// entry; the 20-URL sync ceiling and the job ceiling are enforced by the
+// handler so each deployment's limit applies), the requested engine names (may
+// be empty = all engines), or a 400 APIError with reason EMPTY_QUERY |
+// INVALID_PARAM.
 func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
 	var (
 		rawURLs    []string
@@ -1144,8 +1175,6 @@ func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
 	switch {
 	case len(urls) == 0:
 		return nil, nil, errEmptyQuery()
-	case len(urls) > MaxIndexCheckURLs:
-		return nil, nil, errTooManyURLs(fmt.Sprintf("urls accepts at most %d entries, got %d", MaxIndexCheckURLs, len(urls)))
 	}
 	for i, u := range urls {
 		if _, ok := indexURLKeyFrom(u); !ok {
@@ -1157,8 +1186,13 @@ func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
 
 // IndexCheckHandler serves the public index-status API:
 //
-//	POST /v1/index/check  body {"urls":["..."](1..20),"engines":["baidu","sogou","so360","bing"](optional)}
+//	POST /v1/index/check  body {"urls":["..."](1..index_jobs.max_urls),"engines":[...](optional)}
 //	GET  /v1/index/check?url=...&engines=baidu,bing
+//
+// Up to MaxIndexCheckURLs (20) URLs answer synchronously with the contract
+// envelope; a larger batch is accepted into the async job queue and answers 202
+// with a job id (see index_job_http.go). The console playground keeps the
+// 20-URL ceiling because it renders the synchronous shape only.
 //
 // Every (URL × engine) unit runs through the resilient pipeline; engine-level
 // failures (403/429/captcha/circuit open/cooldown/timeout) are reported inside
@@ -1179,6 +1213,18 @@ func (s *Server) IndexCheckHandler(c *fiber.Ctx) error {
 		return apiErr
 	}
 
+	// 批量提交: keeping the ≤20 sync contract means existing callers need no
+	// change; a bigger batch becomes a job instead of a 400, so one submission
+	// can cover a whole export and the server owns the pacing.
+	if len(urls) > MaxIndexCheckURLs {
+		// The console playground renders the synchronous envelope only, so it
+		// keeps the 20-URL ceiling instead of receiving a job it cannot follow.
+		if s.jobs == nil || IsPlaygroundIndexCheckPath(c.Path()) {
+			return errTooManyURLs(fmt.Sprintf("urls accepts at most %d entries, got %d", MaxIndexCheckURLs, len(urls)))
+		}
+		return s.submitIndexJob(c, requestCtx, urls, rawEngines)
+	}
+
 	payload, err := s.CheckIndexBatch(requestCtx, urls, rawEngines)
 	if err != nil {
 		return err
@@ -1187,9 +1233,10 @@ func (s *Server) IndexCheckHandler(c *fiber.Ctx) error {
 	return c.JSON(payload)
 }
 
-// CheckIndexBatch is the shared index-check orchestration used by
-// /v1/index/check, POST /api/playground/check and the MCP check_indexed tool.
-// urls must be 1..20 absolute URLs; engines holds the raw requested names
+// CheckIndexBatch is the shared synchronous index-check orchestration used by
+// /v1/index/check (≤20 URLs), POST /api/playground/check and the MCP
+// check_indexed tool. urls must be 1..20 absolute URLs — larger batches go
+// through IndexJobManager instead; engines holds the raw requested names
 // (nil/empty = every available engine). It returns an IndexCheckResponse, or
 // an *APIError: 400 for invalid parameters, 503 engine_cooldown (with
 // Retry-After and meta.engines_cooldown) when every selected engine is
@@ -1575,6 +1622,9 @@ func (s *Server) ShutdownWithTimeout(timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = defaultShutdownTimeout
 	}
+	// Stop the job runner first: it owns engine work that must not outlive the
+	// process (its state is on disk, so a restart resumes it).
+	s.jobs.Stop()
 	s.SetDraining(true)
 	return s.app.ShutdownWithTimeout(timeout)
 }

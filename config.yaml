@@ -57,6 +57,16 @@ cache:
   max_size: 1000 # Maximum cached dedicated responses before oldest-entry eviction
   index_check_ttl_seconds: 0 # S4-GAP 性能项: index/check 批量响应缓存 TTL(秒);0=关(默认,保持每次真实打引擎)。命中响应 meta.cache="hit"(additive),带错误/冷却单元的响应不缓存
 
+# 批量收录任务（异步）。一次可提交整张表（默认上限 5000 条），服务端按引擎节奏
+# 排队跑完：>20 条时 POST /v1/index/check 返回 202 + job_id，进度/结果/CSV 走
+# /v1/index/check/jobs/{id}；≤20 条仍是原来的同步返回，调用方无需改动。
+index_jobs:
+  enabled: true
+  dir: "" # 留空 = <platform.data_dir>/index_jobs
+  max_urls: 5000 # 单次提交上限
+  chunk: 10 # 每 10 条落一次进度
+  max_unit_retries: 6 # 被冷却/验证码挡住的 URL 重试次数
+
 resilience:
   max_retries: 1 # Retry attempts per engine request (0 disables retries)
   allow_endpoint_fallback: false # Keep dedicated endpoints engine-pure by default
@@ -84,6 +94,11 @@ stability:
   engine_cooldown:
     steps_minutes: [10, 30, 120] # 连续第1/2/3+次拦截分别冷却的分钟数(最后一个值向后延续)
     reset_after_minutes: 240 # 连续无拦截达该分钟数,连续计数归零
+    per_engine: # 按引擎覆盖档位：百度实测停 ~2 分钟即可恢复，10 分钟档把吞吐打崩
+      baidu:
+        steps_minutes: [2, 10, 30]
+  index_check:
+    max_retries: 1 # 收录单元重试次数（默认 1）：被拦就快速失败，不放大请求量
 
 cors:
   enabled: true
@@ -162,9 +177,13 @@ platform:
 #   任一行都可以用环境变量覆盖，例如 WEB2API_BAIDU_DISABLED=true。
 # ---------------------------------------------------------------------------
 baidu:
-  rate_requests: 12 # 百度对同 IP 高频访问会弹图形验证码，默认 12 次/分钟
-  rate_burst: 2
+  rate_requests: 5 # 实测：12 次/分钟(5s/条)约 1/23 触发验证码；5 次/分钟(12s/条)约 1/130
+  rate_burst: 1 # 突发是触发主因，保持 1
   profile: chrome-win-uhd620 # 桌面 Windows 指纹比 Linux headless 更不容易被反爬拦截
+  # 收录查询策略（见 docs/CONFIGURATION.md「百度收录查询」）
+  index_title_probe: true # 用页面标题而不是 URL 当检索词：URL 短语对已收录文章也会返回空结果
+  cookie_rotate_every: 8 # 每 8 次导航清一次 Cookie 罐并预热首页，把验证码压到 ~1/130
+  homepage_warm_on_rotate: true
   # 国内主力引擎
   # No proxy tag means direct traffic
 

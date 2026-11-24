@@ -53,7 +53,7 @@ This is **not** a general-purpose API gateway, nor another SerpAPI clone. The mo
 
 - **Index-check API**: `POST /web-tool/v1/index/check` takes up to 20 URLs per request and returns per-engine `indexed` verdicts with match details; 1 URL × 1 engine = 1 unit.
 - **Four-engine raw search**: `GET /web-tool/{engine}/search` with `format=json|markdown|text|ndjson`.
-- **Dual agent entry points**: MCP streamable HTTP (4 tools) + OpenAPI 3.1 spec + an llms.txt capability list.
+- **Dual agent entry points**: MCP streamable HTTP (6 tools, incl. batch jobs) + OpenAPI 3.1 spec + an llms.txt capability list.
 - **Admin console**: API keys, quotas, usage logs, engine risk-control dashboard, playground, settings.
 - **Built-in IP risk control**: desktop browser fingerprints, browser/HTTP dual-channel fallback, CAPTCHA gating, per-engine rate limits, circuit breakers, and an engine cooldown state machine.
 - **No external storage dependencies**: a single bbolt file holds all state — no database, no message queue; the build is a single executable (`./web2api serve`; browser mode needs a local Chrome/Chromium/Edge).
@@ -173,14 +173,17 @@ All paths are prefixed with `/web-tool`; real request/response/error samples liv
 
 ```text
 Data plane (X-API-Key)
-  POST /web-tool/v1/index/check    batch index check (1..20 URLs × engines, 1 URL×1 engine = 1 unit)
+  POST /web-tool/v1/index/check    batch index check (≤20 URLs sync; >20 → 202 job, 1 URL×1 engine = 1 unit)
+  GET  /web-tool/v1/index/check/jobs/{id}          job progress (status/progress/eta_seconds)
+  GET  /web-tool/v1/index/check/jobs/{id}/results  job results (?format=csv to download)
+  DELETE /web-tool/v1/index/check/jobs/{id}        cancel a queued/running job
   GET  /web-tool/v1/index/check    single-URL convenience variant
   GET  /web-tool/v1/quota          quota lookup
   GET  /web-tool/v1/engines        engines and circuit-breaker state
   GET  /web-tool/{baidu|sogou|so360|bing}/search?text=…   four-engine raw search (auth follows security.data_plane_auth: template default requires X-API-Key)
 
 Agent plane
-  POST /web-tool/mcp               MCP streamable HTTP (initialize/tools, 4 tools)
+  POST /web-tool/mcp               MCP streamable HTTP (initialize/tools, 6 tools)
   GET  /web-tool/openapi.yaml      OpenAPI 3.1 spec
   GET  /web-tool/llms.txt          agent capability list
 
@@ -220,7 +223,7 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 
 Claude Desktop adds remote MCP servers through its Connectors UI; ChatGPT, Codex and VS Code Copilot — clients that already support remote MCP (streamable HTTP) — can connect per their own documentation, and other clients should check their docs for remote-transport support. Config field names differ slightly between clients; follow each client's documentation.
 
-Once connected, agents can call 4 tools directly: `web_search` (four-engine search, 1 unit/call), `check_indexed` (index check, urls×engines units), `get_quota` (quota), `list_engines` (engines and cooldown state). The protocol is MCP streamable HTTP, JSON-RPC 2.0, protocolVersion `2025-06-18`, with in-memory `Mcp-Session-Id` sessions. **An API key is mandatory** — unauthenticated requests get 401.
+Once connected, agents can call 6 tools directly: `web_search` (four-engine search, 1 unit/call), `check_indexed` (index check, urls×engines units; over 20 URLs it queues an async job and returns a `job_id`), `get_index_job` (job progress/results), `cancel_index_job` (cancel a job), `get_quota` (quota), `list_engines` (engines and cooldown state). The protocol is MCP streamable HTTP, JSON-RPC 2.0, protocolVersion `2025-06-18`, with in-memory `Mcp-Session-Id` sessions. **An API key is mandatory** — unauthenticated requests get 401.
 
 ### Dify / n8n / LangChain (OpenAPI import)
 
@@ -337,7 +340,7 @@ Testing design: [docs/TESTING.md](docs/TESTING.md).
 baidu/ sogou/ so360/ bing/   four engines (URL building, selectors, parsing, dual channel, index_check entry)
 core/                        HTTP service (all routes under /web-tool), index-check core, browser pool,
                              proxies, cache, circuit breakers, response building, error contract
-mcp/                         MCP streamable HTTP endpoint and the 4 tools (agent plane)
+mcp/                         MCP streamable HTTP endpoint and the 6 tools (agent plane)
 platform/                    platform backend: API keys/quotas/usage (bbolt), JWT issuer,
                              /v1 and /api route registration, billing and rate limiting
 web/site/                    product website (pure static, zero deps, served at /web-tool/ root)

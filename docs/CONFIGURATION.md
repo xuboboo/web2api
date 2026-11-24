@@ -90,6 +90,11 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `cache.ttl_seconds` | `300` | `120` | 专用端点 JSON 缓存 TTL，0 关闭 |
 | `cache.max_size` | `1000` | `1000` | 缓存条目上限 |
 | `cache.index_check_ttl_seconds` | `0` | `0` | S4: index/check 批量响应缓存 TTL（秒），0=关（保持每次真实打引擎）；命中响应 `meta.cache="hit"`（additive），含错误/冷却单元的响应不缓存 |
+| `index_jobs.enabled` | `true` | `true` | 开启异步批量收录任务（>20 条 URL 时返回 202 + job_id） |
+| `index_jobs.dir` | 空 | 空 | 任务状态与结果落盘目录，空 = `<platform.data_dir>/index_jobs`；进程重启后从这里续跑 |
+| `index_jobs.max_urls` | `5000` | `5000` | 单次提交上限（去重后计数） |
+| `index_jobs.chunk` | `10` | `10` | 每处理多少条落一次进度 |
+| `index_jobs.max_unit_retries` | `6` | `6` | 单条 URL 被冷却/验证码挡住后的重排次数 |
 | `resilience.max_retries` | `3` | `1` | 每引擎重试次数 |
 | `resilience.allow_endpoint_fallback` | `false` | `false` | 允许专用端点失败后回退到其它引擎 |
 | `circuit_breaker.failures` | `5` | `8` | 连续失败多少次打开熔断 |
@@ -97,6 +102,17 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `circuit_breaker.successes` | `2` | `1` | 半开状态下成功几次恢复 |
 
 注意：captcha / blocked / rate_limited / parser / engine_internal / not_implemented 属于**不重试**错误，直接进入熔断统计。
+
+### 批量任务队列（`index_jobs`）
+
+一次提交超过 20 条 URL 时，`POST /v1/index/check` 不再报错，而是返回 `202` + `job_id`，由服务端按引擎节奏排队执行（详见 [API.md §2.2b](API.md)）：
+
+- **同步契约不变**：≤20 条仍是 200 同步返回，控制台在线调试也保持 20 条上限（它只渲染同步信封）。
+- **串行执行**：同一时刻只跑一个任务——引擎按出口 IP 限速，并发只会互相抢令牌；其余任务 FIFO 排队。
+- **冷却不烧额度**：所选引擎全部冷却时任务转 `waiting`，等冷却结束再继续；单条被冷却/验证码挡住会重排 `max_unit_retries` 次。
+- **断点续跑**：`<dir>/<job_id>/job.json` 存元数据、`results.jsonl` 逐条追加；进程重启后自动续跑，已完成的 URL 不重复查询。
+- **计费**：入队时按 `条数 × 引擎数` 一次性计费；查进度、取结果、取消都不计费。
+- 关掉 `enabled` 后队列不启动，>20 条恢复为 400 `TOO_MANY_URLS`，`/v1/index/check/jobs*` 路由不注册（404）。
 
 ## cors
 
@@ -131,6 +147,8 @@ app.log_max_mb/log_backups 同轮转机制)。
 | --- | --- | --- | --- |
 | `engine_cooldown.steps_minutes` | `[10, 30, 120]` | 同默认 | 连续第 1/2/3+ 次被拦截（blocked 403 / 429 / captcha）的冷却分钟数（最后一个值向后延续） |
 | `engine_cooldown.reset_after_minutes` | `240` | 同默认 | 连续无拦截达此时长后连续计数归零，重新从第 1 档起算 |
+| `engine_cooldown.per_engine.<engine>.steps_minutes` | 空 | 空 | 按引擎覆盖档位；本仓库给 `baidu` 配 `[2, 10, 30]`（实测停 2 分钟即可恢复） |
+| `index_check.max_retries` | `1` | `1` | 收录单元的重试次数；被拦即失败，避免把请求量放大 4 倍喂同一出口 IP |
 
 冷却期内该引擎所有 search/check 快速失败（503 `engine_cooldown` 信封 + `Retry-After`），不发真实请求；到期放行一个探测请求——成功即恢复，再次被拦截进下一档，其他失败（如超时）按当前档时长顺延重试。运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复、`cooldown/force {"minutes":N}` 强制冷却（维护窗口）。
 
@@ -179,6 +197,36 @@ serve 收到首个停止信号后进入排水（30 秒上限），随后关闭�
 | `profile` | 空（自动选） | 固定浏览器指纹，如 `chrome-win-uhd620` |
 | `proxy` | 空 | 绑定 `proxies.entries` 中的 tag |
 | `disabled` | `false` | 关闭后不注册端点 |
+| `index_title_probe` | `false` | 收录查询用页面标题而不是 URL 当检索词（百度建议开启，见下） |
+| `cookie_rotate_every` | `0` | 每 N 次导航清一次 Cookie 罐并可选预热首页，`0`=不轮换 |
+| `homepage_warm_on_rotate` | `false` | 轮换后访问引擎首页，模拟回访用户 |
+
+### 百度收录查询（index_title_probe / 节奏）
+
+实测（767 条真实链接）：
+
+- 用 `wd=<文章URL>` 检索，**已收录**的文章也常返回空结果 → 漏判；改用页面 `<title>` 检索可消除漏判，标题匹配阈值 0.72（带截断省略号/来源后缀归一化）。
+- 触发验证码与请求节奏强相关：`3.2s/条` 约 50%，`10s/条` 约 1/23，`12s/条`+每 8 条轮换 Cookie 约 1/132。
+- 单次验证码停 ~2 分钟即可恢复，首档冷却 10 分钟会显著拖低吞吐。
+
+推荐配置：
+
+```yaml
+baidu:
+  rate_requests: 5      # 12s/条
+  rate_burst: 1
+  index_title_probe: true
+  cookie_rotate_every: 8
+  homepage_warm_on_rotate: true
+stability:
+  engine_cooldown:
+    per_engine:
+      baidu: { steps_minutes: [2, 10, 30] }
+  index_check:
+    max_retries: 1
+```
+
+`index_title_probe` 需要目标页可取标题（同域 HTTP GET，不经过百度）；取不到时自动回退到 URL 短语检索。
 
 ### Bing 额外项
 
@@ -189,10 +237,12 @@ serve 收到首个停止信号后进入排水（30 秒上限），随后关闭�
 ## 本仓库的实际取值（摘要）
 
 ```yaml
-baidu: { rate_requests: 12, rate_burst: 2, profile: chrome-win-uhd620 }
+baidu: { rate_requests: 5, rate_burst: 1, profile: chrome-win-uhd620,
+         index_title_probe: true, cookie_rotate_every: 8, homepage_warm_on_rotate: true }
 bing:  { rate_requests: 60, rate_burst: 3, search_box: true }
 sogou: { rate_requests: 8,  rate_burst: 1, profile: chrome-win-uhd620 }
 so360: { rate_requests: 20, rate_burst: 2, profile: chrome-win-uhd620 }
+stability: { engine_cooldown: { per_engine: { baidu: { steps_minutes: [2, 10, 30] } } }, index_check: { max_retries: 1 } }
 circuit_breaker: { failures: 8, recovery_seconds: 20, successes: 1 }
 platform: { enabled: true, data_dir: ./data, admin_username: admin, admin_password: admin123, jwt_expire_hours: 24 }
 ```

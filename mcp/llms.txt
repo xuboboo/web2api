@@ -14,9 +14,11 @@
 - MCP streamable HTTP 端点(仅 POST,JSON-RPC 2.0,响应式 JSON):[POST /mcp](/web-tool/mcp)
 - 鉴权:`X-API-Key` 请求头(计费)或 `Authorization: Bearer <JWT>`(管理员不计费)。
 - 握手:`initialize`(protocolVersion 默认 `2025-06-18`,serverInfo.name=`web2api`)→ 响应头取 `Mcp-Session-Id` → 发 `notifications/initialized`(HTTP 204)→ `tools/list` / `tools/call`。
-- 工具(4 个):
+- 工具(6 个):
   - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;每次调用计 1 次。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
-  - `check_indexed{urls[1..20], engines?}` → 与 GET /v1/index/check 相同的 results 结构;计费 = 条数×引擎数次。
+  - `check_indexed{urls[1..5000], engines?}` → ≤20 条同步返回与 GET /v1/index/check 相同的 results 结构;>20 条自动转异步任务,立即返回 `{job_id,status,total,...}`;计费 = 条数×引擎数次。
+  - `get_index_job{job_id, include_results?, offset?, limit?}` → 任务进度(status/progress/eta_seconds/各计数);`include_results=true` 附带已完成的结果行(与 check_indexed 同结构,可分页);不计费。
+  - `cancel_index_job{job_id}` → 取消排队中/运行中的任务;不计费。
   - `get_quota{}` → 当前调用方配额对象(管理员不计费)。
   - `list_engines{}` → 四引擎及冷却/熔断状态。
 - tools/call 结果统一为 `{content:[{type:"text",text:"<JSON字符串>"}], isError}`;入参校验失败返回 JSON-RPC `-32602`。
@@ -38,7 +40,10 @@
 
 ### 数据平面(鉴权:X-API-Key,计费)
 
-- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定,`{"urls":[...],"engines":[...]}`,1..20 个 URL;计费 = 条数×引擎数次。
+- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定,`{"urls":[...],"engines":[...]}`:≤20 个 URL 同步返回;>20 个返回 202 + `job_id`(异步任务,上限见 `index_jobs.max_urls`);计费 = 条数×引擎数次。
+- [GET /v1/index/check/jobs/{id}](/web-tool/v1/index/check/jobs/{id}) — 异步任务进度(status/progress/eta_seconds/各计数)。
+- [GET /v1/index/check/jobs/{id}/results](/web-tool/v1/index/check/jobs/{id}/results) — 任务结果 JSON(?offset=&limit=)或 `?format=csv` 下载表格。
+- [DELETE /v1/index/check/jobs/{id}](/web-tool/v1/index/check/jobs/{id}) — 取消任务。
 - [GET /v1/index/check](/web-tool/v1/index/check?url=…&engines=baidu,bing) — 单 URL 收录判定。
 - [GET /v1/quota](/web-tool/v1/quota) — 当前密钥配额与用量。
 - [GET /v1/engines](/web-tool/v1/engines) — 引擎列表与熔断状态。

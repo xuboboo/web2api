@@ -51,9 +51,9 @@
 
 **功能一览**：
 
-- **收录判定 API**：`POST /web-tool/v1/index/check` 一次提交最多 20 条 URL，逐引擎返回 `indexed` 与匹配详情；1 条 URL × 1 个引擎 = 1 次，计费口径清晰。
+- **收录判定 API**：`POST /web-tool/v1/index/check` ≤20 条同步返回，>20 条自动转入服务端任务队列（202 + `job_id`，一次可提交上千条，服务端按引擎节奏排队跑完，进度/结果/CSV 走 `/v1/index/check/jobs/{id}`）；逐引擎返回 `indexed` 与匹配详情；1 条 URL × 1 个引擎 = 1 次，计费口径清晰。
 - **四引擎原始搜索**：`GET /web-tool/{engine}/search`，`format=json|markdown|text|ndjson`。
-- **Agent 双入口**：MCP streamable HTTP（4 个工具）+ OpenAPI 3.1 规范 + llms.txt 能力清单。
+- **Agent 双入口**：MCP streamable HTTP（6 个工具，含批量任务）+ OpenAPI 3.1 规范 + llms.txt 能力清单。
 - **管理控制台**：API 密钥、配额、用量日志、引擎风控看板、在线调试、系统设置。
 - **IP 风控内建**：桌面浏览器指纹、浏览器/HTTP 双通道兜底、CAPTCHA 门控、按引擎限速、熔断保护与引擎冷却状态机。
 - **零外部存储依赖**：bbolt 单文件保存全部状态，无数据库、无消息队列；构建产物是单个可执行文件（`./web2api serve`；浏览器模式需本机 Chrome/Chromium/Edge）。
@@ -173,14 +173,17 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 
 ```text
 数据平面（X-API-Key）
-  POST /web-tool/v1/index/check    批量收录判定（1..20 条 URL × 引擎，1 条 URL×1 个引擎=1 次）
+  POST /web-tool/v1/index/check    批量收录判定（≤20 条同步；>20 条转异步任务 202，1 条 URL×1 个引擎=1 次）
+  GET  /web-tool/v1/index/check/jobs/{id}          任务进度（status/progress/eta_seconds）
+  GET  /web-tool/v1/index/check/jobs/{id}/results  任务结果（?format=csv 下载表格）
+  DELETE /web-tool/v1/index/check/jobs/{id}        取消任务
   GET  /web-tool/v1/index/check    单 URL 便捷版
   GET  /web-tool/v1/quota          配额查询
   GET  /web-tool/v1/engines        引擎与熔断状态
   GET  /web-tool/{baidu|sogou|so360|bing}/search?text=…   四引擎原始搜索（鉴权随 security.data_plane_auth：模板默认需 X-API-Key）
 
 Agent 平面
-  POST /web-tool/mcp               MCP streamable HTTP（initialize/tools，4 个工具）
+  POST /web-tool/mcp               MCP streamable HTTP（initialize/tools，6 个工具）
   GET  /web-tool/openapi.yaml      OpenAPI 3.1 全端点规范
   GET  /web-tool/llms.txt          Agent 能力清单
 
@@ -220,7 +223,7 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 
 Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP（streamable HTTP）的客户端可按各自文档接入，其余客户端以各自文档的远程传输支持为准。各客户端配置字段名略有差异，以各自文档为准。
 
-接入后 Agent 可直接调用 4 个工具：`web_search`（四引擎搜索，每次调用计 1 次）、`check_indexed`（收录判定，按 URL 数 × 引擎数计次）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。**必须携带 API Key**，无鉴权请求一律 401。
+接入后 Agent 可直接调用 6 个工具：`web_search`（四引擎搜索，每次调用计 1 次）、`check_indexed`（收录判定，按 URL 数 × 引擎数计次；超过 20 条自动转异步任务并返回 `job_id`）、`get_index_job`（任务进度/结果）、`cancel_index_job`（取消任务）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。**必须携带 API Key**，无鉴权请求一律 401。
 
 ### Dify / n8n / LangChain（OpenAPI 导入）
 
@@ -337,7 +340,7 @@ node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 引擎稳态观�
 baidu/ sogou/ so360/ bing/   四引擎（URL、选择器、解析、双通道、index_check 入口）
 core/                        HTTP 服务（全部路由挂 /web-tool）、收录判定核心、浏览器池、
                              代理、缓存、熔断、响应构建、错误契约
-mcp/                         MCP streamable HTTP 端点与 4 个工具（Agent 平面）
+mcp/                         MCP streamable HTTP 端点与 6 个工具（Agent 平面）
 platform/                    平台后端：API key/配额/用量（bbolt）、JWT 管理端、
                              /v1 与 /api 路由注册、计费与限速
 web/site/                    产品官网（纯静态零依赖，由 serve 挂在 /web-tool/ 根）

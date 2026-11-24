@@ -5,6 +5,7 @@ import (
 	"errors"
 	neturl "net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -19,15 +20,45 @@ type Baidu struct {
 	// gate remembers a recent browser-side challenge so the plain-HTTP path is
 	// preferred while it is active.
 	gate *core.CaptchaGate
+	// navCount is a pointer so the per-request scoped copy below does not copy
+	// an atomic counter (vet: copylocks).
+	navCount *atomic.Uint64
 }
+
+// baiduHomepage is the warm-up target after a session rotation.
+const baiduHomepage = "https://www.baidu.com/"
 
 // New creates a Baidu engine instance with browser/runtime options applied.
 func New(browser core.Browser, opts core.SearchEngineOptions) *Baidu {
-	baid := Baidu{Browser: browser, gate: &core.CaptchaGate{}}
+	baid := Baidu{Browser: browser, gate: &core.CaptchaGate{}, navCount: &atomic.Uint64{}}
 	opts.Init()
 	baid.SearchEngineOptions = opts
 	baid.logger = core.NewEngineLogger("Baidu")
 	return &baid
+}
+
+// maybeRotateSession recycles the proxy-lane cookie jar every N navigations and
+// optionally warms the homepage, which is what keeps Baidu from parking a
+// single exit IP in its challenge state. Rotation is a no-op when
+// CookieRotateEvery <= 0.
+func (baid *Baidu) maybeRotateSession(ctx context.Context) {
+	every := baid.CookieRotateEvery
+	if every <= 0 {
+		return
+	}
+	if baid.navCount.Add(1)%uint64(every) != 0 {
+		return
+	}
+	baid.DropLaneCookies(ctx)
+	if !baid.HomepageWarmOnRotate {
+		return
+	}
+	page, err := baid.Navigate(ctx, baiduHomepage)
+	if err != nil {
+		baid.logger.Debug("Homepage warm-up after cookie rotation failed: %v", err)
+		return
+	}
+	core.DeferClosePage(ctx, page, &baid.Browser)()
 }
 
 // Name returns the stable engine identifier.
@@ -132,6 +163,8 @@ func (baid *Baidu) searchBrowser(ctx context.Context, query core.Query) (results
 
 	baid.logger.Debug("Starting search, query: %+v", query)
 
+	baid.maybeRotateSession(ctx)
+
 	// Build URL from query struct to open in browser
 	url, err := BuildURL(query)
 	if err != nil {
@@ -185,6 +218,18 @@ func (baid *Baidu) waitForParsedSearchResults(ctx context.Context, page *rod.Pag
 		// selector deadline on a page that will never show result cards.
 		if blockErr := baid.securityInterstitialErr(page); blockErr != nil {
 			return nil, blockErr
+		}
+
+		// 百度明确回答"没有相关结果"（div.content_none / div.nors）: that is a
+		// verdict, not a slow page. Returning early keeps index checks honest
+		// (indexed=false) and stops empty SERPs from burning the selector
+		// deadline plus the retry budget — the shape ~56% of real lookups take.
+		// The result-card guard keeps a layout that renders both markers from
+		// being read as empty.
+		if core.HasAnySelector(page, []string{Selectors.NoResults}) &&
+			!core.HasAnySelector(page, baiduResultSelectors()) {
+			baid.logger.Debug("Baidu reported no results for this query: %s", url)
+			return []core.SearchResult{}, nil
 		}
 
 		html, err := page.HTML()

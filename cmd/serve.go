@@ -216,6 +216,15 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		// EnginesStatusWithCooldown / ResetCooldown / ForceCooldown (契约 A).
 		plat.RegisterAdmin(root, serv.IndexCheckHandler, serv)
 		plat.RegisterPublic(root, serv.IndexCheckHandler)
+		// 批量收录任务(异步): >20 条走 job，同步契约不变。
+		if config.IndexJobs.Enabled {
+			plat.RegisterPublicJobs(root, platform.IndexJobHandlers{
+				List:    serv.IndexJobListHandler,
+				Status:  serv.IndexJobStatusHandler,
+				Results: serv.IndexJobResultsHandler,
+				Cancel:  serv.IndexJobCancelHandler,
+			})
+		}
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
 		// 根植于 BasePath。必须在 mountStaticPanels 之前注册,静态通配不覆盖这些路由。
 		mountMCP(app, serv, plat)
@@ -539,13 +548,13 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		FingerprintArtifactDir: core.DefaultFingerprintArtifactDir,
 		FingerprintBrowserOpts: fingerprintBrowserOpts,
 		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
-		// 收录批量(1–20 条 URL)的限流排队时间随单元数线性增长,基础
+		// 收录批量(≤20 条 URL)的限流排队时间随单元数线性增长,基础
 		// 重试预算盖不住 20 条的尾部;批量路由放宽到独立上限,再由
-		// CheckIndexBatch 按实际单元数收窄。
-		IndexRequestTimeout:    core.IndexCheckDeadlineCap,
-		ResolveConfig:          core.DefaultURLResolveConfig(),
-		MaxConcurrentRequests:  config.App.MaxConcurrentRequests,
-		ExtraMiddleware:        []fiber.Handler{securityHeadersHandler()},
+		// CheckIndexBatch 按实际单元数收窄。>20 条走 index_jobs 任务队列。
+		IndexRequestTimeout:   core.IndexCheckDeadlineCap,
+		ResolveConfig:         core.DefaultURLResolveConfig(),
+		MaxConcurrentRequests: config.App.MaxConcurrentRequests,
+		ExtraMiddleware:       []fiber.Handler{securityHeadersHandler()},
 		Resilience: core.ResilientConfig{
 			Retry: retryCfg,
 			CircuitBreaker: core.CircuitBreakerConfig{
@@ -556,12 +565,31 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 			Proxy: proxyCfg,
 			// 契约 A: per-engine IP cooldown state machine knobs.
 			Cooldown: config.Stability.EngineCooldown,
+			// 收录单元用独立重试预算（默认 1 次）: 被拦就快速失败，不把请求量
+			// 放大 4 倍喂同一个出口 IP。
+			IndexRetry: core.RetryConfig{
+				MaxRetries:     config.Stability.IndexCheck.MaxRetries,
+				InitialBackoff: retryCfg.InitialBackoff,
+				MaxBackoff:     retryCfg.MaxBackoff,
+				BackoffFactor:  retryCfg.BackoffFactor,
+			},
 		},
 	}
 	// 数据面可选鉴权(契约): security.data_plane_auth=true 时 dedicated
 	// /{engine}/search 与 /stats/* 需要 X-API-Key。默认关闭,行为与现状一致。
 	if config.Security.DataPlaneAuth {
 		opts.RequestAuth = dataPlaneAuthGuard()
+	}
+	// 批量收录任务队列: 一次提交整张表(上千条),服务端按引擎节奏排队跑完。
+	if config.IndexJobs.Enabled {
+		dir := strings.TrimSpace(config.IndexJobs.Dir)
+		if dir == "" {
+			dir = filepath.Join(config.Platform.DataDir, "index_jobs")
+		}
+		opts.IndexJobDir = dir
+		opts.IndexJobMaxURLs = config.IndexJobs.MaxURLs
+		opts.IndexJobChunk = config.IndexJobs.Chunk
+		opts.IndexJobMaxRetries = config.IndexJobs.MaxUnitRetries
 	}
 	return opts
 }
@@ -1020,6 +1048,13 @@ func (e *pooledBrowserEngine) CheckIndexed(ctx context.Context, targetURL string
 		return nil, fmt.Errorf("%w: %s does not support index checks", core.ErrNotImplemented, engine.Name())
 	}
 	return checker.CheckIndexed(ctx, targetURL, q)
+}
+
+// IndexUsesTitleProbe forwards the title-phrase capability to the orchestrator.
+// It reads the wrapper's own options (the same ones the inner engine gets), so
+// it works without resolving a browser.
+func (e *pooledBrowserEngine) IndexUsesTitleProbe() bool {
+	return e.opts.IndexTitleProbe
 }
 
 func (e *pooledBrowserEngine) IsInitialized() bool {

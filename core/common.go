@@ -469,6 +469,19 @@ type SearchEngineOptions struct {
 	// for this engine. Domestic engines are challenged far less often with a
 	// desktop Windows/macOS profile than with a Linux headless one.
 	ProfileID string `mapstructure:"profile"`
+	// IndexTitleProbe makes index checks search the target page title instead
+	// of the URL phrase. Baidu answers "wd=<url>" with an empty SERP for pages
+	// it has indexed, so URL phrasing under-detects; the title phrase returns
+	// the article. False keeps the legacy URL-as-phrase behaviour.
+	IndexTitleProbe bool `mapstructure:"index_title_probe"`
+	// CookieRotateEvery clears the proxy-lane cookie jar every N navigations
+	// (0 disables). Rotating the session is what keeps a single exit IP out of
+	// Baidu's challenge state; measured 1 capture per ~130 lookups when
+	// rotating every 8, versus 1 per ~23 without rotation.
+	CookieRotateEvery int `mapstructure:"cookie_rotate_every"`
+	// HomepageWarmOnRotate visits the engine homepage after a rotation so the
+	// fresh session looks like a returning visitor instead of a cold client.
+	HomepageWarmOnRotate bool `mapstructure:"homepage_warm_on_rotate"`
 
 	limiterState *rateLimiterState
 }

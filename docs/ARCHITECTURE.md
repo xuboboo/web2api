@@ -93,11 +93,21 @@ HTTP
 收录判定流（`/web-tool/v1/index/check`，`core/index_check.go`）：
 
 ```text
-APIKeyGuard（key 校验/配额预检） → IndexCheckHandler（参数校验 1..20 URL）
- └─ RunIndexCheckUnits：每 URL×引擎并发（≤8 worker），经 ResilientSearcher
-      ├─ engine.CheckIndexed（四引擎均以 URL 为查询词）
-      └─ EvaluateIndexSERP：候选跳转解析（/link、bing /ck/a）→ 归一化匹配
-           （host+path 相等 → indexed=true/exact，否则 none）
+APIKeyGuard（key 校验/配额预检） → IndexCheckHandler
+ ├─ ≤20 条：同步执行，200 返回结果信封
+ └─ >20 条：IndexJobManager 入队 → 202 {job_id}（状态/结果/CSV 走 /v1/index/check/jobs/*）
+
+RunIndexCheckUnits：每个引擎一个协程串行推进（同引擎同时只有一个在途请求，
+  避免多 worker 抢令牌形成突发）；跨引擎并行，经 ResilientSearcher 的限流/熔断/冷却/代理
+ ├─ engine.CheckIndexed
+ │    ├─ baidu：先抓目标页 <title>（同域 HTTP，1h 缓存）再以标题为检索词；
+ │    │           取不到标题则回退 URL 短语
+ │    └─ 其余引擎：仍以 URL 为查询词
+ └─ EvaluateIndexSERP
+      ├─ 直连候选：归一化 host+path 相等 → indexed=true/exact
+      ├─ 标题探测（baidu）：结果标题相似度 ≥0.72 且同站（可注册域名）→ exact
+      │                     （手机站/电脑站视为同站；同标题转载站不算）
+      └─ 兜底：解析 /link、bing /ck/a 跳转后再匹配 URL
 ```
 
 ## 响应

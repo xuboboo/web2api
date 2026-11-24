@@ -311,9 +311,15 @@ paths:
     post:
       tags: [data-plane]
       operationId: checkIndexBatch
-      summary: 批量收录判定(X-API-Key)
+      summary: 批量收录判定(X-API-Key;≤20 同步,>20 转异步任务)
       description: |
-        批量检测 1..20 个 URL。计费:条数 × 引擎数次(缺省引擎=全部四引擎)。
+        批量检测 URL(上限 `index_jobs.max_urls`,默认 5000)。计费:条数 × 引擎数次(缺省引擎=全部四引擎)。
+
+        * `urls` ≤ 20:同步返回 200 结果信封。
+        * `urls` > 20 且开启 `index_jobs`:返回 **202** + `job_id`;之后用
+          `GET /v1/index/check/jobs/{id}` 查进度、`/results` 取结果(可 `?format=csv`)。
+        * 未开启任务队列时 > 20 返回 400 `TOO_MANY_URLS`。
+
         响应 `meta.engines_cooldown` 携带冷却中的引擎;冷却引擎的单元结果带 `error:{code:"engine_cooldown",...}`。
       security:
         - ApiKeyAuth: []
@@ -329,7 +335,7 @@ paths:
                   type: array
                   items: { type: string, format: uri }
                   minItems: 1
-                  maxItems: 20
+                  maxItems: 5000
                   example: ["https://example.com/a", "https://example.com/b"]
                 engines:
                   type: array
@@ -337,10 +343,25 @@ paths:
                   example: [baidu, bing]
       responses:
         "200":
-          description: 批量收录判定结果
+          description: 批量收录判定结果(≤20 条)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IndexCheckResponse" }
+        "202":
+          description: 批量已入队(>20 条);用 job_id 轮询进度与结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexJobAccepted" }
+              example:
+                job_id: job_20261124T054613_379221272c
+                status: queued
+                total: 800
+                engines: [baidu]
+                created_at: "2026-11-24T05:46:13Z"
+                poll_url: /web-tool/v1/index/check/jobs/job_20261124T054613_379221272c
+                results_url: /web-tool/v1/index/check/jobs/job_20261124T054613_379221272c/results
+                csv_url: /web-tool/v1/index/check/jobs/job_20261124T054613_379221272c/results?format=csv
+                note: queued; the server drains this batch at the engine's safe pace.
         "400":
           description: 参数错误(平台信封,reason ∈ EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM)
           content:
@@ -364,6 +385,179 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformError" }
               example: { error: quota_exceeded }
+
+  /v1/index/check/jobs:
+    get:
+      tags: [data-plane]
+      operationId: listIndexJobs
+      summary: 异步收录任务列表(X-API-Key;不计费)
+      description: |
+        按创建时间倒序返回任务(内存中的运行任务 + 落盘的历史任务)。
+        后台同一时刻只执行一个任务,其余 FIFO 排队;这里可用来确认排队位置与整体进度。
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+          description: 返回条数
+      responses:
+        "200":
+          description: 任务列表
+          content:
+            application/json:
+              example:
+                count: 1
+                jobs:
+                  - job_id: job_20261124T054613_379221272c
+                    status: running
+                    progress: 0.66
+                    total: 800
+                    completed: 530
+                    indexed: 210
+                    not_indexed: 320
+                    failed: 0
+                    eta_seconds: 3240
+                    interval_ms: 12000
+                    engines: [baidu]
+        "401":
+          description: 平台信封 401
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+
+  /v1/index/check/jobs/{id}:
+    get:
+      tags: [data-plane]
+      operationId: getIndexJob
+      summary: 查询异步收录任务进度(X-API-Key;不计费)
+      description: |
+        返回单个任务的进度与统计。`status` 取值 queued/running/waiting/done/cancelled/failed;
+        `waiting` 表示引擎正在冷却,`wait_seconds` 是剩余等待时间,任务会在冷却结束后自动继续。
+        `eta_seconds` 按该任务的引擎令牌间隔估算,仅供参考。
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: check_index 返回的 job_id
+      responses:
+        "200":
+          description: 任务进度
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexJobView" }
+              example:
+                job_id: job_20261124T054613_379221272c
+                status: running
+                progress: 0.66
+                total: 800
+                completed: 530
+                indexed: 210
+                not_indexed: 320
+                failed: 0
+                retrying: 0
+                wait_seconds: 0
+                eta_seconds: 3240
+                interval_ms: 12000
+                engines: [baidu]
+                created_at: "2026-11-24T05:46:13Z"
+                updated_at: "2026-11-24T06:40:02Z"
+                poll_url: /web-tool/v1/index/check/jobs/job_20261124T054613_379221272c
+                results_url: /web-tool/v1/index/check/jobs/job_20261124T054613_379221272c/results
+                csv_url: /web-tool/v1/index/check/jobs/job_20261124T054613_379221272c/results?format=csv
+        "404":
+          description: 任务不存在
+          content:
+            application/json:
+              example: { error: not_found, code: not_found }
+    delete:
+      tags: [data-plane]
+      operationId: cancelIndexJob
+      summary: 取消异步收录任务(X-API-Key;不计费)
+      description: |
+        取消排队中或运行中的任务;已产出结果的条目保留可读,未执行的 URL 不再查询。
+        已结束(done/cancelled/failed)的任务返回 409 conflict。
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 已取消(返回任务进度对象,status=cancelled)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexJobView" }
+        "404":
+          description: 任务不存在
+          content:
+            application/json:
+              example: { error: not_found, code: not_found }
+        "409":
+          description: 任务已结束
+          content:
+            application/json:
+              example: { error: conflict, code: conflict }
+
+  /v1/index/check/jobs/{id}/results:
+    get:
+      tags: [data-plane]
+      operationId: getIndexJobResults
+      summary: 下载异步收录任务结果(X-API-Key;不计费)
+      description: |
+        默认返回 JSON(`results` 行结构与同步 `/v1/index/check` 完全一致);
+        `?format=csv` 直接下载 Excel 可打开的表格(UTF-8 BOM + CRLF)。
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: format
+          in: query
+          required: false
+          schema: { type: string, enum: [json, csv], default: json }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: 结果行(JSON)或 CSV 文件
+          content:
+            application/json:
+              example:
+                job_id: job_20261124T054613_379221272c
+                status: done
+                total: 2
+                offset: 0
+                count: 2
+                results:
+                  - url: https://example.com/post-1
+                    engines:
+                      baidu: { indexed: true, match: exact, matched_result_url: https://example.com/post-1, total_results: 9, took_ms: 2393 }
+            text/csv:
+              schema: { type: string }
+              example: |
+                url,baidu_indexed,baidu_match,baidu_matched_result_url,baidu_total_results,baidu_error
+                https://example.com/post-1,true,exact,https://example.com/post-1,9,
+        "404":
+          description: 任务不存在
+          content:
+            application/json:
+              example: { error: not_found, code: not_found }
 
   /v1/quota:
     get:
@@ -443,13 +637,13 @@ paths:
         * `initialize` — 握手;服务端以支持的 legacy 版本应答(默认 `2025-06-18`),`serverInfo.name="web2api"`;
           响应头返回 `Mcp-Session-Id`(内存会话,空闲 30 分钟过期)。
         * `notifications/initialized` — 通知,回 HTTP 204(无 id)。
-        * `tools/list` — 4 个工具:`web_search`、`check_indexed`、`get_quota`、`list_engines`。
+        * `tools/list` — 6 个工具:`web_search`、`check_indexed`、`get_index_job`、`cancel_index_job`、`get_quota`、`list_engines`。
         * `tools/call` — 结果统一 `{content:[{type:"text",text:"<JSON字符串>"}], isError}`;入参校验失败回 JSON-RPC `-32602`(HTTP 200)。
         * `ping` — 回 `{}`。
 
         **鉴权**:`X-API-Key`(计费)或 `Authorization: Bearer <JWT>`(管理员,不计费);未授权 401 平台信封。
 
-        **计费**:`web_search` 每次调用计 1 次;`check_indexed` = 条数×引擎数次;`get_quota`/`list_engines` 不计费。
+        **计费**:`web_search` 每次调用计 1 次;`check_indexed` = 条数×引擎数次(`>20` 条转异步任务时按提交条数计);`get_index_job`/`cancel_index_job`/`get_quota`/`list_engines` 不计费。
 
         **JSON-RPC 错误码**:`-32700` 解析错误(HTTP 400)、`-32600` 请求无效(不支持批量)、`-32601` 方法不存在、
         `-32602` 入参校验失败、`-32001` 会话不存在(HTTP 404)。
@@ -521,7 +715,7 @@ paths:
                   value:
                     jsonrpc: "2.0"
                     id: 2
-                    error: { code: -32602, message: "invalid params: urls accepts at most 20 entries, got 21" }
+                    error: { code: -32602, message: "invalid params: urls accepts at most 5000 entries, got 5001" }
         "204":
           description: 通知(notifications/initialized)已受理,无响应体
         "400":
@@ -608,6 +802,57 @@ components:
           type: string
           enum: [unauthorized, quota_exceeded, not_found, too_many_attempts, too_many_requests, server_error]
       required: [error]
+
+    IndexJobAccepted:
+      type: object
+      description: >-
+        POST /v1/index/check 在 urls > 20 且开启 index_jobs 时的 202 回执。任务已入队,
+        服务端按引擎实测节奏串行执行(百度 12s/条),遇到验证码冷却会等待而非判失败。
+      properties:
+        job_id: { type: string, example: job_20261124T054613_379221272c }
+        status:
+          type: string
+          enum: [queued, running, waiting, done, cancelled, failed]
+        total: { type: integer, description: 去重后的 URL 条数 }
+        engines:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        poll_url: { type: string, description: 进度端点(相对路径,带部署前缀) }
+        results_url: { type: string, description: 结果端点 }
+        csv_url: { type: string, description: CSV 下载端点 }
+        note: { type: string }
+      required: [job_id, status, total]
+
+    IndexJobView:
+      type: object
+      description: 异步收录任务的进度视图。
+      properties:
+        job_id: { type: string }
+        status:
+          type: string
+          enum: [queued, running, waiting, done, cancelled, failed]
+        progress: { type: number, description: 已完成比例 0..1 }
+        total: { type: integer }
+        completed: { type: integer, description: 已产出最终结论(含失败)的条数 }
+        indexed: { type: integer }
+        not_indexed: { type: integer }
+        failed: { type: integer }
+        retrying: { type: integer, description: 因冷却/验证码被重排的条数 }
+        wait_seconds: { type: integer, description: 正在等待的冷却剩余秒数(status=waiting 时) }
+        eta_seconds: { type: integer, description: 剩余时间的粗略估计(按引擎令牌间隔) }
+        interval_ms: { type: integer, description: 该任务引擎的令牌间隔(百度默认 12000) }
+        engines:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        last_error: { type: string }
+        poll_url: { type: string }
+        results_url: { type: string }
+        csv_url: { type: string }
+      required: [job_id, status, total, completed]
 
     PlatformBadRequest:
       type: object

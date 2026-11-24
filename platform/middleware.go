@@ -202,11 +202,11 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 			endpoint = c.Path()
 		}
 		// Usage logging is scoped to the index/check endpoints per contract;
-		// /v1/quota and /v1/engines stay out of the usage journal. The route may
-		// be mounted under a base path (the serve command registers everything
-		// under a fixed prefix), so match the /v1/index segment anywhere in the
-		// path instead of assuming a root mount.
-		if strings.Contains(endpoint, "/v1/index") || strings.Contains(c.Path(), "/v1/index") {
+		// /v1/quota and /v1/engines stay out of the usage journal, and job
+		// polling (/v1/index/check/jobs/...) is a progress read, not a lookup.
+		isLookupPath := (strings.Contains(endpoint, "/v1/index") || strings.Contains(c.Path(), "/v1/index")) &&
+			!strings.Contains(c.Path(), "/jobs")
+		if isLookupPath {
 			p.writeUsage(c, key, endpoint, urls, engines, units, started, handlerErr)
 		}
 		return handlerErr
@@ -231,7 +231,8 @@ func (p *Platform) writeUsage(c *fiber.Ctx, key *APIKey, endpoint string, urls, 
 	outcome := outcomeForStatus(status)
 	engineStats := parseEngineStatsFromBody(c.Response().Body())
 	charged := 0
-	if status == fiber.StatusOK && handlerErr == nil {
+	switch {
+	case status == fiber.StatusOK && handlerErr == nil:
 		charged = units
 		if engineStats != nil {
 			charged = 0
@@ -239,6 +240,12 @@ func (p *Platform) writeUsage(c *fiber.Ctx, key *APIKey, endpoint string, urls, 
 				charged += int(s.OK)
 			}
 		}
+	case status == fiber.StatusAccepted && handlerErr == nil:
+		// 202 = the batch was accepted into the job queue. Bill the requested
+		// units up front: the server will spend exactly that many engine calls,
+		// and per-result charging would let a caller queue work for free.
+		charged = units
+		outcome = OutcomeBilled
 	}
 	rec := &UsageRecord{
 		Time:        at,
@@ -253,7 +260,7 @@ func (p *Platform) writeUsage(c *fiber.Ctx, key *APIKey, endpoint string, urls, 
 		EngineStats: engineStats,
 		Outcome:     outcome,
 	}
-	consume := charged > 0 && status == fiber.StatusOK && handlerErr == nil
+	consume := charged > 0 && (status == fiber.StatusOK || status == fiber.StatusAccepted) && handlerErr == nil
 	if err := p.recordUsage(rec, key.ID, int64(charged), consume, at); err != nil {
 		logrus.WithError(err).Warn("platform: 写入 usage 记录失败")
 	}

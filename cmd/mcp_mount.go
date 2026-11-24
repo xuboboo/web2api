@@ -38,6 +38,14 @@ func mountMCP(app *fiber.App, serv *core.Server, plat *platform.Platform) {
 		EnginesStatus:   serv.EnginesStatusWithCooldown,
 		OriginAllowlist: config.Security.MCPAllowedOrigins,
 	}
+	// 异步批量收录: 与 HTTP 的 /v1/index/check/jobs 同一套队列，
+	// agent 可一次提交整张表，再用 get_index_job 轮询。
+	if serv.JobsEnabled() {
+		deps.SubmitIndexJob = serv.SubmitIndexJob
+		deps.IndexJobStatus = serv.IndexJobSnapshot
+		deps.IndexJobResults = serv.IndexJobResultsPage
+		deps.CancelIndexJob = serv.CancelIndexJob
+	}
 	if err := mcp.Register(root, plat.AuthAny(), deps); err != nil {
 		logrus.WithError(err).Error("MCP Agent 平面挂载失败(已跳过;其余 API 不受影响)")
 		return

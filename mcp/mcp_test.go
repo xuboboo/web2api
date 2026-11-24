@@ -278,8 +278,14 @@ func TestToolsListFourTools(t *testing.T) {
 			t.Fatalf("tools/list missing %q; got %v", want, got)
 		}
 	}
-	if len(got) != 4 {
-		t.Fatalf("expected exactly 4 tools, got %d: %v", len(got), got)
+	// Contract C's four tools plus the two async-batch companions.
+	for _, want := range []string{toolGetIndexJob, toolCancelIndexJob} {
+		if !got[want] {
+			t.Fatalf("tools/list missing %q; got %v", want, got)
+		}
+	}
+	if len(got) != 6 {
+		t.Fatalf("expected exactly 6 tools, got %d: %v", len(got), got)
 	}
 }
 
@@ -773,6 +779,12 @@ func TestStaticAssets(t *testing.T) {
 	if adminErr != nil {
 		t.Fatalf("internal admin spec must exist in repo: %v", adminErr)
 	}
+	// 内部管理规范只是不对外服务，仍然必须是合法 YAML —— 否则照着它做导入
+	// 的同事会拿到一个解析失败的文档。
+	var adminDoc map[string]any
+	if err := yaml.Unmarshal(adminSpec, &adminDoc); err != nil {
+		t.Fatalf("docs/internal/openapi-admin.yaml must parse as YAML: %v", err)
+	}
 	for _, want := range []string{"/api/engines/{name}/cooldown/force", "/api/playground/check", "/api/auth/password"} {
 		if !strings.Contains(string(adminSpec), want) {
 			t.Fatalf("docs/internal/openapi-admin.yaml must document %s", want)
@@ -871,6 +883,15 @@ func TestOpenAPISpecContractInvariants(t *testing.T) {
 	}
 	if apiOps != 0 {
 		t.Fatalf("public spec must not document /api/* admin endpoints (审计 A-08), got %d", apiOps)
+	}
+
+	// 异步任务端点必须在规范里成套出现，否则 OpenAPI 导入方(Dify/n8n)看不到它们。
+	for _, want := range []string{
+		"listIndexJobs", "getIndexJob", "cancelIndexJob", "getIndexJobResults",
+	} {
+		if _, ok := seen[want]; !ok {
+			t.Fatalf("spec is missing operation %s (index job endpoints)", want)
+		}
 	}
 }
 

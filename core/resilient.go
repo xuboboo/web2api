@@ -15,6 +15,8 @@ type ResilientSearcher struct {
 	engines   []SearchEngine
 	cbManager *CircuitBreakerManager
 	retryCfg  RetryConfig
+	// indexRetryCfg bounds index-check retries (see ResilientConfig.IndexRetry).
+	indexRetryCfg RetryConfig
 
 	proxyRuntime  string
 	proxyCfg      ProxyConfig
@@ -46,6 +48,10 @@ type ResilientConfig struct {
 	// Cooldown configures the per-engine IP cooldown state machine (契约 A);
 	// zero values fall back to DefaultEngineCooldownConfig.
 	Cooldown EngineCooldownConfig
+	// IndexRetry bounds retries for index-check units. It defaults to a single
+	// retry: a failed index lookup is usually "the engine blocked us", and a
+	// 4-attempt cycle only feeds the challenge rate limiter.
+	IndexRetry RetryConfig
 }
 
 type proxyLaneCookieDropper interface {
@@ -80,6 +86,7 @@ func NewResilientSearcher(engines []SearchEngine, cfg ResilientConfig) *Resilien
 		engines:           engines,
 		cbManager:         NewCircuitBreakerManager(cfg.CircuitBreaker),
 		retryCfg:          cfg.Retry,
+		indexRetryCfg:     normalizeIndexRetryConfig(cfg.IndexRetry, cfg.Retry),
 		proxyRuntime:      proxyCfg.Runtime,
 		proxyCfg:          proxyCfg,
 		proxyRegistry:     proxyCfg.Registry,
@@ -152,6 +159,39 @@ func (rs *ResilientSearcher) searchWithFallback(ctx context.Context, primaryEngi
 }
 
 func (rs *ResilientSearcher) searchWithProtection(ctx context.Context, engine SearchEngine, q Query) ([]SearchResult, ProxyExecutionMeta, error) {
+	return rs.searchWithProtectionCfg(ctx, engine, q, rs.retryCfg)
+}
+
+// normalizeIndexRetryConfig fills the index-check retry budget: one retry by
+// default, inheriting the search backoff unless the caller configured one.
+func normalizeIndexRetryConfig(index, fallback RetryConfig) RetryConfig {
+	cfg := index
+	if cfg.MaxRetries < 0 {
+		cfg.MaxRetries = 0
+	}
+	if cfg.InitialBackoff <= 0 {
+		cfg.InitialBackoff = fallback.InitialBackoff
+	}
+	if cfg.InitialBackoff <= 0 {
+		cfg.InitialBackoff = DefaultRetryConfig().InitialBackoff
+	}
+	if cfg.MaxBackoff <= 0 {
+		cfg.MaxBackoff = fallback.MaxBackoff
+	}
+	if cfg.MaxBackoff <= 0 {
+		cfg.MaxBackoff = DefaultRetryConfig().MaxBackoff
+	}
+	if cfg.BackoffFactor <= 0 {
+		cfg.BackoffFactor = fallback.BackoffFactor
+	}
+	if cfg.BackoffFactor <= 0 {
+		cfg.BackoffFactor = 2.0
+	}
+	return cfg
+}
+
+// searchWithProtectionCfg is searchWithProtection with an explicit retry budget.
+func (rs *ResilientSearcher) searchWithProtectionCfg(ctx context.Context, engine SearchEngine, q Query, retryCfg RetryConfig) ([]SearchResult, ProxyExecutionMeta, error) {
 	ctx = EnsureContext(ctx)
 
 	if ctx.Err() != nil {
@@ -171,7 +211,7 @@ func (rs *ResilientSearcher) searchWithProtection(ctx context.Context, engine Se
 	// lastProxyURL is the unmasked proxy of the last attempt, for rotation below.
 	lastProxyURL := ""
 	runOnce := func() RetryResult {
-		return RetryableSearch(ctx, rs.retryCfg, engine.Name(), func(callCtx context.Context) ([]SearchResult, error) {
+		return RetryableSearch(ctx, retryCfg, engine.Name(), func(callCtx context.Context) ([]SearchResult, error) {
 			limiter := engine.GetRateLimiter()
 			if limiter != nil {
 				if err := limiter.Wait(callCtx); err != nil {
@@ -514,12 +554,13 @@ func (rs *ResilientSearcher) selectProxyForQuery(policy ProxyPolicy, q Query, ct
 
 func proxyRequestContext(ctx context.Context, engineName string, q Query) context.Context {
 	ctx = WithRequestProxyURL(ctx, q.ProxyURL)
-	if q.ProxyURL == "" {
-		return ctx
-	}
+	// Attach the lane key for direct traffic too (session "direct"): without it
+	// every request opened a cold browser context, which is exactly the pattern
+	// Baidu challenges after ~12 lookups. A sticky lane keeps cookies across
+	// requests and lets cookie_rotate_every / drop_cookies_on_challenge work.
 	if laneKey := ProxyLaneKeyForTenant(engineName, TenantFromContext(ctx), q, q.ProxyURL); !laneKey.Empty() {
 		ctx = WithProxyLaneKey(ctx, laneKey)
-		if q.ProxyCountry != "" {
+		if q.ProxyURL != "" && q.ProxyCountry != "" {
 			ctx = WithProfileRegion(ctx, q.ProxyCountry)
 		}
 	}

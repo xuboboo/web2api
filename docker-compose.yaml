@@ -9,7 +9,12 @@ services:
     build:
       context: .
     image: web2api:local
-    # Loopback only: the API has no auth layer, never expose it beyond localhost.
+    # Bind to loopback unless a reverse proxy terminates TLS in front of it.
+    # The data plane requires X-API-Key (security.data_plane_auth=true by
+    # default) and the admin plane requires a JWT, but port 7000 is plain HTTP:
+    # publishing it on 0.0.0.0 would put admin credentials and API keys on the
+    # wire in cleartext. Set WEB2API_SERVER_HOST/SERVER_PORT and a TLS proxy
+    # (see deploy/README.md) before exposing the service beyond localhost.
     ports:
       - "127.0.0.1:7000:7000"
     command: serve

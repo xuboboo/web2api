@@ -3089,7 +3089,9 @@
       el('div', { class: 'card-body' },
         paramTable([
           ['web_search', 'object', 'query 必填', '按关键词搜索,返回 rank、title、url、snippet。engine 可选 baidu|sogou|so360|bing,默认 baidu;limit 默认 10'],
-          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–20 条 URL,返回结构与 /v1/index/check 相同'],
+          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–5000 条 URL;≤20 条同步返回,>20 条转异步任务并返回 job_id'],
+['get_index_job', 'object', 'job_id 必填', '查询异步收录任务进度;include_results=true 时附带已完成的结果行(可分页)'],
+['cancel_index_job', 'object', 'job_id 必填', '取消排队中/运行中的收录任务'],
           ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
           ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
@@ -3307,6 +3309,7 @@ async def run():
       ['docs-auth', '鉴权'],
       ['docs-index-post', 'POST /v1/index/check'],
       ['docs-index-get', 'GET /v1/index/check'],
+      ['docs-index-jobs', 'GET /v1/index/check/jobs/{id}'],
       ['docs-quota', 'GET /v1/quota'],
       ['docs-engines', 'GET /v1/engines'],
       ['docs-mcp', 'MCP /web-tool/mcp'],
@@ -3391,9 +3394,9 @@ async def run():
       title: '/v1/index/check',
       sub: '批量查询收录状态',
       children: [
-        p('提交 1–20 条 URL,查询各引擎收录情况。计费按次:1 条 URL × 1 个引擎 = 1 次。'),
+        p('提交 URL 列表查询各引擎收录情况:≤20 条同步返回结果;更多条(<code>index_jobs.max_urls</code>,默认 5000)自动转入服务端任务队列,返回 <code>202</code> + <code>job_id</code>,之后用 <code>GET /v1/index/check/jobs/{id}</code> 查进度、<code>/results</code> 取结果(可 <code>?format=csv</code>)。计费按次:1 条 URL × 1 个引擎 = 1 次。'),
         paramTable([
-          ['urls', 'array[string]', '是', '待查询 URL 列表,1–20 条'],
+          ['urls', 'array[string]', '是', '待查询 URL 列表,1..<code>index_jobs.max_urls</code>(默认 5000);&gt;20 条转异步任务'],
           ['engines', 'array[string]', '否', '引擎列表,默认 <code>["baidu","sogou","so360","bing"]</code>;接受别名 <code>"360"</code>(等同 so360)']
         ]),
         codeBlock('cURL',
@@ -3496,6 +3499,44 @@ async def run():
       ]
     }));
 
+    /* ---- 异步批量任务 ---- */
+    root.appendChild(docSection({
+      id: 'docs-index-jobs',
+      method: 'GET',
+      title: '/v1/index/check/jobs/{id}',
+      sub: '批量任务进度 / 结果 / 取消(不计费)',
+      children: [
+        p('超过 20 条的提交会返回 <code>202</code> + <code>job_id</code>;服务端按引擎实测节奏串行执行(百度默认 12 秒/条),遇到验证码冷却会等冷却结束再继续(<code>status:"waiting"</code> + <code>wait_seconds</code>),被挡住的单条自动重排。任务状态落盘,进程重启后自动续跑,已完成的 URL 不重复查询。'),
+        paramTable([
+          ['GET …/jobs', '—', '否', '最近任务列表,<code>?limit=</code>(默认 50,最大 500)'],
+          ['GET …/jobs/{id}', '—', '—', '进度:<code>status</code>、<code>progress</code>、<code>indexed/not_indexed/failed/retrying</code>、<code>eta_seconds</code>、<code>interval_ms</code>'],
+          ['GET …/jobs/{id}/results', '—', '否', '结果行:<code>?offset=&amp;limit=</code> 分页,<code>?format=csv</code> 直接下载表格(UTF-8 BOM)'],
+          ['DELETE …/jobs/{id}', '—', '—', '取消排队中/运行中的任务;已结束返回 <code>409 conflict</code>']
+        ]),
+        codeBlock('cURL',
+          'curl "' + BASE + '/v1/index/check/jobs/job_20261124T054613_379221272c" \\\n' +
+          '  -H "X-API-Key: ' + DEMO_KEY + '"\n\n' +
+          '# 结果下载(CSV,Excel 可直接打开)\n' +
+          'curl -OJ "' + BASE + '/v1/index/check/jobs/job_20261124T054613_379221272c/results?format=csv" \\\n' +
+          '  -H "X-API-Key: ' + DEMO_KEY + '"'),
+        codeBlock('JSON · 200(进度)',
+          '{\n' +
+          '  "job_id": "job_20261124T054613_379221272c",\n' +
+          '  "status": "running",\n' +
+          '  "progress": 0.66,\n' +
+          '  "total": 800,\n' +
+          '  "completed": 530,\n' +
+          '  "indexed": 210,\n' +
+          '  "not_indexed": 320,\n' +
+          '  "failed": 0,\n' +
+          '  "retrying": 0,\n' +
+          '  "eta_seconds": 3240,\n' +
+          '  "interval_ms": 12000,\n' +
+          '  "engines": ["baidu"]\n' +
+          '}')
+      ]
+    }));
+
     /* ---- GET /v1/quota ---- */
     root.appendChild(docSection({
       id: 'docs-quota',
@@ -3552,7 +3593,9 @@ async def run():
         p('服务端通过 <code>Mcp-Session-Id</code> 响应头下发会话 ID,后续请求需原样带回。'),
         paramTable([
           ['web_search', 'object', 'query 必填', '按关键词搜索,返回 rank、title、url、snippet。engine 可选 baidu|sogou|so360|bing,默认 baidu;limit 默认 10'],
-          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–20 条 URL,返回结构与 /v1/index/check 相同;计费按 URL 数 × 引擎数计次'],
+          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–5000 条 URL;≤20 条同步返回,>20 条转异步任务并返回 job_id;计费按 URL 数 × 引擎数计次'],
+['get_index_job', 'object', 'job_id 必填', '查询异步收录任务进度(status/progress/eta_seconds);include_results=true 时附带结果行,不计费'],
+['cancel_index_job', 'object', 'job_id 必填', '取消排队中/运行中的收录任务,不计费'],
           ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
           ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
@@ -3624,7 +3667,7 @@ async def run():
       children: [
         p('<strong>HTTP 级错误(整请求失败)</strong>'),
         errTable([
-          ['400', 'bad_request', '参数错误。reason:EMPTY_QUERY(URL 列表为空)、TOO_MANY_URLS(超过 20 条)、INVALID_PARAM(参数非法)'],
+          ['400', 'bad_request', '参数错误。reason:EMPTY_QUERY(URL 列表为空)、TOO_MANY_URLS(未开启 index_jobs 时 >20 条,或超过 index_jobs.max_urls)、INVALID_PARAM(参数非法)'],
           ['401', 'unauthorized', '密钥无效 / 已禁用,或管理员 JWT 缺失、过期'],
           ['403', 'blocked', '搜索引擎反爬拦截了请求(引擎级错误同样会以 code=blocked 出现在单元结果中)'],
           ['403', 'forbidden', '该请求被拒绝访问(如来源不在允许范围内)'],

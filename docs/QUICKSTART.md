@@ -325,7 +325,7 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: $W2A_KEY
 }
 ```
 
-内置 4 个工具：`web_search`（四引擎搜索）、`check_indexed`（收录判定）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。
+内置 6 个工具：`web_search`（四引擎搜索）、`check_indexed`（收录判定，>20 条自动转异步任务）、`get_index_job`（任务进度/结果）、`cancel_index_job`（取消任务）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。
 
 ---
 
@@ -336,8 +336,8 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: $W2A_KEY
 | `{"error":"unauthorized"}` | 401 | 没带 key / key 错误 / 已禁用 | 检查 `X-API-Key` 头；确认密钥状态 active |
 | `{"error":"quota_exceeded"}` + `Retry-After` | 429 | 当日配额用完 | 换 key、提高 `daily_quota`，或等次日零点自动恢复 |
 | `{"error":"engine_cooldown","retry_after_seconds":600}` | 503 | 所选引擎全在冷却 | 等 `retry_after_seconds` 秒后重试，或换引擎 |
-| `reason:"EMPTY_QUERY"` | 400 | `urls` 为空 | 传 1–20 条 URL |
-| `reason:"TOO_MANY_URLS"` | 400 | 超过 20 条 | 分片请求 |
+| `reason:"EMPTY_QUERY"` | 400 | `urls` 为空 | 传至少 1 条 URL |
+| `reason:"TOO_MANY_URLS"` | 400 | 超过 20 条但没开任务队列，或超过 `index_jobs.max_urls` | 开 `index_jobs`（>20 条自动转任务），或分片请求 |
 | `reason:"INVALID_PARAM"` | 400 | 引擎名不认识 | 用 `baidu`/`sogou`/`so360`/`bing`（`360` 是 so360 的别名） |
 | 某引擎返回 `error` 但 HTTP 200 | 200 | 该引擎被风控/超时 | 属正常：其它引擎结果照常返回，失败单元不计费；看 `error.code` |
 

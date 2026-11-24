@@ -36,7 +36,7 @@ E2E_SKIP_LOCKOUT=1 node deploy/e2e.mjs
 | `admin` | 登录成功/失败（401）、`/web-tool/api/me`、统计端点与 `/web-tool/api/engines` |
 | `keys` | 创建（`sk-w2a-` 格式、完整 key 仅一次）、列表字段、停用→401、重启用、删除→401 |
 | `public` | 401 信封、429 配额（`daily_quota=1` 第二次超额，含 `Retry-After` 头）、400 `EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM`、`/web-tool/v1/engines`、别名 `360`、（可选）真实收录判定 |
-| `agent` | MCP 握手链：未鉴权 401 → `initialize`（protocolVersion `2025-06-18`、serverInfo、`Mcp-Session-Id` 头）→ `notifications/initialized`（204）→ `tools/list`（4 工具 + inputSchema）→ `tools/call get_quota`；`/web-tool/openapi.yaml`（3.1 声明）与 `/web-tool/llms.txt` |
+| `agent` | MCP 握手链：未鉴权 401 → `initialize`（protocolVersion `2025-06-18`、serverInfo、`Mcp-Session-Id` 头）→ `notifications/initialized`（204）→ `tools/list`（6 工具 + inputSchema）→ `tools/call get_quota`；`/web-tool/openapi.yaml`（3.1 声明）与 `/web-tool/llms.txt` |
 | `stability` | 冷却状态机：`cooldown/force` → `/web-tool/api/engines` 显示 `cooldown/until/reason/consecutive_blocks` → 冷却引擎 search 与 `/web-tool/v1/index/check` 快速失败 503 `engine_cooldown` + `Retry-After` → `cooldown/reset` 恢复；`/web-tool/api/playground/check` 与 `/web-tool/v1/index/check` 同构 |
 | `security` | 登录连续失败锁定：失败达阈值（默认 5 次）后 429 `too_many_attempts` + `Retry-After`，锁定期内正确凭据同样 429。⚠ 该分组**最后执行**且会锁定 admin@<本机IP> 一个锁定窗口（默认 15 分钟）；`E2E_SKIP_LOCKOUT=1` 可跳过 |
 

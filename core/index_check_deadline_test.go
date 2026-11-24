@@ -17,12 +17,15 @@ import (
 // queue time, otherwise the queued tail fails (engine_queue_exceeded) without
 // ever reaching the engine.
 func TestIndexCheckBatchDeadline(t *testing.T) {
-	// baidu 生产配置: 12 次/分钟 → 5s 一个令牌。
+	// baidu 生产配置: 5 次/分钟 → 12s 一个令牌（实测的安全节奏）。
 	baidu := &engineMock{name: "baidu", initialized: true,
-		limiter: rate.NewLimiter(rate.Every(5*time.Second), 2)}
+		limiter: rate.NewLimiter(rate.Every(12*time.Second), 1)}
 	// sogou 生产配置: 8 次/分钟 → 7.5s 一个令牌。
 	sogou := &engineMock{name: "sogou", initialized: true,
 		limiter: rate.NewLimiter(rate.Every(7500*time.Millisecond), 1)}
+	// 人为的慢引擎，用于验证 12 分钟封顶仍然生效。
+	slow := &engineMock{name: "slow", initialized: true,
+		limiter: rate.NewLimiter(rate.Every(30*time.Second), 1)}
 	noLimiter := &engineMock{name: "google", initialized: true}
 
 	base := 36500 * time.Millisecond
@@ -39,7 +42,7 @@ func TestIndexCheckBatchDeadline(t *testing.T) {
 			urls:    1,
 			engines: []SearchEngine{baidu},
 			retries: 1,
-			want:    base + 5*time.Second,
+			want:    base + 12*time.Second,
 		},
 		{
 			name:    "no limiter info keeps the base budget",
@@ -49,32 +52,39 @@ func TestIndexCheckBatchDeadline(t *testing.T) {
 			want:    base,
 		},
 		{
-			name:    "20 urls on baidu: base + last-token queue (39×5s)",
+			name:    "20 urls on baidu at 12s: base + last-token queue (39×12s)",
 			urls:    20,
 			engines: []SearchEngine{baidu},
 			retries: 1,
-			want:    base + 195*time.Second,
+			want:    base + 468*time.Second,
 		},
 		{
-			name:    "20 urls on sogou clamps to the cap",
+			name:    "20 urls on a 30s engine clamps to the 12min cap",
+			urls:    20,
+			engines: []SearchEngine{slow},
+			retries: 1,
+			want:    IndexCheckDeadlineCap,
+		},
+		{
+			name:    "20 urls on sogou fit inside the cap now",
 			urls:    20,
 			engines: []SearchEngine{sogou},
 			retries: 1,
-			want:    IndexCheckDeadlineCap,
+			want:    base + 292500*time.Millisecond,
 		},
 		{
 			name:    "zero retries: queue time counts one attempt per unit",
 			urls:    4,
 			engines: []SearchEngine{baidu},
 			retries: 0,
-			want:    base + 15*time.Second,
+			want:    base + 36*time.Second,
 		},
 		{
 			name:    "slowest engine wins across the selection",
 			urls:    2,
 			engines: []SearchEngine{baidu, noLimiter},
 			retries: 0,
-			want:    base + 5*time.Second,
+			want:    base + 12*time.Second,
 		},
 	}
 	for _, tc := range cases {

@@ -8,12 +8,15 @@ import (
 )
 
 // Tool names (contract C — the four tools; naming must stay in sync with
-// docs/AGENT-README.md, the admin panel Agent page and skills/).
+// docs/AGENT-README.md, the admin panel Agent page and skills/). The two job
+// tools extend check_indexed for batches too large for one synchronous call.
 const (
-	toolWebSearch    = "web_search"
-	toolCheckIndexed = "check_indexed"
-	toolGetQuota     = "get_quota"
-	toolListEngines  = "list_engines"
+	toolWebSearch      = "web_search"
+	toolCheckIndexed   = "check_indexed"
+	toolGetIndexJob    = "get_index_job"
+	toolCancelIndexJob = "cancel_index_job"
+	toolGetQuota       = "get_quota"
+	toolListEngines    = "list_engines"
 )
 
 // engineOptions is the closed engine set of the contract enum
@@ -31,8 +34,12 @@ const (
 	maxSearchLimit     = 100
 )
 
-// maxCheckURLs mirrors the platform contract maximum for one check batch.
+// maxCheckURLs mirrors the platform contract maximum for one synchronous
+// check batch; larger batches become an async job.
 const maxCheckURLs = 20
+
+// maxJobURLs mirrors index_jobs.max_urls (the per-job ceiling).
+const maxJobURLs = 5000
 
 func isKnownEngine(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
@@ -79,8 +86,10 @@ func toolSpecs() []map[string]any {
 		},
 		{
 			"name": toolCheckIndexed,
-			"description": "检测 URL 是否被百度/搜狗/360/必应收录(收录判定)。返回与 GET /v1/index/check 相同的" +
-				" {id,created_at,results:[{url,engines:{...}}],meta} 结构。计费:urls × engines 次(URL 数 × 引擎数)。",
+			"description": "检测 URL 是否被百度/搜狗/360/必应收录(收录判定)。≤20 条同步返回与 GET /v1/index/check 相同的" +
+				" {id,created_at,results:[{url,engines:{...}}],meta} 结构;超过 20 条则进入服务端队列,立即返回" +
+				" {job_id,status,total,...},随后用 get_index_job 查进度/结果(整张表一次提交即可)。" +
+				"计费:urls × engines 次(URL 数 × 引擎数)。",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -88,8 +97,8 @@ func toolSpecs() []map[string]any {
 						"type":        "array",
 						"items":       map[string]any{"type": "string", "minLength": 1},
 						"minItems":    1,
-						"maxItems":    maxCheckURLs,
-						"description": "待检测的绝对 URL 列表(1..20 条)",
+						"maxItems":    maxJobURLs,
+						"description": "待检测的绝对 URL 列表(1..5000;>20 条自动转为异步任务)",
 					},
 					"engines": map[string]any{
 						"type":        "array",
@@ -98,6 +107,55 @@ func toolSpecs() []map[string]any {
 					},
 				},
 				"required": []string{"urls"},
+			},
+		},
+		{
+			"name": toolGetIndexJob,
+			"description": "查询异步收录任务:默认返回进度(status/progress/eta_seconds/各计数);" +
+				"include_results=true 时附带已完成的结果行(与 check_indexed 同步结果同结构,可用 offset/limit 分页)。" +
+				"不计费。",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"job_id": map[string]any{
+						"type":        "string",
+						"minLength":   1,
+						"description": "check_indexed 返回的 job_id",
+					},
+					"include_results": map[string]any{
+						"type":        "boolean",
+						"default":     false,
+						"description": "true = 一并返回结果行",
+					},
+					"offset": map[string]any{
+						"type":        "integer",
+						"minimum":     0,
+						"default":     0,
+						"description": "结果行起点(仅 include_results=true 时生效)",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"maximum":     maxJobURLs,
+						"description": "返回多少行(缺省=全部剩余)",
+					},
+				},
+				"required": []string{"job_id"},
+			},
+		},
+		{
+			"name":        toolCancelIndexJob,
+			"description": "取消一个排队中或运行中的收录任务;已结束的任务返回错误。不计费。",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"job_id": map[string]any{
+						"type":        "string",
+						"minLength":   1,
+						"description": "check_indexed 返回的 job_id",
+					},
+				},
+				"required": []string{"job_id"},
 			},
 		},
 		{
@@ -170,7 +228,8 @@ func parseWebSearchArgs(args rawArgs) (engine, query string, limit int, err erro
 
 // parseCheckIndexedArgs validates check_indexed arguments:
 //
-//	urls    required, 1..20 non-empty strings
+//	urls    required, 1..maxJobURLs non-empty strings (the handler turns >20
+//	        into an async job when the deployment wires one)
 //	engines optional, array of contract engine names; nil ⇒ all four engines
 func parseCheckIndexedArgs(args rawArgs) (urls []string, engines []string, err error) {
 	raw, ok := args["urls"]
@@ -181,10 +240,10 @@ func parseCheckIndexedArgs(args rawArgs) (urls []string, engines []string, err e
 		return nil, nil, fmt.Errorf("urls must be an array of strings")
 	}
 	if len(urls) == 0 {
-		return nil, nil, fmt.Errorf("urls must contain 1..%d entries", maxCheckURLs)
+		return nil, nil, fmt.Errorf("urls must contain 1..%d entries", maxJobURLs)
 	}
-	if len(urls) > maxCheckURLs {
-		return nil, nil, fmt.Errorf("urls accepts at most %d entries, got %d", maxCheckURLs, len(urls))
+	if len(urls) > maxJobURLs {
+		return nil, nil, fmt.Errorf("urls accepts at most %d entries, got %d", maxJobURLs, len(urls))
 	}
 	for i, u := range urls {
 		if strings.TrimSpace(u) == "" {
@@ -207,4 +266,59 @@ func parseCheckIndexedArgs(args rawArgs) (urls []string, engines []string, err e
 		}
 	}
 	return urls, engines, nil
+}
+
+// parseGetIndexJobArgs validates get_index_job arguments.
+func parseGetIndexJobArgs(args rawArgs) (jobID string, includeResults bool, offset, limit int, err error) {
+	raw, ok := args["job_id"]
+	if !ok {
+		return "", false, 0, 0, fmt.Errorf("job_id is required")
+	}
+	if err := json.Unmarshal(raw, &jobID); err != nil {
+		return "", false, 0, 0, fmt.Errorf("job_id must be a string")
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return "", false, 0, 0, fmt.Errorf("job_id must not be empty")
+	}
+	if raw, ok := args["include_results"]; ok && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &includeResults); err != nil {
+			return "", false, 0, 0, fmt.Errorf("include_results must be a boolean")
+		}
+	}
+	if raw, ok := args["offset"]; ok && string(raw) != "null" {
+		var f float64
+		if err := json.Unmarshal(raw, &f); err != nil || f != math.Trunc(f) || f < 0 {
+			return "", false, 0, 0, fmt.Errorf("offset must be a non-negative integer")
+		}
+		offset = int(f)
+	}
+	if raw, ok := args["limit"]; ok && string(raw) != "null" {
+		var f float64
+		if err := json.Unmarshal(raw, &f); err != nil || f != math.Trunc(f) {
+			return "", false, 0, 0, fmt.Errorf("limit must be an integer")
+		}
+		limit = int(f)
+		if limit < 1 || limit > maxJobURLs {
+			return "", false, 0, 0, fmt.Errorf("limit must be between 1 and %d", maxJobURLs)
+		}
+	}
+	return jobID, includeResults, offset, limit, nil
+}
+
+// parseJobIDArg validates the single-job_id tools (cancel_index_job).
+func parseJobIDArg(args rawArgs) (string, error) {
+	raw, ok := args["job_id"]
+	if !ok {
+		return "", fmt.Errorf("job_id is required")
+	}
+	var jobID string
+	if err := json.Unmarshal(raw, &jobID); err != nil {
+		return "", fmt.Errorf("job_id must be a string")
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return "", fmt.Errorf("job_id must not be empty")
+	}
+	return jobID, nil
 }

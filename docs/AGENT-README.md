@@ -5,7 +5,7 @@
 1. **收录判定**（`check_indexed`）：一批 URL 是否被百度 / 搜狗 / 360 / 必应收录，每 URL×引擎一个结论；
 2. **国内搜索**（`web_search`）：四引擎 organic 结果（rank/title/url/snippet）。
 
-两种接法任选：**MCP**（Claude 系客户端一次配置即得 4 个工具）或 **OpenAPI spec**（Dify / n8n / LangChain 通用导入）。两者都已在服务端内置，无需装任何 SDK。
+两种接法任选：**MCP**（Claude 系客户端一次配置即得 6 个工具——4 个检索/判定工具 + 2 个批量任务工具）或 **OpenAPI spec**（Dify / n8n / LangChain 通用导入）。两者都已在服务端内置，无需装任何 SDK。
 
 ```
 能力自发现（给 LLM 看的）：
@@ -49,9 +49,15 @@ Claude Desktop 经 Settings → Connectors 界面添加远程 MCP（URL 填 `{BA
 }
 ```
 
-配置完成后即可看到 4 个工具：`web_search`、`check_indexed`、`get_quota`、`list_engines`。试着对它说：
+配置完成后即可看到 6 个工具：`web_search`、`check_indexed`、`get_index_job`、`cancel_index_job`、`get_quota`、`list_engines`。试着对它说：
 
 > 用 check_indexed 查一下 https://gov.cn 和 https://example.com 在百度和必应的收录情况
+
+一次要查几百上千条时，直接整表提交，不用自己分批：
+
+> 用 check_indexed 提交这 800 条 URL，然后用 get_index_job 每 10 分钟看一次进度，跑完把结果列出来
+
+`check_indexed` 超过 20 条会自动转成服务端任务（按引擎实测节奏排队，遇到验证码冷却会自动等），返回 `{job_id,...}`；之后用 `get_index_job`（可 `include_results:true` 分页取结果）和 `cancel_index_job` 管理。对应 HTTP 端点见 [API.md §2.2b](API.md)。
 
 Claude Code 用户一行接入：
 

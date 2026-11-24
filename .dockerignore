@@ -1,21 +1,38 @@
 .git
 .gitignore
+.zcode/
 
 .release/
-docs/*.md
+docs/
 *.md
 testdata/
 
+# Local binaries (any name: web2api, web2api-qa7753.exe, ...). The image builds
+# its own binary; a stray .exe in the context would add hundreds of MB.
 web2api
-web2api.exe
+*.exe
+*.exe~
 bin/
 dist/
 *.tgz
 *.tar
+
+# Runtime state and secrets must never enter the build context.
+# data/ holds the bbolt database (API-key hashes, usage ledger), the JWT signing
+# key `secret.key` and the audit log; config-qa*/logs* are QA leftovers.
+data/
+data-*/
+qa/
+deploy/e2e-results/
+logs.txt
+logs-*.log
+logs-qa*.txt
+server-*.log
+config-qa*.yaml
+config-audit*.yaml
 
 # Local caches
 .gocache/
 .gomodcache/
 .tmp-gocache
 .tmpcache/
-

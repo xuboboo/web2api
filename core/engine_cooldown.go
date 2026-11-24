@@ -87,12 +87,24 @@ type EngineCooldownConfig struct {
 	// ResetAfterMinutes is the clean streak (no interception) after which the
 	// consecutive-block counter zeroes.
 	ResetAfterMinutes int `mapstructure:"reset_after_minutes"`
+	// PerEngine overrides the tiers for named engines. Baidu recovers from a
+	// challenge after ~2 minutes of rest (measured), so the global 10/30/120
+	// default parks it far longer than needed; per-engine tiers keep the
+	// punitive default for engines that really need it.
+	PerEngine map[string]EngineCooldownConfig `mapstructure:"per_engine"`
 }
 
 // StabilityConfig is the `stability:` config node (mounted into cmd.Config by
 // the integrator, following the core.ProxiesConfig pattern).
 type StabilityConfig struct {
 	EngineCooldown EngineCooldownConfig `mapstructure:"engine_cooldown"`
+	IndexCheck     IndexCheckConfig     `mapstructure:"index_check"`
+}
+
+// IndexCheckConfig is the `stability.index_check` node.
+type IndexCheckConfig struct {
+	// MaxRetries is the retry budget for one index-check unit (default 1).
+	MaxRetries int `mapstructure:"max_retries"`
 }
 
 // DefaultEngineCooldownConfig returns the contract defaults: 10/30/120 minute
@@ -106,7 +118,10 @@ func DefaultEngineCooldownConfig() EngineCooldownConfig {
 
 // DefaultStabilityConfig returns the default `stability:` node.
 func DefaultStabilityConfig() StabilityConfig {
-	return StabilityConfig{EngineCooldown: DefaultEngineCooldownConfig()}
+	return StabilityConfig{
+		EngineCooldown: DefaultEngineCooldownConfig(),
+		IndexCheck:     IndexCheckConfig{MaxRetries: 1},
+	}
 }
 
 // normalized fills empty/invalid values with the contract defaults so a
@@ -125,7 +140,19 @@ func (c EngineCooldownConfig) normalized() EngineCooldownConfig {
 	if reset <= 0 {
 		reset = DefaultEngineCooldownConfig().ResetAfterMinutes
 	}
-	return EngineCooldownConfig{StepsMinutes: steps, ResetAfterMinutes: reset}
+	normalized := EngineCooldownConfig{StepsMinutes: steps, ResetAfterMinutes: reset}
+	if len(c.PerEngine) > 0 {
+		normalized.PerEngine = make(map[string]EngineCooldownConfig, len(c.PerEngine))
+		for engine, override := range c.PerEngine {
+			normalized.PerEngine[engine] = override.withoutPerEngine().normalized()
+		}
+	}
+	return normalized
+}
+
+// withoutPerEngine copies the config without nested overrides (one level only).
+func (c EngineCooldownConfig) withoutPerEngine() EngineCooldownConfig {
+	return EngineCooldownConfig{StepsMinutes: c.StepsMinutes, ResetAfterMinutes: c.ResetAfterMinutes}
 }
 
 // engineCooldownState is the per-engine state machine state.
@@ -199,20 +226,30 @@ func (m *engineCooldownManager) state(engine string) *engineCooldownState {
 	return st
 }
 
+// cfgFor returns the effective cooldown config for engine (per-engine override
+// when configured, otherwise the global tiers).
+func (m *engineCooldownManager) cfgFor(engine string) EngineCooldownConfig {
+	if override, ok := m.cfg.PerEngine[engine]; ok {
+		return override.withoutPerEngine().normalized()
+	}
+	return m.cfg.withoutPerEngine().normalized()
+}
+
 // tier returns the cooldown duration for the n-th (1-based) consecutive block.
-func (m *engineCooldownManager) tier(consecutive int) time.Duration {
+func (m *engineCooldownManager) tier(engine string, consecutive int) time.Duration {
+	cfg := m.cfgFor(engine)
 	if consecutive < 1 {
 		consecutive = 1
 	}
 	idx := consecutive - 1
-	if idx >= len(m.cfg.StepsMinutes) {
-		idx = len(m.cfg.StepsMinutes) - 1
+	if idx >= len(cfg.StepsMinutes) {
+		idx = len(cfg.StepsMinutes) - 1
 	}
-	return time.Duration(m.cfg.StepsMinutes[idx]) * time.Minute
+	return time.Duration(cfg.StepsMinutes[idx]) * time.Minute
 }
 
-func (m *engineCooldownManager) resetAfter() time.Duration {
-	return time.Duration(m.cfg.ResetAfterMinutes) * time.Minute
+func (m *engineCooldownManager) resetAfter(engine string) time.Duration {
+	return time.Duration(m.cfgFor(engine).ResetAfterMinutes) * time.Minute
 }
 
 // normalizeLocked zeroes the consecutive counter once the clean streak (time
@@ -242,8 +279,8 @@ func (m *engineCooldownManager) RecordBlock(engine string, cause error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
-	st.normalizeLocked(now, m.resetAfter())
-	st.recordBlockLocked(now, m.tier(st.consecutiveBlocks+1))
+	st.normalizeLocked(now, m.resetAfter(engine))
+	st.recordBlockLocked(now, m.tier(engine, st.consecutiveBlocks+1))
 	if cause != nil {
 		st.lastErrorAt = now
 	}
@@ -284,7 +321,7 @@ func (m *engineCooldownManager) ForceCooldown(engine string, minutes int) {
 	}
 	now := m.now()
 	if minutes <= 0 {
-		minutes = int((m.tier(1)).Minutes())
+		minutes = int((m.tier(engine, 1)).Minutes())
 		if minutes < 1 {
 			minutes = 1
 		}
@@ -302,7 +339,7 @@ func (m *engineCooldownManager) Status(engine string) EngineCooldownStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
-	st.normalizeLocked(now, m.resetAfter())
+	st.normalizeLocked(now, m.resetAfter(engine))
 	inCooldown := !st.until.IsZero() && now.Before(st.until)
 	return EngineCooldownStatus{
 		InCooldown:        inCooldown,
@@ -320,7 +357,7 @@ func (m *engineCooldownManager) CooldownEngineNames() []string {
 	now := m.now()
 	names := make([]string, 0, len(m.states))
 	for engine, st := range m.states {
-		st.normalizeLocked(now, m.resetAfter())
+		st.normalizeLocked(now, m.resetAfter(engine))
 		if !st.until.IsZero() && now.Before(st.until) {
 			names = append(names, engine)
 		}
@@ -354,6 +391,7 @@ const (
 type engineProbe struct {
 	mgr        *engineCooldownManager
 	st         *engineCooldownState
+	engine     string
 	generation uint64
 	finished   bool
 }
@@ -411,7 +449,7 @@ func (p *engineProbe) finish(err error) {
 	p.releaseLocked()
 
 	now := mgr.now()
-	st.normalizeLocked(now, mgr.resetAfter())
+	st.normalizeLocked(now, mgr.resetAfter(p.engine))
 	switch {
 	case err == nil:
 		// Probe succeeded: engine recovered.
@@ -422,14 +460,14 @@ func (p *engineProbe) finish(err error) {
 		// inside searchWithProtection). Guarantee a tier is cooling in case the
 		// block was recorded by a path that bypassed it.
 		if st.until.IsZero() || !now.Before(st.until) {
-			st.recordBlockLocked(now, mgr.tier(st.consecutiveBlocks+1))
+			st.recordBlockLocked(now, mgr.tier(p.engine, st.consecutiveBlocks+1))
 		}
 	default:
 		// Probe incomplete (timeout / network error): postpone by the current
 		// tier duration — no tier advance, no counter reset.
 		duration := st.stepDuration
 		if duration <= 0 {
-			duration = mgr.tier(1)
+			duration = mgr.tier(p.engine, 1)
 		}
 		st.until = now.Add(duration)
 		if st.reason == "" {
@@ -463,7 +501,7 @@ func (m *engineCooldownManager) Gate(ctx context.Context, engine string, circuit
 		st := m.state(engine)
 		m.mu.Lock()
 		now := m.now()
-		st.normalizeLocked(now, m.resetAfter())
+		st.normalizeLocked(now, m.resetAfter(engine))
 
 		if !st.until.IsZero() && now.Before(st.until) {
 			gate := EngineGate{
@@ -509,7 +547,7 @@ func (m *engineCooldownManager) Gate(ctx context.Context, engine string, circuit
 			// the cooldown expiry by the current tier duration.
 			duration := st.stepDuration
 			if duration <= 0 {
-				duration = m.tier(1)
+				duration = m.tier(engine, 1)
 			}
 			st.until = now.Add(duration)
 			if st.reason == "" {
@@ -529,7 +567,7 @@ func (m *engineCooldownManager) Gate(ctx context.Context, engine string, circuit
 
 		st.probing = true
 		st.probeDone = make(chan struct{})
-		probe := &engineProbe{mgr: m, st: st, generation: st.generation}
+		probe := &engineProbe{mgr: m, st: st, engine: engine, generation: st.generation}
 		m.mu.Unlock()
 		return EngineGate{decision: gateProbe, probe: probe}, nil
 	}

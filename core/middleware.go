@@ -106,11 +106,20 @@ func IsIndexCheckPath(p string) bool {
 	return strings.Contains(p, "/v1/index/check") || strings.Contains(p, "/playground/check")
 }
 
+// IsPlaygroundIndexCheckPath reports whether the request targets the console
+// playground. The playground renders the synchronous envelope only, so it keeps
+// the 20-URL ceiling even when the async job queue is enabled.
+func IsPlaygroundIndexCheckPath(p string) bool {
+	return strings.Contains(p, "/playground/check")
+}
+
 // IndexCheckDeadlineCap is the wall-clock ceiling for index-check batch
-// requests. It covers the worst realistic batch: 20 URLs × 2 attempts
-// (max_retries=1) × the slowest engine token interval (sogou 7.5s) ≈ 300s —
-// clamped so a pathological config cannot hold a request open indefinitely.
-const IndexCheckDeadlineCap = 4 * time.Minute
+// requests. At the measured-safe Baidu pace (one token per 12s) a 20-URL batch
+// is ~4 minutes of token queue before any engine time, so the previous
+// 4-minute cap truncated every full batch; 12 minutes covers 20 URLs × 2
+// attempts at that pace plus per-attempt engine time, and still bounds a
+// pathological config.
+const IndexCheckDeadlineCap = 12 * time.Minute
 
 // writeTimeoutFor derives the fasthttp write timeout: fasthttp arms the write
 // deadline before the handler runs, so it must cover the longest handler —

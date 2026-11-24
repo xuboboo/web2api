@@ -58,6 +58,40 @@ func (p *Platform) RegisterPublic(app fiber.Router, indexCheck fiber.Handler) {
 	registerMethodNotAllowed("/v1/engines", fiber.MethodGet)
 }
 
+// IndexJobHandlers bundles the asynchronous index-check job handlers mounted
+// under /v1/index/check/jobs. Each runs behind APIKeyGuard.
+type IndexJobHandlers struct {
+	List    fiber.Handler
+	Status  fiber.Handler
+	Results fiber.Handler
+	Cancel  fiber.Handler
+}
+
+// RegisterPublicJobs mounts the async job routes:
+//
+//	GET    /v1/index/check/jobs
+//	GET    /v1/index/check/jobs/:id
+//	GET    /v1/index/check/jobs/:id/results[?format=csv]
+//	DELETE /v1/index/check/jobs/:id
+//
+// It is separate from RegisterPublic so deployments that keep index jobs
+// disabled (no job directory) do not advertise the routes.
+func (p *Platform) RegisterPublicJobs(app fiber.Router, h IndexJobHandlers) {
+	guard := p.APIKeyGuard()
+	if h.List != nil {
+		app.Get("/v1/index/check/jobs", guard, h.List)
+	}
+	if h.Status != nil {
+		app.Get("/v1/index/check/jobs/:id", guard, h.Status)
+	}
+	if h.Results != nil {
+		app.Get("/v1/index/check/jobs/:id/results", guard, h.Results)
+	}
+	if h.Cancel != nil {
+		app.Delete("/v1/index/check/jobs/:id", guard, h.Cancel)
+	}
+}
+
 // handleQuota answers GET /v1/quota for the authenticated key.
 func (p *Platform) handleQuota(c *fiber.Ctx) error {
 	key, ok := c.Locals(localKeyName).(APIKey)

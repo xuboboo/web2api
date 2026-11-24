@@ -23,6 +23,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -111,6 +112,14 @@ type Deps struct {
 	CheckIndexed    func(ctx context.Context, urls []string, engines []string) (any, error)
 	EnginesStatus   func() any
 	OriginAllowlist []string
+
+	// Async batch queue: when SubmitIndexJob is wired, check_indexed accepts
+	// more than 20 URLs and answers with a job id instead of a synchronous
+	// result set. All four are nil in deployments without a job directory.
+	SubmitIndexJob  func(ctx context.Context, urls []string, engines []string) (any, error)
+	IndexJobStatus  func(ctx context.Context, jobID string) (any, error)
+	IndexJobResults func(ctx context.Context, jobID string, offset, limit int) (any, error)
+	CancelIndexJob  func(ctx context.Context, jobID string) (any, error)
 }
 
 // rpcRequest is one decoded JSON-RPC 2.0 request. ID is raw so the response
@@ -447,6 +456,19 @@ func (s *server) handleToolsCall(c *fiber.Ctx, req rpcRequest) error {
 		if err != nil {
 			return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams, "invalid params: "+err.Error())
 		}
+		// 批量提交: a batch too large for one synchronous call becomes a job, so
+		// an agent can submit a whole export and poll instead of chunking it.
+		if len(urls) > maxCheckURLs {
+			if s.deps.SubmitIndexJob == nil {
+				return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams,
+					fmt.Sprintf("invalid params: urls accepts at most %d entries in this deployment, got %d", maxCheckURLs, len(urls)))
+			}
+			payload, err := s.deps.SubmitIndexJob(ctx, urls, engines)
+			if err != nil {
+				return respondToolError(c, req.ID, "job_failed", err.Error())
+			}
+			return respondToolResult(c, req.ID, payload)
+		}
 		if s.deps.CheckIndexed == nil {
 			return respondToolError(c, req.ID, "not_available", "check_indexed is not wired in this deployment (Deps.CheckIndexed is nil)")
 		}
@@ -456,6 +478,48 @@ func (s *server) handleToolsCall(c *fiber.Ctx, req rpcRequest) error {
 		}
 		if payload == nil {
 			payload = map[string]any{"results": []any{}}
+		}
+		return respondToolResult(c, req.ID, payload)
+
+	case toolGetIndexJob:
+		jobID, includeResults, offset, limit, err := parseGetIndexJobArgs(args)
+		if err != nil {
+			return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams, "invalid params: "+err.Error())
+		}
+		if s.deps.IndexJobStatus == nil {
+			return respondToolError(c, req.ID, "not_available", "index jobs are not wired in this deployment")
+		}
+		payload, err := s.deps.IndexJobStatus(ctx, jobID)
+		if err != nil {
+			return respondToolError(c, req.ID, "job_failed", err.Error())
+		}
+		if includeResults {
+			if s.deps.IndexJobResults == nil {
+				return respondToolError(c, req.ID, "not_available", "index job results are not wired in this deployment")
+			}
+			results, err := s.deps.IndexJobResults(ctx, jobID, offset, limit)
+			if err != nil {
+				return respondToolError(c, req.ID, "job_failed", err.Error())
+			}
+			if m, ok := payload.(map[string]any); ok {
+				m["results"] = results
+				return respondToolResult(c, req.ID, m)
+			}
+			return respondToolResult(c, req.ID, map[string]any{"job": payload, "results": results})
+		}
+		return respondToolResult(c, req.ID, payload)
+
+	case toolCancelIndexJob:
+		jobID, err := parseJobIDArg(args)
+		if err != nil {
+			return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams, "invalid params: "+err.Error())
+		}
+		if s.deps.CancelIndexJob == nil {
+			return respondToolError(c, req.ID, "not_available", "index jobs are not wired in this deployment")
+		}
+		payload, err := s.deps.CancelIndexJob(ctx, jobID)
+		if err != nil {
+			return respondToolError(c, req.ID, "job_failed", err.Error())
 		}
 		return respondToolResult(c, req.ID, payload)
 

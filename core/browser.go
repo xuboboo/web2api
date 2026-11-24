@@ -1070,6 +1070,20 @@ func applyProfile(page *rod.Page, profile browserprofile.Profile, headless bool)
 	return nil
 }
 
+// DropLaneCookies clears the persisted cookie jar for the request's proxy lane.
+// The next navigation starts a cold session (fresh BAIDUID and friends), which
+// is the rotation engines use to stay out of an anti-bot challenge state.
+func (b *Browser) DropLaneCookies(ctx context.Context) {
+	if b == nil || b.ProxyLaneStore == nil {
+		return
+	}
+	laneKey := proxyLaneKeyFromContext(ctx)
+	if laneKey.Empty() {
+		return
+	}
+	b.ProxyLaneStore.DropCookies(laneKey)
+}
+
 func (b *Browser) restoreLaneCookies(ctx context.Context, page *rod.Page) error {
 	if b == nil || b.ProxyLaneStore == nil {
 		return nil

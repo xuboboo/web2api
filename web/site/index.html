@@ -187,7 +187,7 @@
         </div>
         <div class="stat">
           <div class="stat-line"><span class="stat-num" data-count="1">1</span><span class="stat-unit">次调用</span></div>
-          <div class="stat-label">批量判定,单请求最多 20 条 URL</div>
+          <div class="stat-label">批量判定,一次提交上千条 URL 排队跑完</div>
         </div>
         <div class="stat">
           <div class="stat-line"><span class="stat-num" data-count="3">3</span><span class="stat-unit">行 curl</span></div>
@@ -212,7 +212,7 @@
         <div class="f-card reveal">
           <div class="f-body">
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><polyline points="8.2 11.2 10.4 13.4 14.2 9"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></span><h3>一次调用,判定四引擎</h3></div>
-<p>POST /web-tool/v1/index/check 一次提交最多 20 条 URL,逐引擎返回 indexed 与匹配详情;1 条 URL × 1 个引擎 = 1 次,计费口径清晰。</p>
+<p>POST /web-tool/v1/index/check 支持整表提交:≤20 条同步返回,更多条自动转服务端任务队列(202 + job_id,进度/结果/CSV 走 /v1/index/check/jobs/{id}),按引擎实测节奏排队跑完;逐引擎返回 indexed 与匹配详情;1 条 URL × 1 个引擎 = 1 次,计费口径清晰。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:240ms">
@@ -255,7 +255,7 @@
               <span class="step-num">2</span>
               <div>
                 <h4>POST /web-tool/v1/index/check</h4>
-                <p>提交 <code>urls</code> 与 <code>engines</code>,单请求最多 20 条 URL。</p>
+                <p>提交 <code>urls</code> 与 <code>engines</code>:≤20 条同步返回,更多条自动入队并返回 <code>job_id</code>。</p>
               </div>
             </div>
             <div class="step-arrow" aria-hidden="true">
@@ -382,7 +382,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   }
 }
 
-<span class="tk-com"># 内置 4 个工具:web_search / check_indexed / get_quota / list_engines</span>
+<span class="tk-com"># 内置 6 个工具:web_search / check_indexed / get_index_job / cancel_index_job / get_quota / list_engines</span>
 <span class="tk-com"># 其余客户端配置字段名各异(Gemini CLI 用 httpUrl、Codex 用 config.toml),以各自文档为准</span></pre>
           </div>
 
@@ -409,7 +409,8 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5"/><polyline points="2 15.5 12 22 22 15.5"/></svg></span><h3>数据平面</h3></div>
             <p>收录判定 + 四引擎原始搜索 + 配额查询,配额 / 限流 / 冷却内建。</p>
             <div class="route-list">
-              <div class="route"><code>POST /web-tool/v1/index/check</code><span>批量收录判定(1..20 URL × 引擎)</span></div>
+              <div class="route"><code>POST /web-tool/v1/index/check</code><span>批量收录判定(≤20 条同步;>20 条转异步任务)</span></div>
+<div class="route"><code>GET /web-tool/v1/index/check/jobs/{id}</code><span>异步任务进度 / 结果 / CSV 下载</span></div>
               <div class="route"><code>GET /web-tool/v1/quota</code><span>当前 key 的配额查询</span></div>
               <div class="route"><code>GET /web-tool/{engine}/search</code><span>四引擎原始搜索,实际形如 /web-tool/baidu/search、/web-tool/360/search</span></div>
               <div class="route"><code>GET /web-tool/stats</code><span>运行统计</span></div>
@@ -422,7 +423,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><h3>Agent 平面</h3></div>
             <p>AI Agent 可直接接入:MCP Server 与 OpenAPI 规范双入口,自动可发现。</p>
             <div class="route-list">
-              <div class="route"><code>POST /web-tool/mcp</code><span>MCP streamable HTTP,内置 4 个工具</span></div>
+              <div class="route"><code>POST /web-tool/mcp</code><span>MCP streamable HTTP,内置 6 个工具(含批量任务)</span></div>
               <div class="route"><code>GET /web-tool/openapi.yaml</code><span>OpenAPI 3.1 数据面与 Agent 面规范</span></div>
               <div class="route"><code>GET /web-tool/llms.txt</code><span>Agent 能力清单</span></div>
             </div>
@@ -455,7 +456,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         <div class="dark-card reveal">
           <span class="dk-eyebrow">MCP · STREAMABLE HTTP</span>
           <h3>一个 MCP Server,主流 Agent 通用</h3>
-          <p class="dk-desc">标准 MCP streamable HTTP(JSON-RPC 2.0),内置 <strong>web_search、check_indexed、get_quota、list_engines</strong> 四个工具。Claude Code、Claude Desktop、ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP 的客户端可直接接入;Cursor、Windsurf、Cline、Gemini CLI 等以各自文档的远程传输支持为准。<strong>必须携带 API Key</strong>,无鉴权请求一律 401。</p>
+          <p class="dk-desc">标准 MCP streamable HTTP(JSON-RPC 2.0),内置 <strong>web_search、check_indexed、get_index_job、cancel_index_job、get_quota、list_engines</strong> 六个工具(批量收录可一次提交整表再轮询进度)。Claude Code、Claude Desktop、ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP 的客户端可直接接入;Cursor、Windsurf、Cline、Gemini CLI 等以各自文档的远程传输支持为准。<strong>必须携带 API Key</strong>,无鉴权请求一律 401。</p>
           <div class="mini-term">
             <code id="mcpCmd">claude mcp add --transport http web2api {{ORIGIN}}/web-tool/mcp --header "X-API-Key: sk-w2a-你的密钥"</code>
             <button class="copy-btn" type="button" data-copy-target="#mcpCmd" aria-label="复制 MCP 接入命令">
