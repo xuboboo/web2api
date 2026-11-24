@@ -245,7 +245,7 @@ curl "{BASE}/api/usage?limit=3" -H "Authorization: Bearer $ADMIN_TOKEN"
 }
 ```
 
-**计费口径**：`outcome:"billed"` 表示成功计费；引擎级失败（如 `blocked`、`captcha_detected`）对应的计费次数记 0，不扣费。
+**计费口径**：`outcome:"billed"` 表示**请求到达引擎且整体 HTTP 200**——它不等于"每个单元都成功"。单元级失败（如 `blocked`、`captcha_detected`、`engine_internal`）的 `units` 记 0、不扣费，所以**可能出现 `outcome:"billed"` 且 `units:0`**：此时看 `results[].engines.<engine>.error` 才知道失败原因，别把 `billed` 当成"成功"。
 
 ---
 

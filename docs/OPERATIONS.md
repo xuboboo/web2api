@@ -26,6 +26,20 @@ curl -s $BASE/stats -H "X-API-Key: $KEY"   # 进程级统计
 | 引擎冷却 | 被风控冷却中 | 持续 > 30 分钟 |
 | 请求延迟 | 单条查询耗时 | P95 > 20 s |
 | 进程 RSS | 浏览器池内存 | > 70% 物理内存 |
+| 进程句柄数（长跑观察） | 泄漏迹象（含 Chrome 子进程） | 预热后**持续单调上涨**才报警；稳态小幅摆动正常 |
+
+**长跑判读（30 分钟实测定标，见 `docs/audit/EVIDENCE.md` E31）**：RSS 冷启动 17MB → 稳态 27MB（峰值 31MB），goroutine 常驻 10（查询瞬间 19 后回落），句柄启动 162 → 预热后 407–415 饱和。**要看斜率，不要看绝对值**：
+
+```bash
+# 每小时各采一次，连续 24h；把两组数算前半程/后半程均值比
+curl -s $BASE/api/runtime -H "Authorization: Bearer $TOKEN"   # goroutines / memory_mb / uptime_seconds
+curl -s -o /dev/null -w '%{http_code}\n' $BASE/health          # 必须始终 200
+ps -o rss=,nlwp= -p <pid>                                      # Linux RSS(KB)
+ls /proc/<pid>/fd | wc -l                                      # Linux 句柄
+# Windows: (Get-Process web2api).WorkingSet64 / .Handles
+```
+
+判据：**后半程均值比前半程高 > 20% 且单调** → 视为泄漏，重启并保留现场；摆动在 ±10% 内视为稳态。
 
 > **数据库损坏的真实表现**（本次审计已实测）：`web2api.db` 损坏时，进程会按契约回退到 `web2api.json`，`/health` 仍返回 200、登录仍可用，但 API Key 与用量账本从空状态开始。**只看 HTTP 200 会漏报数据事故**。发现 `storage=json` 后：停止服务 → 隔离数据目录（不要删除）→ 从最近备份恢复 `web2api.db` → 补回 `secret.key` 与 `index_jobs/` → 启动后核对 Key 数量和 `total_units`。
 
