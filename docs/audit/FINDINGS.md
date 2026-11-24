@@ -27,6 +27,9 @@
 | F-19 | P3 | 登录表单 `autocomplete=off`，密码管理器无法填充 | 已修复 |
 | F-20 | P3 | 登录页无条件探测 `/api/me`，未登录时留下 401 控制台错误并占用未鉴权额度 | 已复核：**设计取舍，不修** |
 | F-21 | P2 | 批量任务进度按 chunk(10) 跳：21 条任务前 2 分钟一直显示 0/21，像卡死 | 已修复（+实测） |
+| F-22 | P2 | 数据库损坏时静默 JSON fallback：服务健康但 Key/账本全丢，监控需按 storage 告警 | 已确认（契约行为，文档加固） |
+| F-23 | P2 | CI lint v1.64.8 + v1 schema 不兼容 go1.26；集成/发布 workflow 仍用 Go 1.24 | 已修复 |
+| F-24 | P2 | `ENVIRONMENT.md` 漏掉多行 map 默认键 `stability.engine_cooldown.per_engine` | 已修复 |
 
 ---
 
@@ -109,6 +112,62 @@ Playwright 控制台告警：`[DOM] Input elements should have autocomplete attr
 
 **兼容性**：显式配置了 `index_jobs.chunk: 10` 的部署行为不变（配置优先）；本仓库 config.yaml 已同步为 1。
 **回滚**：把默认值改回 10 即可。
+
+---
+
+## F-22 数据库损坏时静默降级（P2，契约行为，文档加固）
+
+**证据（实测）**：把 `web2api.db` 截成 512 字节再启动：
+- `/health` 200 且 `storage=json`；
+- 登录成功、无 JWT 访问管理面仍 401；
+- 原 `web2api.db` 保持 512 字节，新建 `web2api.json` 从空 keys/usage 开始。
+
+**根因**：`platform.New` 在 bbolt 打开失败且**不是文件锁**时，按既有产品契约回退到 JSON store（`platform/platform.go:123`，`TestNewFallsBackToJSONWhenBoltBlocked` 覆盖）。设计意图是"数据库不可用时业务继续"，但它只保证**接口可用**，不保证**数据不丢**。
+
+**影响**：如果只看 `/health` 的 HTTP 200，会误以为系统正常，实际上 API Key、配额、用量账本已经全部从当前 store 消失；客户端拿旧 Key 调用会连续 401，而管理员看到的是一个空平台。
+
+**处置（不擅改数据契约）**：
+- 保留 fallback（这是明确的产品契约，突然改成拒绝启动会影响既有部署）；
+- `docs/OPERATIONS.md` 增加：`/health.storage=json` 必须按 P1 告警，先停服、隔离数据目录、从最近备份恢复；
+- 本机无独立测试盘，未做磁盘写满注入；数据库损坏这条异常已实测。
+
+**回滚/恢复**：无需回滚代码；停止服务，把损坏目录移走，用 `admin-restore` 恢复 `web2api.db`，并补回 `secret.key`。
+
+---
+
+## F-23 CI lint/Go 版本与 go.mod 不一致（P2，已修复）
+
+**证据**
+- `go.mod`: `go 1.26.0`
+- `.github/workflows/ci.yml`: `golangci-lint-action@v6` + `v1.64.8` + `.golangci.yml` v1 schema（`disable-all` / `gosimple`）
+- `.github/workflows/integration.yml` / `release.yml`: `go-version: "1.24"`
+
+**影响**：v1.64.8 无法解析 Go 1.26 的导出数据；集成测试与发布构建在低于模块声明的工具链上跑，结果不能代表真实 CI 主链路。
+
+**修复**（依据官方 [迁移指南](https://golangci-lint.run/docs/product/migration-guide/)）：
+- `.golangci.yml` → `version: "2"`、`go: "1.26"`、`linters.default: none`；移除已并入 staticcheck 的 `gosimple`。
+- CI action → `golangci-lint-action@v8`，lint 版本固定 `v2.13.2`。
+- 增加 `govulncheck ./...` 步骤。
+- integration/release workflow 的 Go → 1.26。
+
+**验证**：v2.13.2 已安装并成功读取 v2 配置（不是"未运行就宣称修好"）。完整 lint 在本机被 Windows 分页文件限制中止，错误为 Go 1.27 导出数据版本不兼容 + `fork/exec compile.exe: The paging file is too small`；CI 有 Linux + 完整内存，作为最终验证关卡。
+
+**回滚**：恢复三个 workflow 和 `.golangci.yml` 的上一版本。
+
+---
+
+## F-24 环境文档漏项（P2，已修复）
+
+自动契约检查发现：`cmd/root.go` 有 76 个 `SetDefault` 键，`docs/ENVIRONMENT.md` 只有 75 个。漏的是**多行 map**：
+`stability.engine_cooldown.per_engine`（百度覆盖为 `[2,10,30]`）。
+
+**根因**：文档生成脚本的正则只抓单行 `v.SetDefault(...)`，遇到跨行 map 就漏掉；而运行时 Viper 是正常读到的。
+
+**修复**：手工补上该键，并在文档头部注明"75 个单行 + 1 个多行 map = 76 项"。契约检查脚本改为直接扫描所有 `v.SetDefault("key"` 并逐项断言文档包含。
+
+**验证**：`SetDefault keys: 76, absent from ENVIRONMENT.md: 0`。
+
+**兼容性**：纯文档修复，无运行时影响。
 
 ---
 

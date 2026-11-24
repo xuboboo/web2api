@@ -180,6 +180,56 @@ completed 21/21  indexed 4  not_indexed 17  failed 0  retrying 0
 
 结论：修复前用户看到的是"进度条卡在 0、ETA 不动"两分钟；修复后每完成一条就前进一步，与引擎节奏一致。落盘开销为每条一次 ~1KB 原子重命名，可忽略。
 
+## E14 异常恢复：硬杀进程 + 任务续跑（已实测通过）
+
+环境：独立 `data-audit-r1`、7077 端口、真实百度任务 21 条。
+
+1. `08:17:28` 提交 → `queued`，随后 `running`。
+2. `08:18:13`（运行 45 秒）硬杀服务进程（`Stop-Process -Force`，模拟断电/被 OOM killer 杀）：任务 `completed=4/21`。
+3. 用同一个二进制、同一个数据目录重启 → 08:18:36 起任务仍为 `running`，`completed` 从 4 继续增长（7 → 8 → 9 → 10），没有从 0 重跑。
+4. `08:21:40` 完成：`21/21, indexed=2, not_indexed=19, failed=0`。
+
+**结论**：任务队列的持久化 + 恢复链路真实可用，不是仅靠单测。已完成 URL 没有重复计费/重复查询；硬杀后恢复也没有脏任务。
+
+## E15 数据库异常：bbolt 截断 → JSON fallback（已实测，P2 发现 F-22）
+
+把 `web2api.db` 截成 512 字节后启动：
+
+```
+/health              200  storage=json
+登录(admin/配置密码)  200
+/api/keys(无 JWT)    401
+data-corrupt/web2api.db   仍是 512 字节（原文件没被"修好"或覆盖）
+data-corrupt/web2api.json 生成，包含新管理员 hash / 会话 / fallback 标记
+```
+
+**结论**：进程不崩、安全边界仍在（无 JWT 仍 401）、业务继续可用；**但原有 API Key 与用量账本全部消失**（JSON fallback 从空状态开始）。这是既有产品契约（`platform/store_json.go`、`TestNewFallsBackToJSONWhenBoltBlocked`），不是新引入的故障。
+
+**上线含义**：数据库损坏时系统会"看似健康地降级"，监控 `/health.storage` 必须告警 `json`，否则会静默丢账本。已在 `OPERATIONS.md` 增加此告警项与处置流程。
+
+## E16 安全绕过测试：X-Forwarded-For 伪造（已实测通过）
+
+`security.trust_proxy_headers=false`（直连场景默认）时，40 个未鉴权请求每次换一个伪造 `X-Forwarded-For` / `X-Real-IP`：
+
+```
+401×6 + 429×34
+```
+
+与不换头的结果一致 → **伪造 XFF 不能绕过未鉴权 IP 限速**。
+带合法 Key 的 30 个请求全部 200（burst=30）→ Key 维度限速独立生效。
+
+附带验证：
+- Key 名称 `<img src=x onerror=alert(1)>` + 负配额 → 400 `INVALID_PARAM`（不是 500，也不是接受后反射）
+- Key `daily_quota=-1` 更新 → 400 `INVALID_PARAM`
+- 任务 ID `../../config.yaml` / `..%2f..%2fconfig.yaml` / `job_../../x` → 全 404
+
+## E17 CI 与文档契约检查
+
+- 路由契约脚本：控制台 JS 的 **15 个 API 路径字面量**全部能在 Go 中找到挂载（含 `/api/engines/:name/cooldown/{reset,force}` 参数路由），**0 个悬空接口**。
+- 配置契约脚本：`cmd/root.go` 的 **76 个 SetDefault 键**（75 个单行 + 1 个多行 per-engine map）全部出现在 `ENVIRONMENT.md`；`index_jobs.chunk` 的 config/code 均为 1。
+- CI 版本：`ci.yml` / `integration.yml` / `release.yml` 均与 `go.mod` 的 Go 1.26 对齐。
+- `golangci-lint` v2.13.2 已成功安装；v2 schema 配置已通过加载。完整 lint 在本机因分页文件不足中止（Windows 资源限制），交由 CI 验证。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |

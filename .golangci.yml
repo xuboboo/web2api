@@ -1,15 +1,16 @@
+version: "2"
+
 run:
   tests: true
   timeout: 5m
-  go: "1.24"
+  go: "1.26"
 
-# Pinned set so CI and local runs agree
+# Pinned set so CI and local runs agree. v2 folded gosimple into staticcheck.
 linters:
-  disable-all: true
+  default: none
   enable:
     - govet
     - staticcheck
-    - gosimple
     - errcheck
     - ineffassign
     - unused

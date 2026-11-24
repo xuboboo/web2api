@@ -1,6 +1,6 @@
 # 环境变量与配置项（ENVIRONMENT）
 
-> 本文由 `cmd/root.go` 中真实的 `v.SetDefault(...)` 生成（共 75 项），与代码逐条对应。
+> 本文由 `cmd/root.go` 中真实的 `v.SetDefault(...)` 生成（单行默认值 75 项 + 1 个多行 map，共 76 项），与代码逐条对应。
 > 命名规则：`WEB2API_` + 键名大写、`.` 换 `_`（例：`platform.admin_password` → `WEB2API_PLATFORM_ADMIN_PASSWORD`）。
 > 优先级：命令行参数 > 环境变量 > 配置文件 > 内置默认值。
 
@@ -131,8 +131,9 @@ environment:
 
 | 配置项 | 环境变量 | 默认值 | 必需 | 用途 |
 | --- | --- | --- | --- | --- |
-| `stability.engine_cooldown.steps_minutes` | `WEB2API_STABILITY_ENGINE_COOLDOWN_STEPS_MINUTES` | []int{10, 30, 120} | 否 | 见 docs/CONFIGURATION.md |
-| `stability.engine_cooldown.reset_after_minutes` | `WEB2API_STABILITY_ENGINE_COOLDOWN_RESET_AFTER_MINUTES` | 240 | 否 | 见 docs/CONFIGURATION.md |
+| `stability.engine_cooldown.steps_minutes` | `WEB2API_STABILITY_ENGINE_COOLDOWN_STEPS_MINUTES` | []int{10, 30, 120} | 否 | 通用引擎惩罚档位（分钟） |
+| `stability.engine_cooldown.reset_after_minutes` | `WEB2API_STABILITY_ENGINE_COOLDOWN_RESET_AFTER_MINUTES` | 240 | 否 | 连续无风控多久后清空冷却档位（分钟） |
+| `stability.engine_cooldown.per_engine` | 见下方（Viper map 由 YAML 配置） | `baidu.steps_minutes: []int{2, 10, 30}` | 否 | 按引擎覆盖档位；百度首档 2 分钟，其余引擎沿用 10/30/120 |
 | `stability.index_check.max_retries` | `WEB2API_STABILITY_INDEX_CHECK_MAX_RETRIES` | 1 | 否 | 见 docs/CONFIGURATION.md |
 
 ### 异步批量任务（`index_jobs.*`）

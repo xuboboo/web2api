@@ -6,7 +6,18 @@
 
 ```bash
 go test ./...
+go vet ./...
 ```
+
+完整 CI（含竞态检测、静态检查、漏洞扫描）在 Linux 上运行：
+
+```bash
+go test -race -count=1 ./...
+golangci-lint run --config .golangci.yml   # v2.13.2，配置 schema v2
+govulncheck ./...
+```
+
+> Windows 本机无 gcc 时 `-race` 不可用；这是环境限制，不是测试被跳过。CI 固定 Go 1.26，与 `go.mod` 对齐。
 
 不需要浏览器或网络。覆盖：
 
