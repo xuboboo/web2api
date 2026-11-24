@@ -49,7 +49,33 @@ export WEB2API_PLATFORM_ADMIN_PASSWORD='<强密码，≥8 位>'
 
 启动成功会在日志里看到监听地址、引擎注册情况、以及（若仍是默认密码）一条 `SECURITY` 警告。
 
-## 4. 首次运行验证（逐条都要过）
+## 4. 面板资源（`web/`）必须和二进制一起部署 ★
+
+官网与控制台**不是编进二进制里的**，服务启动时从磁盘找 `web/site`、`web/admin`：
+
+| 部署方式 | 面板资源从哪来 |
+| --- | --- |
+| release tar 包（`dist/web2api-*.tgz`） | 包内已含 `web/`，解包后二进制与 `web/` 同级即可 |
+| 自己 `go build` | **必须**把仓库里的 `web/` 一起拷到二进制旁边（或工作目录下） |
+| Docker 镜像 | `Dockerfile` 已 `COPY web/site web/admin`，无需额外操作 |
+
+```bash
+# 手工部署时的最小正确布局
+/opt/web2api/
+├── web2api                # 二进制
+├── config.yaml
+└── web/
+    ├── site/              # 官网（…/web-tool/）
+    └── admin/             # 控制台（…/web-tool/console/）
+```
+
+漏了这一步的症状：**API 全部正常、`/health` 200，但 `/web-tool/` 与 `/web-tool/console/` 返回 404**，日志里有一条警告：
+
+```
+管理控制台静态资源缺失(web/admin/index.html 未找到), /web-tool/console/ 将返回 404; API 不受影响
+```
+
+## 5. 首次运行验证（逐条都要过）
 
 ```bash
 BASE=http://127.0.0.1:7070/web-tool
@@ -82,7 +108,7 @@ curl -s "$BASE/v1/index/check?url=https://www.baidu.com/&engines=baidu" \
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/console/
 ```
 
-## 5. 数据库初始化与迁移
+## 6. 数据库初始化与迁移
 
 - **初始化是自动的**：首次启动时 bbolt 会创建 `web2api.db` 与 5 个 bucket（`keys`/`usage`/`usage_daily`/`sessions`/`settings`），并生成 `secret.key`（0600）。
 - **没有 SQL 迁移脚本**：结构由代码内 bucket/key 约定决定，升级二进制后旧库可直接打开。
@@ -91,7 +117,7 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/console/
   ./web2api admin-backup --data-dir /var/lib/web2api --out /backup/web2api-$(date +%F).db
   ```
 
-## 6. Chrome 依赖
+## 7. Chrome 依赖
 
 ```bash
 # Debian/Ubuntu 最省事的方式（版本与 Dockerfile 一致）
@@ -105,7 +131,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 
 指定路径：`app.browser_path: /usr/bin/chromium`（或环境变量 `WEB2API_APP_BROWSER_PATH`）。
 
-## 7. 常见安装错误
+## 8. 常见安装错误
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
@@ -116,3 +142,5 @@ apt-get update && apt-get install -y --no-install-recommends \
 | 管理面 401，确认密码正确 | 密码环境变量没生效 | `WEB2API_PLATFORM_ADMIN_PASSWORD` 拼写；或容器内没传进去 |
 | 编译报 `go: downloading ... timeout` | 无外网/代理 | 配 `GOPROXY`，或改用 `Dockerfile` 构建 |
 | 数据目录里出现 `secret.key` 但重启后 JWT 全失效 | 数据目录没持久化（容器重建） | 挂卷（compose 里的 `web2api-data`） |
+| `/health` 200、API 正常，但 `/web-tool/` 与 `/web-tool/console/` 都 404 | 只部署了二进制，没带 `web/` 面板资源 | 见 §4：把 `web/site`、`web/admin` 放到二进制同级 |
+| 查询结果质量偏低、易被风控识别 | 未配 `app.browser_path`，自动降级到 HTTP 通道 | 实测降级后单条仍能返回（约 2 s），但渲染与指纹都不如真实浏览器；生产请显式配置 `app.browser_path` |

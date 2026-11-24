@@ -614,6 +614,40 @@ t=1672s  409     ← 最后 10 分钟在 407–415 之间摆动，无单调增�
 
 **顺带得到的稳定性结论**：30 分钟内 6 次真实引擎查询全部成功、无冷却、无验证码、无 5xx，健康检查 59/59 通过——这条比"跑通一次查询"更有说服力。
 
+## E32 本地真实部署验证（release 二进制 + 独立目录，22/22 通过）
+
+按"运维拿到的就是一个二进制"的方式验证，不带仓库、不带测试框架：
+
+```
+D:\web2api-audit\deploy\
+├── web2api.exe                 21.7 MiB（go build -trimpath -ldflags="-s -w"）
+├── config.yaml
+├── web\site\  web\admin\
+└── data\                       ← 运行后生成 web2api.db / secret.key / audit.log / index_jobs\
+```
+
+```
+PASS  startup guard: 0.0.0.0 + default admin password refuses to start  (exit=1)
+PASS  GET /health 200                      PASS  GET /ready 200
+PASS  GET /metrics OpenMetrics (1580B)     PASS  GET /console/ 200
+PASS  GET / 官网 200
+PASS  data plane without key -> 401        PASS  admin API without JWT -> 401
+PASS  admin login 200 + token              PASS  create API key (quota 500)
+PASS  real baidu check (sync, 1 URL)  (200 2.4s indexed=True match=exact)
+PASS  21 URLs -> 202 + job_id              PASS  job status readable (running)
+PASS  job cancel accepted (200)            PASS  quota reflects consumption (used_today=22)
+PASS  over-quota submission refused with retry_after (429 quota_exceeded, retry_after=75288)
+PASS  usage log has records (2 rows)       PASS  usage row terminal status (202 units=21 billed)
+PASS  runtime metrics readable             PASS  graceful stop
+PASS  admin-backup produces a snapshot (24576B)
+PASS  data dir has db + secret.key
+22/22 passed
+```
+
+**过程中暴露并修掉的部署缺陷（F-40）**：第一次跑 `/console/` 是 **404**——因为 `web/site`、`web/admin` 不在二进制里，而 release workflow 的打包命令是 `tar ... "$BIN"`，**只打二进制**。已修 CI 增加 `web` 目录，并在 INSTALL 新增 §4、DEPLOYMENT §4 补部署要求与排错行。
+
+**一次自我纠错的完整记录（重要）**：中途我连续两次看到"真实查询 240 s 超时、随后 `/api/runtime` 也超时"，一度怀疑是浏览器通道或自动下载 Chromium 卡死。实际原因是**我的验证脚本用 `subprocess.PIPE` 接服务端 stdout 却从不读取**，管道写满后服务端自己阻塞在日志写上——是 harness 缺陷，不是产品缺陷。改成写文件后同一场景 **1.7–2.4 s** 正常返回；再用 `probe_lane.py` 单独验证"不配 browser_path"的情况，结果是**快速降级到 HTTP 通道、2.3 s 命中**，与 INSTALL §1 的说法一致。因此没有写成产品缺陷，而是把自己写错的文档行改掉。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |

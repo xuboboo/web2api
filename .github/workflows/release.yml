@@ -64,7 +64,10 @@ jobs:
               echo "Building ${GOOS}/${GOARCH}..."
               CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
                 go build -trimpath -ldflags="-s -w" -o "$BIN" .
-              tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN"
+              # Shipping only the binary is not enough: the panels are served
+              # from disk (web/site, web/admin), so a binary-only tarball gives
+              # 404s on /web-tool/ and /web-tool/console/ (see docs/INSTALL.md §7).
+              tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN" web
               rm -f "$BIN"
             done
           done

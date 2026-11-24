@@ -98,6 +98,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now web2api
 sudo systemctl status web2api --no-pager
 ```
 
+> **二进制部署必须带上面板资源**：`web/site`、`web/admin` 要放在 `WorkingDirectory`（上面是 `/opt/web2api`）下，与二进制同级。release tar 包（`dist/web2api-*.tgz`）已包含 `web/`；自己 `go build` 的话需要手动拷贝。漏掉时 API 与 `/health` 都正常，但 `/web-tool/`、`/web-tool/console/` 返回 404（日志会打印「静态资源缺失」警告）。详见 `INSTALL.md` §4。
+
 ## 5. 反向代理（TLS 终结）
 
 ```nginx
