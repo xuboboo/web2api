@@ -42,6 +42,8 @@
 | F-22 | P2 | 数据库损坏时静默 JSON fallback：服务健康但 Key/账本全丢 | 已确认（契约行为，监控/处置文档加固） |
 | F-23 | P2 | CI lint v1.64.8 + v1 schema 不兼容 go1.26；集成/发布用 Go 1.24 | **已修复**（v2.13.2 + action v8 + workflow 1.26） |
 | F-24 | P2 | 环境文档漏掉多行 map 默认键 `stability.engine_cooldown.per_engine` | **已修复** |
+| F-25 | P2 | 登录锁定按 (用户名,IP)，换 IP 可无限绕过失败阈值 | **已修复**（+实机/回归） |
+| F-26 | P1 | 非 loopback 绑定 + 公开默认管理员密码仅告警，仍启动 | **已修复**（拒绝启动） |
 | F-14 | P2 | 备份不含 `secret.key` 与 `index_jobs/` | 已确认（文档+清单覆盖） |
 | F-15 | P2 | 收录结论时效性未在接口说明中交代 | **已修复**（API.md 增加语义边界） |
 | F-05 | P3 | 工作区残留 531MB exe + 146MB QA 目录 | 已确认（未清理，属本地卫生） |
@@ -96,7 +98,7 @@
 | 越权（水平） | 任务跨 Key 访问 → 404（修复后实测） |
 | 路径穿越 | 4 种编码尝试全部 404（实测） |
 | SSRF | 标题探测拒绝 loopback/私网/link-local/CGNAT，dial 阶段即拦（修复后测试） |
-| 暴力破解 | 5 次失败锁 15 分钟，429 + Retry-After；未知用户名也跑 bcrypt（时延对齐） |
+| 暴力破解 | 5 次失败锁 15 分钟；未知用户名也跑 bcrypt（时延对齐）；**锁定按用户名跨 IP，换 IP 不能重置预算** |
 | 凭据存储 | API Key 只存哈希；管理员密码 bcrypt(DefaultCost)；JWT 签名密钥 0600 |
 | 会话 | JWT 绑定 sid，可撤销；改密 bump token version 使全部失效 |
 | XFF 伪造绕过 | `trust_proxy_headers=false` 时轮换伪造头，仍 401×6 + 429×34（不能绕过） |
@@ -108,7 +110,7 @@
 
 | 风险 | 说明 | 处置 |
 | --- | --- | --- |
-| **默认管理员密码是公开值** | 代码内置默认值，仅在日志告警 | `RELEASE_CHECKLIST` A1 强制项；建议后续加"非 loopback 且用默认密码则拒绝启动" |
+| **默认管理员密码是公开值** | 已改为非 loopback 拒绝启动（F-26）；loopback 开发仍可用 | `RELEASE_CHECKLIST` A1；Docker 必须传 `WEB2API_PLATFORM_ADMIN_PASSWORD` |
 | 登录锁定可换 IP 绕过 | 键为 (用户名,IP)，内存态 | 单管理员 + 单实例下可接受；多实例前必须外部化 |
 | 依赖漏洞 | 未跑 govulncheck / 镜像扫描 | `OPERATIONS.md` §8 给了命令，需在 CI 里跑 |
 | 多实例语义 | 限速/冷却/锁定均为进程内 | 明确"单实例部署"，见 `DEPLOYMENT.md` §8 |
@@ -196,9 +198,11 @@
 
 1. **CI 实机通过**：`-race`、`docker build`、`golangci-lint v2`、`govulncheck`。本机无 gcc、Docker 服务需管理员权限；lint 与漏洞扫描还被 Windows 分页文件/Go 1.27 导出数据限制打断，**不能把"已配置 CI"写成"已通过"**。
 2. **带引擎的业务端点压测**：会真实打百度并污染当前出口 IP，必须在隔离出口 + 代理池环境做，再回填 `RELEASE_CHECKLIST` §E 的 P50/P95。
-3. **浏览器崩溃 / 磁盘写满注入**：前者需杀 Chrome 子进程，而本机有 113 个用户 Chrome 相关进程，属破坏性操作，未执行；后者无独立测试盘。
+3. **磁盘写满注入**：无独立测试盘，未执行。浏览器崩溃恢复已在 server-owned Chrome 进程上通过严格集成测试（下条）。
 
 补充运维动作（不阻塞代码，但阻塞生产放量）：生产监控必须把 `/health.storage=json` 配成 **P1 告警**；否则数据库损坏时 fallback 会静默丢账本（本次实测 E15）。
+
+浏览器崩溃恢复（原阻塞项）已闭环：在**由测试自己启动、独立 profile 的 Chrome 进程**上执行 `TestBrowserRecoversAfterProcessDeath`（覆盖首次连接前、近期连接后、健康探测三种死亡时机 + 3 路并发导航 + TLS insecure 模式），严格集成模式全量通过，未触碰用户自己的 113 个 Chrome 相关进程。
 
 已完成但需人工确认的：**前端 UX 走查**（桌面 1440×900 + 移动 390×844 已完成并修复 3 处问题，但未覆盖登录后的全部页面）。
 

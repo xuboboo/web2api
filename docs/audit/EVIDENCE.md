@@ -230,6 +230,67 @@ data-corrupt/web2api.json 生成，包含新管理员 hash / 会话 / fallback �
 - CI 版本：`ci.yml` / `integration.yml` / `release.yml` 均与 `go.mod` 的 Go 1.26 对齐。
 - `golangci-lint` v2.13.2 已成功安装；v2 schema 配置已通过加载。完整 lint 在本机因分页文件不足中止（Windows 资源限制），交由 CI 验证。
 
+## E18 登录锁定绕过：换 IP 爆破（已修复并实测）
+
+**修复前逻辑**：锁定键为 `(username, IP)`。攻击者每换一个源 IP，失败计数就从 0 开始；5 次错误密码的阈值可被无限绕过。
+
+**修复后**：锁定键改为**用户名全局**（跨 IP 聚合失败次数）；IP 仍写入日志/审计用于溯源，诊断用 IP 集合最多保留 16 个，避免无限增长。
+
+实机（独立 7077，5 个不同 `X-Forwarded-For`，均错误密码）：
+
+```
+203.0.113.1 → 401
+203.0.113.2 → 401
+203.0.113.3 → 401
+203.0.113.4 → 401
+203.0.113.5 → 401
+203.0.113.250 + 正确密码 → 429 too_many_attempts
+```
+
+自动化回归：`TestLoginLockoutCannotBeBypassedByRotatingIPs`（5 个 RemoteAddr 各失败一次，第 6 个 IP 的正确密码必须 429）。
+
+**取舍**：单管理员平台按用户名锁定可阻止分布式爆破，但攻击者可借此短暂锁死管理员（15 分钟）；这是"防接管"优先于"防骚扰"的有意选择，配合 IP 审计可定位来源。
+
+## E19 默认管理员密码：非 loopback 拒绝启动（已修复并实测）
+
+**证据**：仓库自带 `config.yaml` 是 `server.host: 0.0.0.0` + 公开默认管理员密码；原实现只在启动日志 Warn，服务照常监听。
+
+**修复**：平台初始化后、监听前检查：
+- loopback（127.0.0.1 / ::1 / localhost）保留开发便利；
+- 非 loopback + 有效密码仍是公开默认 → **拒绝启动，退出码 1**；
+- 通过 `WEB2API_PLATFORM_ADMIN_PASSWORD` / `config.platform.admin_password` 改过，或在控制台改过密码（custom marker），正常启动。
+
+实测：
+
+```
+127.0.0.1 + 默认密码                 → 启动成功（开发可用）
+0.0.0.0   + 默认密码                 → 退出码 1，安全启动被拒绝
+0.0.0.0   + 环境变量强密码           → 启动成功，/health 200
+```
+
+回归：`TestUsesDefaultAdminPasswordHonorsCustomMarker`（控制台改过密码后，即使 config 仍写默认值也不误判）。
+
+## E20 浏览器崩溃恢复：严格集成测试通过
+
+不再用"杀用户 Chrome"冒险，改为测试**自己启动的独立 Chrome 进程 + 独立临时 profile**：
+
+```bash
+WEB2API_INTEGRATION_TESTS=1 \
+WEB2API_INTEGRATION_STRICT=1 \
+WEB2API_APP_BROWSER_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe" \
+go test -p 1 -count=1 -timeout=900s -tags=integration ./...
+```
+
+结果：全部 12 个包 ok。其中 `TestBrowserRecoversAfterProcessDeath` 覆盖：
+
+- Chrome 在首次连接前死亡；
+- Chrome 在近期成功连接后死亡；
+- Chrome 健康 ping 失败后死亡；
+- 恢复时 3 路并发导航，确认只换 launcher、不重复拉起已关闭浏览器；
+- `insecure=true` 的自签名 TLS 页面在恢复后仍可访问。
+
+结论：浏览器崩溃恢复从"代码审查认为有机制"升级为"严格集成实测通过"。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |
@@ -237,6 +298,5 @@ data-corrupt/web2api.json 生成，包含新管理员 hash / 会话 / fallback �
 | `go test -race` | 本机无 gcc/clang（cgo 关闭） | 竞态结论只有 CI 覆盖，本地未跑 |
 | `docker build` / 容器冒烟 | Docker 服务需管理员权限，`Start-Service com.docker.service` 被拒 | 镜像构建未实机验证；已用同参数交叉编译替代 |
 | 业务端点压测（含引擎） | 会真实打百度，直接污染当前出口 IP | QPS/P95 仅有控制面数据 |
-| 浏览器崩溃恢复 | 本机有 67 个用户自己的 Chrome 进程，杀进程可能影响用户工作 | 只做代码审查，未做破坏性注入 |
 | 磁盘写满 | 无独立测试盘，填盘有风险 | 未做 |
 

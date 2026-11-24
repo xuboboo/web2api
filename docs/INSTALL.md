@@ -40,7 +40,8 @@ sudo chown -R web2api:web2api /var/lib/web2api    # 数据目录必须可写
 ## 3. 首次启动（最小可用）
 
 ```bash
-# 关键：先改管理员密码，否则用的是代码内置的公开默认值
+# 关键：先改管理员密码。默认值 admin123 仅在 loopback 开发时可用；
+# 绑定 0.0.0.0 / 局域网地址时若仍用默认密码，服务会拒绝启动。
 export WEB2API_PLATFORM_ADMIN_PASSWORD='<强密码，≥8 位>'
 
 ./web2api serve -c /etc/web2api/config.yaml
@@ -63,18 +64,19 @@ curl -s $BASE/ready
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $BASE/v1/index/check \
   -H 'Content-Type: application/json' -d '{"urls":["https://example.com/"]}'
 
-# ④ 登录拿 JWT（密码用上一步导出的那个）
+# ④ 登录拿 JWT（密码用上一步导出的那个；建议用 jq 提取）
 TOKEN=$(curl -s -X POST $BASE/api/auth/login -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<你的密码>"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
-echo $TOKEN | head -c 40
+  -d '{"username":"admin","password":"<你的密码>"}' | jq -r .token)
+echo "$TOKEN" | head -c 40
 
-# ⑤ 建一个 API Key
-curl -s -X POST $BASE/api/keys -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' -d '{"name":"first-key"}'
+# ⑤ 建一个 API Key（保存返回的 key 明文，之后只显示前缀）
+KEY_RESP=$(curl -s -X POST $BASE/api/keys -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name":"first-key"}')
+KEY=$(printf '%s' "$KEY_RESP" | jq -r .key)
 
 # ⑥ 用 Key 做一次真实收录查询（1 条，约 12 秒）
 curl -s "$BASE/v1/index/check?url=https://www.baidu.com/&engines=baidu" \
-  -H 'X-API-Key: sk-w2a-...'
+  -H "X-API-Key: $KEY"
 
 # ⑦ 控制台能打开
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/console/

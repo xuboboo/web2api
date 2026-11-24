@@ -21,7 +21,7 @@ curl -s $BASE/stats -H "X-API-Key: $KEY"   # 进程级统计
 | 指标 | 含义 | 告警阈值建议 |
 | --- | --- | --- |
 | **`/health.storage`** | 当前存储后端，正常为 `bbolt` | **变成 `json` 立即按 P1 告警**：bbolt 打开失败已触发 fallback，当前 Key/账本可能与原库分裂 |
-| 登录失败计数 | 暴力破解迹象 | 5 分钟内 > 10 次 |
+| 登录失败计数 | 暴力破解迹象 | 5 分钟内 > 10 次；注意锁定按**用户名跨 IP**，换 IP 不会重置失败预算 |
 | 熔断状态 | 某引擎连续失败 | 任一引擎 open |
 | 引擎冷却 | 被风控冷却中 | 持续 > 30 分钟 |
 | 请求延迟 | 单条查询耗时 | P95 > 20 s |
@@ -107,7 +107,8 @@ curl -s -X POST $BASE/api/engines/baidu/cooldown/force \
 | 批量任务卡在 `waiting` | 所选引擎正在冷却 | 正常行为；`wait_seconds` 会倒计时，冷却结束自动继续 |
 | 任务一直 `queued` | 前面有任务在跑（FIFO） | 属设计；用 `GET /v1/index/check/jobs` 看排队情况 |
 | 429 大量出现 | 触发限速或配额 | 区分 `quota_exceeded`（提额/次日）与 `rate_limited`（降频） |
-| 登录 429 | 登录锁定（5 次/15 分钟，按 用户名+IP） | 等待，或从审计日志确认来源 IP 后封禁 |
+| 登录 429 | 登录锁定（5 次/15 分钟，按**用户名跨 IP**） | 等待，或从审计日志确认来源 IP 后封禁；`admin-reset` 只改密码，不清内存锁定，需重启或等窗口结束 |
+| 启动即退出：`安全启动被拒绝` | 非 loopback 绑定且仍用公开默认管理员密码 | 设置 `WEB2API_PLATFORM_ADMIN_PASSWORD`（或 config）；不要通过继续公网暴露来保留默认密码 |
 | 磁盘涨满 | 任务结果 + 日志 | 清理 `index_jobs/` 老任务、设 `app.log_backups`、扩盘 |
 | 内存持续上涨 | 浏览器进程堆积 | 看 `app.max_processes`、`app.idle_ttl`；必要时重启 |
 | 重启后任务没续跑 | `index_jobs.dir` 不可写或数据卷丢失 | 检查目录权限与挂载 |

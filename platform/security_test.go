@@ -81,12 +81,11 @@ func TestLoginLockoutAfterConsecutiveFailures(t *testing.T) {
 		t.Fatal("locked login missing Retry-After header")
 	}
 
-	// A different username+IP pair is not affected.
-	otherIP := env.app
-	status, _, _ = doJSONErr(t, otherIP, http.MethodPost, target,
+	// A different username is not affected by admin's lock.
+	status, _, _ = doJSONErr(t, env.app, http.MethodPost, target,
 		map[string]any{"username": "root", "password": "nope"}, nil)
 	if status != http.StatusUnauthorized {
-		t.Fatalf("different username during lockout: status=%d, want 401 (lock is per username+IP)", status)
+		t.Fatalf("different username during lockout: status=%d, want 401 (lock is per username)", status)
 	}
 
 	// White-box: expire the lock window → correct credentials work again.
@@ -102,6 +101,59 @@ func TestLoginLockoutAfterConsecutiveFailures(t *testing.T) {
 		map[string]any{"username": "admin", "password": "pw-123"}, nil)
 	if status != http.StatusOK || body["token"] == nil {
 		t.Fatalf("login after lock expiry: status=%d body=%v", status, body)
+	}
+}
+
+func TestLoginLockoutCannotBeBypassedByRotatingIPs(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	const target = "/api/auth/login"
+
+	// Five failures deliberately come from five different source addresses.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, target,
+			strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = fmt.Sprintf("203.0.113.%d:4321", i+1)
+		resp, err := env.app.Test(req, -1)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", i+1, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status=%d, want 401", i+1, resp.StatusCode)
+		}
+	}
+
+	// The correct password from yet another IP must still be locked. Before
+	// the fix this returned 200 because each (username,IP) had its own budget.
+	req := httptest.NewRequest(http.MethodPost, target,
+		strings.NewReader(`{"username":"admin","password":"pw-123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "203.0.113.250:4321"
+	resp, err := env.app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("rotating-IP login: status=%d, want 429", resp.StatusCode)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Fatal("rotating-IP lock missing Retry-After")
+	}
+}
+
+func TestUsesDefaultAdminPasswordHonorsCustomMarker(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	env.p.cfg.AdminPassword = DefaultPlatformConfig().AdminPassword
+	if !env.p.UsesDefaultAdminPassword() {
+		t.Fatal("new test platform should report the configured default password")
+	}
+	if err := env.p.store.PutSetting(settingAdminPasswordCustom, []byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	if env.p.UsesDefaultAdminPassword() {
+		t.Fatal("console-changed password must stay custom even if config still has the default")
 	}
 }
 

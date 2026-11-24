@@ -14,7 +14,7 @@ KEY=<新签发的 API Key>
 
 | # | 检查 | 命令 / 方法 | 通过标准 | 结果 |
 | --- | --- | --- | --- | --- |
-| A1 | 管理员密码已改 | 看启动日志无 `SECURITY` 默认密码警告 | 无警告 | ☐ |
+| A1 | 管理员密码已改 | 非 loopback + 默认密码启动必须退出码 1；改密后正常启动 | 无默认密码公网启动 | ☐ |
 | A2 | 数据目录已持久化 | `docker inspect` 挂载 / `df` 看目录 | 容器重建后 `web2api.db` 仍在 | ☐ |
 | A3 | `secret.key` 权限 0600 | `ls -l $DATA/secret.key` | `-rw-------` | ☐ |
 | A4 | 仓库/镜像内无运行态数据 | `docker run --rm web2api:local ls /usr/src/app` | 无 `data/` | ☐ |
@@ -31,7 +31,7 @@ KEY=<新签发的 API Key>
 | B3 | 管理面无 JWT → 401 | 401 | ☐ |
 | B4 | 任务端点跨 Key 越权 → 404 | 用 Key B 读 Key A 的任务 = 404 | ☐ |
 | B5 | 静态目录不可穿越 | `/console/../config.yaml`、`%2e%2e%2f` = 404 | ☐ |
-| B6 | 登录爆破被锁 | 连续 5 次错误密码 → 429 + Retry-After | ☐ |
+| B6 | 登录爆破被锁 | 连续 5 次错误密码 → 429 + Retry-After；**换 IP 不能重置计数** | ☐ |
 | B7 | 配额生效 | `daily_quota=1` 的 Key 第 2 次调用 → 429 | ☐ |
 | B8 | 限流生效 | 单 Key 高频调用 → 429 `rate_limited` | ☐ |
 
@@ -57,7 +57,7 @@ KEY=<新签发的 API Key>
 | D1 | 重启后任务续跑 | kill -9 后重启，未完成任务继续且不重查已完成项 | ☐ |
 | D2 | 重启后在途请求不报 500 | 优雅停服时返回 503 而非断连 | ☐ |
 | D3 | 磁盘写满时行为可预期 | 任务标 failed 并记录原因，进程不崩 | ☐ |
-| D4 | 浏览器崩溃可恢复 | 杀掉 chrome 进程后 `/ready` 恢复 200 | ☐ |
+| D4 | 浏览器崩溃可恢复 | server-owned Chrome 被杀后自动重启，3 路并发导航成功 | ☑（严格集成测试 E20） |
 | D5 | 长跑内存平稳 | 4 小时压测 RSS 无单调上涨 | 🟡 21 条/4 分钟实测 25–35MB 平稳；4 小时未做 |
 | D6 | 并发上限生效 | `max_concurrent_requests` 打满时新请求排队/503，不 OOM | ☐ |
 | D7 | 队列积压可见 | 任务列表能看到排队数量与 ETA | ☐ |
@@ -119,6 +119,7 @@ KEY=<新签发的 API Key>
 | I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机 Docker daemon 未运行） |
 | I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/导出数据限制） |
 | I7 | 依赖漏洞扫描 | CI `govulncheck ./...` | 无 called-symbol 漏洞 | ☐（本机扫描受 Windows 分页限制，结果未取得） |
+| I8 | 严格集成测试 | `WEB2API_INTEGRATION_STRICT=1 go test -tags=integration ./...` | 全绿 | ☑（本次 12 包全过） |
 
 ---
 

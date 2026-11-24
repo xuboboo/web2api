@@ -224,6 +224,10 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		plat.SetAuditRotation(config.App.LogMaxMB, config.App.LogBackups)
 		// B-06: /health.storage 探针字段(bbolt|json;平台关闭时省略)。
 		serv.SetStorageKind(plat.StoreKind())
+		if err := enforceAdminPasswordSafety(plat); err != nil {
+			_ = plat.Close()
+			return nil, err
+		}
 		dataPlaneAuth.Store(plat)
 		// RegisterAdmin/RegisterPublic mount literal /api/* and /v1/* paths on
 		// the given router, so the router must be rooted at BasePath (passing
@@ -612,6 +616,17 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 }
 
 const gracefulShutdownTimeout = 30 * time.Second
+
+// enforceAdminPasswordSafety refuses a network-exposed deployment that still
+// uses the shipped public admin password. Loopback development remains usable;
+// changing the password through config or WEB2API_PLATFORM_ADMIN_PASSWORD, or
+// having previously changed it in the console, satisfies the check.
+func enforceAdminPasswordSafety(plat *platform.Platform) error {
+	if plat == nil || isLoopbackHost(config.Server.Host) || !plat.UsesDefaultAdminPassword() {
+		return nil
+	}
+	return fmt.Errorf("安全启动被拒绝: 服务绑定在 %q 且管理员密码仍为公开默认值；请设置 WEB2API_PLATFORM_ADMIN_PASSWORD（或 config.platform.admin_password）后重启", config.Server.Host)
+}
 
 // logSecurityPosture prints the startup SECURITY posture (S4-B-03 出厂安全
 // 姿态): one INFO line summarizing the effective posture, plus a per-condition

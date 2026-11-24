@@ -30,6 +30,8 @@
 | F-22 | P2 | 数据库损坏时静默 JSON fallback：服务健康但 Key/账本全丢，监控需按 storage 告警 | 已确认（契约行为，文档加固） |
 | F-23 | P2 | CI lint v1.64.8 + v1 schema 不兼容 go1.26；集成/发布 workflow 仍用 Go 1.24 | 已修复 |
 | F-24 | P2 | `ENVIRONMENT.md` 漏掉多行 map 默认键 `stability.engine_cooldown.per_engine` | 已修复 |
+| F-25 | P2 | 登录锁定按 (用户名,IP)，换 IP 可无限绕过失败阈值 | 已修复（+实机/回归） |
+| F-26 | P1 | 非 loopback 绑定 + 公开默认管理员密码仅告警，仍启动 | 已修复（拒绝启动） |
 
 ---
 
@@ -168,6 +170,43 @@ Playwright 控制台告警：`[DOM] Input elements should have autocomplete attr
 **验证**：`SetDefault keys: 76, absent from ENVIRONMENT.md: 0`。
 
 **兼容性**：纯文档修复，无运行时影响。
+
+---
+
+## F-25 登录锁定可换 IP 绕过（P2，已修复）
+
+**证据**：原实现 `loginFails map[loginAttemptKey]*...`，键为 `{username, ip}`。攻击者用 5 个不同 IP 各错一次，每个桶都只有 1 次失败，永远到不了阈值；正确密码可从第 6 个 IP 登录。
+
+**根因**：把"防单 IP 骚扰"的限速键误用成"防账号接管"的锁定键。对象是**单个管理员账号**，不是每个 IP 一个账号。
+
+**修复**：锁定键改为 `username`，跨 IP 聚合失败次数；IP 保留在日志/审计与有界诊断集合（≤16）中。成功登录清空该用户计数，过期窗口自动清空。
+
+**实测**：5 个不同 XFF 各 401，第 6 个 IP 的正确密码 → 429。回归 `TestLoginLockoutCannotBeBypassedByRotatingIPs`。
+
+**取舍**：攻击者可短暂锁死管理员（默认 15 分钟），但无法通过分布式爆破接管账号；对单管理员平台，"防接管"优先于"防骚扰"。
+
+---
+
+## F-26 公网默认密码只告警不拦截（P1，已修复）
+
+**证据**：仓库 `config.yaml` 默认 `host: 0.0.0.0` + 公开默认管理员密码；原实现 `logSecurityPosture` 只 Warn，服务仍监听。任何拿到仓库的人都能登录公网管理面。
+
+**根因**：安全默认值依赖运维自觉，没有 fail-closed 边界；而"部署成功"会掩盖凭据未改。
+
+**修复**：`mountPlatformAndPanel` 在监听前调用 `enforceAdminPasswordSafety`：
+- loopback 允许默认密码（本地开发）；
+- 非 loopback + 默认密码 → **拒绝启动，退出码 1**，提示用环境变量或配置修改；
+- 环境变量/配置已改，或控制台曾改密（custom marker）→ 正常启动。
+
+**实测**：
+```
+127.0.0.1 + 默认密码       → 启动成功
+0.0.0.0   + 默认密码       → 退出码 1，安全启动被拒绝
+0.0.0.0   + 强密码环境变量 → 启动成功，/health 200
+```
+回归：`TestUsesDefaultAdminPasswordHonorsCustomMarker`。
+
+**兼容性**：依赖公网默认密码的部署会被拒绝——这是有意的安全收紧；loopback 开发与已改密部署不受影响。临时回退：绑 127.0.0.1，或设置强密码。
 
 ---
 

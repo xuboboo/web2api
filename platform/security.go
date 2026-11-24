@@ -226,13 +226,17 @@ func (p *Platform) validatePassword(newPassword string) string {
 
 type loginAttemptKey struct {
 	username string
-	ip       string
 }
 
 type loginFailState struct {
 	fails       int
 	lockedUntil time.Time
 	lastFail    time.Time
+	// ips records the sources that contributed failures during this lock
+	// window. A lock is deliberately per username: otherwise rotating source
+	// IPs resets the attacker's budget and the real admin can be locked out by
+	// a distributed attempt. IPs are diagnostic only and bounded below.
+	ips map[string]struct{}
 }
 
 // lockoutWindow returns (fails, window) from the effective config.
@@ -241,11 +245,15 @@ func (p *Platform) lockoutWindow() (int, time.Duration) {
 	return sec.LoginLockout.Fails, time.Duration(sec.LoginLockout.Minutes) * time.Minute
 }
 
-// loginLockedAt reports the remaining lock deadline for username+IP, if any.
-func (p *Platform) loginLockedAt(username, ip string, now time.Time) (time.Time, bool) {
+// loginLockedAt reports the remaining lock deadline for username, if any.
+// The lock is intentionally not keyed by IP: the admin username is a single
+// account, so per-IP counters let a botnet rotate addresses and bypass the
+// threshold. IP remains part of the audit trail, not the lock identity.
+func (p *Platform) loginLockedAt(username string, now time.Time) (time.Time, bool) {
 	p.loginMu.Lock()
 	defer p.loginMu.Unlock()
-	st, ok := p.loginFails[loginAttemptKey{username, ip}]
+	key := loginAttemptKey{username}
+	st, ok := p.loginFails[key]
 	if !ok {
 		return time.Time{}, false
 	}
@@ -254,41 +262,45 @@ func (p *Platform) loginLockedAt(username, ip string, now time.Time) (time.Time,
 			return st.lockedUntil, true
 		}
 		// Window elapsed: fresh start.
-		delete(p.loginFails, loginAttemptKey{username, ip})
+		delete(p.loginFails, key)
 		return time.Time{}, false
 	}
 	return time.Time{}, false
 }
 
-// recordLoginFailure counts one failed attempt and locks the pair once the
-// configured consecutive-failure count is reached.
+// recordLoginFailure counts one failed attempt for the username across all
+// source IPs and locks the account once the configured threshold is reached.
 func (p *Platform) recordLoginFailure(username, ip string, now time.Time) {
 	fails, window := p.lockoutWindow()
 	p.loginMu.Lock()
 	defer p.loginMu.Unlock()
 	p.pruneLoginFailsLocked(now)
-	key := loginAttemptKey{username, ip}
+	key := loginAttemptKey{username}
 	st, ok := p.loginFails[key]
 	if !ok {
-		st = &loginFailState{}
+		st = &loginFailState{ips: make(map[string]struct{})}
 		p.loginFails[key] = st
 	}
 	if !st.lockedUntil.IsZero() && now.After(st.lockedUntil) {
 		st.fails = 0
 		st.lockedUntil = time.Time{}
+		st.ips = make(map[string]struct{})
 	}
 	st.fails++
 	st.lastFail = now
+	if len(st.ips) < 16 {
+		st.ips[ip] = struct{}{}
+	}
 	if st.fails >= fails {
 		st.lockedUntil = now.Add(window)
 	}
 }
 
-// clearLoginFailures resets the pair after a successful login.
-func (p *Platform) clearLoginFailures(username, ip string) {
+// clearLoginFailures resets the username after a successful login.
+func (p *Platform) clearLoginFailures(username string) {
 	p.loginMu.Lock()
 	defer p.loginMu.Unlock()
-	delete(p.loginFails, loginAttemptKey{username, ip})
+	delete(p.loginFails, loginAttemptKey{username})
 }
 
 // pruneLoginFailsLocked drops expired locks and stale (unlocked, >1h idle)

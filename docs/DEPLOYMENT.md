@@ -27,13 +27,16 @@
 ## 3. 部署方式 A：Docker Compose（推荐）
 
 ```bash
-# 1) 准备配置：务必先改管理员密码
+# 1) 准备配置与强密码（禁止把密码写在命令行历史里）
 cp config.yaml /opt/web2api/config.yaml
-$EDITOR /opt/web2api/config.yaml          # platform.admin_password / platform.data_dir
+$EDITOR /opt/web2api/config.yaml          # platform.data_dir / server.host
+read -rsp '管理员密码: ' ADMIN_PASSWORD; echo
+export ADMIN_PASSWORD
 
 # 2) 构建并启动（本仓库 compose 从源码构建，保证镜像与代码一致）
 cd /opt/web2api
-docker compose up -d --build
+ADMIN_PASSWORD="$ADMIN_PASSWORD" docker compose up -d --build
+unset ADMIN_PASSWORD
 
 # 3) 验证
 docker compose ps
@@ -44,6 +47,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7000/web-tool/console/
 
 要点：
 
+- **非 loopback 绑定 + 默认管理员密码会拒绝启动**（退出码 1）。Compose 默认容器内 `0.0.0.0`，必须通过 `ADMIN_PASSWORD` / `WEB2API_PLATFORM_ADMIN_PASSWORD` 传强密码；loopback 本地开发不受影响。
 - `volumes: web2api-data:/usr/src/app/data` 必须保留 —— `web2api.db`、`secret.key`、`index_jobs/` 都在里面。
 - `init: true` + 镜像内 `tini` 负责回收 Chrome 子进程，缺了会攒僵尸进程。
 - 镜像内已固定 `WEB2API_APP_BROWSER_PATH=/headless-shell/headless-shell`。

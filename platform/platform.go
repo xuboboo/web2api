@@ -64,7 +64,8 @@ type Platform struct {
 	auditMu sync.Mutex
 	audit   *AuditLog
 
-	// login brute-force lockout state (契约 B), keyed by username+IP.
+	// login brute-force lockout state (契约 B), keyed by username across
+	// source IPs so rotating addresses cannot reset the failure budget.
 	loginMu    sync.Mutex
 	loginFails map[loginAttemptKey]*loginFailState
 
@@ -325,6 +326,21 @@ func (p *Platform) Close() error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// UsesDefaultAdminPassword reports whether the effective credentials are still
+// the shipped public default. A password changed through the console sets the
+// custom marker and stays custom even if the default string is later restored
+// in config.
+func (p *Platform) UsesDefaultAdminPassword() bool {
+	if p == nil || p.store == nil {
+		return false
+	}
+	custom, err := p.store.GetSetting(settingAdminPasswordCustom)
+	if err == nil && len(custom) > 0 {
+		return false
+	}
+	return p.cfg.AdminPassword == DefaultPlatformConfig().AdminPassword
 }
 
 // StoreKind reports the active storage backend: "bbolt" or "json" (fallback).

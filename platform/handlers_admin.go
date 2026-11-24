@@ -130,8 +130,10 @@ func (p *Platform) RegisterAdmin(app fiber.Router, indexCheck fiber.Handler, eng
 
 // handleLogin answers POST /api/auth/login {"username","password"} with
 // {"token","expires_in","user":{"username"}}; any credential mismatch is 401
-// {"error":"unauthorized"}; a locked username+IP pair answers 429
+// {"error":"unauthorized"}; a locked username answers 429
 // {"error":"too_many_attempts"} + Retry-After even with correct credentials.
+// The lock is per username across source IPs: rotating IPs must not reset the
+// brute-force budget. IP is retained in logs and audit records for triage.
 //
 // S4 additions: B-04 登录时延一致 — an unknown username also runs one bcrypt
 // comparison against a package-level dummy hash, so response timing no longer
@@ -148,7 +150,7 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
 	now := time.Now()
-	if lockedUntil, locked := p.loginLockedAt(req.Username, c.IP(), now); locked {
+	if lockedUntil, locked := p.loginLockedAt(req.Username, now); locked {
 		remaining := int((lockedUntil.Sub(now) + time.Second - time.Nanosecond) / time.Second)
 		logrus.WithFields(logrus.Fields{
 			"username": req.Username, "ip": c.IP(),
@@ -168,7 +170,7 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 		p.auditFrom(c, req.Username, AuditActionLoginFailed, req.Username, "401")
 		return errUnauthorized(c)
 	}
-	p.clearLoginFailures(req.Username, c.IP())
+	p.clearLoginFailures(req.Username)
 	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
 	if err != nil {
 		return errInternal(c, err)
@@ -426,9 +428,9 @@ func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 		return errNotFound(c)
 	}
 	var req struct {
-		Name       *string  `json:"name"`
-		Status     *string  `json:"status"`
-		DailyQuota *int64   `json:"daily_quota"`
+		Name       *string `json:"name"`
+		Status     *string `json:"status"`
+		DailyQuota *int64  `json:"daily_quota"`
 		// ExpiresAt is raw so an explicit JSON null (clears the expiry) is
 		// distinguishable from an absent field.
 		ExpiresAt  json.RawMessage `json:"expires_at"`
@@ -554,15 +556,15 @@ func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"today_calls":         agg.TodayCalls,
-		"today_units":         agg.TodayUnits,
-		"total_calls":         agg.TotalCalls,
-		"total_units":         agg.TotalUnits,
-		"active_keys":         activeKeys,
-		"success_rate_24h":    successRate,
-		"by_engine":           byEngine,
-		"today_calls_all":     agg.TodayCallsAll,
-		"rejected_today_24h":  agg.Rejected24h,
+		"today_calls":        agg.TodayCalls,
+		"today_units":        agg.TodayUnits,
+		"total_calls":        agg.TotalCalls,
+		"total_units":        agg.TotalUnits,
+		"active_keys":        activeKeys,
+		"success_rate_24h":   successRate,
+		"by_engine":          byEngine,
+		"today_calls_all":    agg.TodayCallsAll,
+		"rejected_today_24h": agg.Rejected24h,
 	})
 }
 
