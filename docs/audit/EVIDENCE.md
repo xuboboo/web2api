@@ -422,12 +422,55 @@ after unlock    : 202 {"job_id":"job_...","status":"queued"}
 
 这条把"磁盘满/不可写"从"文档里写了有处理"升级为"运行期实测有处理"，只剩**真正写满磁盘**（无独立测试盘）未做。
 
+## E26 竞态检测 `-race` 实机跑通（最后一个"只能 CI"的检查）
+
+**此前结论**：本机无 gcc/clang，`-race` 报 `requires cgo`，只能交 CI。本轮把它打通了。
+
+**打通方式**（三步，都是环境问题，不是代码问题）：
+
+1. `winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT` —— Go 的 cgo 在 Windows 需要 POSIX 线程 + UCRT 的 mingw，这个组合正确。
+2. **路径不能有非 ASCII 字符**：WinGet 默认装到 `C:\Users\豆豆\AppData\Local\Microsoft\WinGet\Packages\...`，gcc/ld 把 `豆豆` 变成 `????`，链接期报 `cannot find .../crt2.o`。把 `mingw64` 复制到 **`D:\mingw64`** 解决。
+3. **临时目录也要 ASCII**：默认 `%TEMP%` 同样含中文，汇编期报 `can't create ...b136/_x001.o`。设 `GOTMPDIR=TMP=TEMP=D:\gotmp` 解决。
+
+**结果**：
+
+```
+gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0
+go test -race -count=1 -p 1 ./...
+ok  baidu 3.7s   ok  bing 3.8s   ok  cmd 15.9s   ok  core 7.1s
+ok  core/browser 1.9s   ok  core/fpcheck/detectors 2.4s   ok  core/region 1.9s
+ok  mcp 3.8s   ok  platform 87.2s   ok  so360 3.6s   ok  sogou 3.5s
+RACE_ALL_EXIT=0        ← 无 DATA RACE，11 包全绿
+```
+
+**意义**：并发/竞态是任务书里的重点项，之前"平台包有没有数据竞争"只能靠代码审查；现在有竞态检测器的实测结论。配合 staticcheck 抓到的 `sessionCache.mu` 锁陷阱，并发面从"看起来没问题"变成"两个独立手段都没发现问题"。
+
+**环境注记**：`D:\mingw64`（~924 MB）与 `D:\gotmp` 是为本次审计安装/创建的，`winget uninstall BrechtSanders.WinLibs.POSIX.UCRT` 并删除这两个目录即可完全还原。
+
+## E27 业务端点真实并发（8 次真实百度查询，受控）
+
+之前 §C 只有控制面（`/health`、静态资源）的 QPS。本轮补上真正花钱的那条路径：`POST /v1/index/check`（单 URL，引擎=baidu），并发 4。
+
+```
+requests=8  concurrency=4  rounds=2  wall=85.7s
+status distribution: {200: 8}          ← 无 5xx、无超时、无限速误伤
+latency p50=37.82s  p95=48.16s  max=48.16s  mean=33.88s stdev=16.63s
+indexed values: [False]                ← 8 条合成 URL 全部判定未收录，无假阳性
+```
+
+**怎么读这组数**：慢**不是**服务端能力问题。单引擎按 12 秒/条的节奏串行（`baidu.rate_requests: 5`、`interval 12s`），再叠加收录查询的标题探测（多一次页面抓取）与重试预算，所以 4 并发会排队在同一引擎的节拍后面。8 个单元 / 85.7 秒 ≈ **0.09 单元/秒**，与"12 秒一条"的设计完全吻合。
+
+**并发结论**：
+- 并发 4 时全部 200，说明队列、限速、配额三者协同正常，没有把并发压力转成 5xx；
+- 真正决定吞吐的是**引擎节拍**，不是 CPU/内存（进程 RSS 全程 25–35 MB）；
+- 想提高吞吐只能加引擎（bing/sogou/360 并行）或加出口 IP + 代理池，不是加机器。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |
 | --- | --- | --- |
-| `go test -race` | 本机无 gcc/clang（cgo 关闭） | 竞态结论只有 CI 覆盖，本地未跑 |
 | `docker build` / 容器冒烟 | Docker 服务需管理员权限，`Start-Service com.docker.service` 被拒 | 镜像构建未实机验证；已用同参数交叉编译替代 |
-| 业务端点压测（含引擎） | 会真实打百度，直接污染当前出口 IP | QPS/P95 仅有控制面数据 |
-| 磁盘写满 | 无独立测试盘，填盘有风险 | 未做 |
+| 真正写满磁盘 | 无独立测试盘，填盘有风险 | 未做（但"运行期目录不可写"已实测，见 E25） |
+
+> `-race` 与"业务端点并发"已于本轮补齐，见 E26 / E27，不再属于"未验证"。
 

@@ -17,7 +17,26 @@ golangci-lint run --config .golangci.yml   # v2.13.2，配置 schema v2
 govulncheck ./...
 ```
 
-> Windows 本机无 gcc 时 `-race` 不可用；这是环境限制，不是测试被跳过。CI 固定 Go 1.26，与 `go.mod` 对齐。
+> Windows 本机默认无 C 编译器，`-race` 会报 `requires cgo`；这是环境限制，不是测试被跳过。CI 固定 Go 1.26，与 `go.mod` 对齐。
+
+### 在 Windows 上跑 `-race`（已验证可行）
+
+`-race` 需要 cgo，cgo 在 Windows 需要 **POSIX 线程 + UCRT** 的 mingw，且有两条**非 ASCII 路径**陷阱：
+
+```powershell
+winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT
+# ① 工具链路径不能含中文：gcc/ld 会把中文变成 ???? 导致找不到 crt2.o
+Copy-Item "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*\mingw64" 'D:\mingw64' -Recurse
+# ② 临时目录也不能含中文：否则汇编期报 "can't create ..._x001.o"
+New-Item -ItemType Directory -Force 'D:\gotmp'
+
+$env:PATH = 'D:\mingw64\bin;' + $env:PATH
+$env:CGO_ENABLED = '1'
+$env:GOTMPDIR = 'D:\gotmp'; $env:TMP = 'D:\gotmp'; $env:TEMP = 'D:\gotmp'
+go test -race -count=1 -p 1 ./...
+```
+
+`-p 1` 是为了避免同时链接多个测试二进制把提交内存打满。本次实测 11 包全绿、无 `DATA RACE`。
 
 ### 依赖漏洞扫描（本机可跑）
 
