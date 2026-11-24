@@ -661,7 +661,11 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("security.admin_rate_per_ip", 30)
 	v.SetDefault("security.api_rate_per_minute", 120)
 	v.SetDefault("security.unauth_rate_per_minute", 30)
-	v.SetDefault("security.data_plane_auth", false)
+	// 出厂安全姿态: 数据面(/{engine}/search、/stats/*)默认要求 X-API-Key。
+	// 曾经这里是 false, 与 config.yaml 的注释(「默认翻转: true」)和文档相反 ——
+	// 用最小配置或 `web2api serve` 裸启的部署会把检索端点匿名开放。既有部署若
+	// 依赖匿名访问, 需显式设置 security.data_plane_auth: false。
+	v.SetDefault("security.data_plane_auth", true)
 	v.SetDefault("security.trust_proxy_headers", false)
 	v.SetDefault("security.mcp_allowed_origins", []string{})
 	v.SetDefault("security.metrics_token", "")

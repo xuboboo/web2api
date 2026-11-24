@@ -50,8 +50,11 @@ docs/demo.Dockerfile
 data/
 data-*/
 
-# QA 运行时工作区(用后即弃的验证环境与一次性配置),不覆盖 qa/ 目录
-# —— qa/(验收证据、参考截图)保留在版本库
+# QA 运行时工作区(用后即弃的验证环境与一次性配置)
+# —— qa/ 新增内容一律不入库: 里面有明文 *.key 和一次性截图(实测 146MB)。
+#     历史已入库的 191 个 qa 文件保持原样, 不再新增; 需要长期留存的验收证据
+#     请挑单张放进 docs/audit/。
+qa/
 data-qa*
 config-qa*
 deploy/e2e-results/

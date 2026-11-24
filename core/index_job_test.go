@@ -297,6 +297,47 @@ func TestIndexJobIsScopedToOwner(t *testing.T) {
 	}
 }
 
+// A finished job must stop holding its submitted URL list in memory, while
+// staying readable (the record is on disk).
+func TestIndexJobReleasesMemoryWhenDone(t *testing.T) {
+	eng := &indexEngineMock{
+		name: "baidu", initialized: true,
+		serpFn: func(_ context.Context, targetURL string, _ Query) ([]SearchResult, error) {
+			return []SearchResult{{Rank: 1, URL: targetURL, Title: "self"}}, nil
+		},
+	}
+	m, _ := newTestJobManager(t, t.TempDir(), []SearchEngine{eng})
+	job, apiErr := m.Submit(context.Background(), []string{"https://example.test/mem"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatalf("submit: %+v", apiErr)
+	}
+	waitForJob(t, m, job.ID, 5*time.Second)
+
+	m.mu.Lock()
+	st, ok := m.jobs[job.ID]
+	m.mu.Unlock()
+	if !ok {
+		t.Skip("job already evicted; nothing resident to inspect")
+	}
+	st.mu.Lock()
+	urls, pending := st.job.URLs, st.pending
+	st.mu.Unlock()
+	if urls != nil {
+		t.Fatalf("finished job still holds %d URLs in memory", len(urls))
+	}
+	if pending != nil {
+		t.Fatalf("finished job still holds %d pending entries", len(pending))
+	}
+	// Still readable after the release.
+	if _, ok := m.Get(job.ID, ""); !ok {
+		t.Fatal("released job must stay readable")
+	}
+	rows, err := m.Results(job.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("results after release: %v len=%d", err, len(rows))
+	}
+}
+
 func TestIndexJobStoreCRUD(t *testing.T) {
 	dir := t.TempDir()
 	store := NewIndexJobStore(dir)

@@ -161,6 +161,8 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 - 成功单元：`indexed`（是否收录）、`match`（仅 `exact` / `none` 两种取值）、`matched_result_url`（命中的候选地址，`match=none` 时字段存在但为空串 `""`，解析方按空串判断即可）、`total_results`（SERP 内 organic 条数）、`took_ms`（该单元耗时）。
   - 百度按标题判定命中时，`matched_result_url` 可能是同一站点的移动域（如 `m.example.com` 命中 `www.example.com` 的文章）；判定已按可注册域名校验同站，不会把转载站算成本页。
+  - **`indexed` 的语义边界（必读）**：`true` = "此刻用该页标题检索，前 10 条 organic 里出现了同站且标题相似的页面"，即**搜索引擎视角的可检索性**，**不等于**百度站长平台的官方收录状态。`false` = "此刻在前 10 条里没找到"，建议 24–72 小时后复查——实测同一 URL 从 `false` 变 `true` 可能只需数小时。
+  - 已知会漏判（`false` 但实际已收录）的三种情况：百度大幅改写了标题、外站转载的排名压过原站、命中位置在前 10 条之外。当前没有自动发现机制，重要结论请抽样人工复核。
 - 失败单元：`error.code` / `error.message`，错误码与搜索端点同表（见 §7.2），例如 `blocked`、`captcha_detected`、`circuit_open`、`not_implemented`。
 - `meta.units = len(urls) × len(engines)`，即本次请求的 unit 总数（计费口径为**实扣**：带 `error` 的单元不扣费）。
 - **批量超时预算**：引擎限流（防验证码，经实测标定）决定了批量的串行吞吐——百度默认 `5 次/分钟`（约每 12 秒放行一个查询），20 条 URL 的百度批量需要约 4 分钟的令牌排队。请求预算按批量规模动态放宽：`基础重试预算 + (单元数 × 最大尝试次数 − 1) × 最慢所选引擎的令牌间隔`，**上限 12 分钟**。正常批量在此预算内真实跑完；若仍超出（极端配置），排队单元返回 `engine_queue_exceeded`（§7.2），未发起真实查询、不计费。

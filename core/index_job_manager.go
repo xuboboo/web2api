@@ -62,6 +62,57 @@ type jobState struct {
 	running  bool
 }
 
+// release drops the heavy part of a finished job (the submitted URL list and the
+// pending queue) from memory. The record itself stays for progress queries; the
+// full state is on disk.
+func (s *jobState) release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.job.Status.Terminal() {
+		return
+	}
+	s.job.URLs = nil
+	s.pending = nil
+	s.attempts = nil
+}
+
+// maxResidentJobs bounds how many finished jobs stay in memory. Older ones are
+// dropped here and served from disk by Get/List on demand.
+const maxResidentJobs = 500
+
+// evictTerminal keeps the resident job table from growing without bound. The
+// runner only ever touches queued/running jobs, so evicting finished ones never
+// affects scheduling.
+func (m *IndexJobManager) evictTerminal() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.jobs) <= maxResidentJobs {
+		return
+	}
+	type victim struct {
+		id string
+		at time.Time
+	}
+	victims := make([]victim, 0, len(m.jobs))
+	for id, st := range m.jobs {
+		st.mu.Lock()
+		terminal := st.job.Status.Terminal()
+		created := st.job.CreatedAt
+		st.mu.Unlock()
+		if terminal {
+			victims = append(victims, victim{id: id, at: created})
+		}
+	}
+	if len(victims) == 0 {
+		return
+	}
+	sort.Slice(victims, func(i, j int) bool { return victims[i].at.Before(victims[j].at) })
+	remove := len(m.jobs) - maxResidentJobs
+	for i := 0; i < remove && i < len(victims); i++ {
+		delete(m.jobs, victims[i].id)
+	}
+}
+
 func (s *jobState) snapshot() IndexJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -176,7 +227,7 @@ func (m *IndexJobManager) resume(ctx context.Context) {
 		m.order = append(m.order, meta.ID)
 		m.mu.Unlock()
 		_ = m.store.SaveMeta(&st.job)
-		m.enqueue(meta.ID)
+		m.enqueue(ctx, meta.ID)
 		WithRequest(ctx).WithField("job_id", meta.ID).WithField("pending", len(pending)).
 			Info("index job restored after restart")
 	}
@@ -230,7 +281,7 @@ func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []s
 	m.jobs[job.ID] = st
 	m.order = append(m.order, job.ID)
 	m.mu.Unlock()
-	m.enqueue(job.ID)
+	m.enqueue(ctx, job.ID)
 
 	out := job
 	out.URLs = nil
@@ -329,19 +380,18 @@ func (m *IndexJobManager) Cancel(id, ownerKeyID string) bool {
 	snap := st.job
 	st.mu.Unlock()
 	_ = m.store.SaveMeta(&snap)
+	st.release()
+	m.evictTerminal()
 	return true
 }
 
-func (m *IndexJobManager) enqueue(id string) {
+// enqueue hands the id to the runner. It blocks (respecting ctx) rather than
+// spawning a goroutine when the buffer is full: a second concurrent runner would
+// break the one-job-at-a-time pacing contract the rate limiter depends on.
+func (m *IndexJobManager) enqueue(ctx context.Context, id string) {
 	select {
 	case m.queue <- id:
-	default:
-		// Queue full: never lose a job — run it inline in a new goroutine.
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
-			m.runJob(m.ctx, id)
-		}()
+	case <-ctx.Done():
 	}
 }
 
@@ -555,6 +605,8 @@ func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr st
 	snapshot := st.job
 	st.mu.Unlock()
 	_ = m.store.SaveMeta(&snapshot)
+	st.release()
+	m.evictTerminal()
 }
 
 // EngineInterval reports the slowest selected engine's token interval, which is
