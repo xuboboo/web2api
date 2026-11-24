@@ -338,6 +338,18 @@ func TestIndexJobReleasesMemoryWhenDone(t *testing.T) {
 	}
 }
 
+// One URL per progress write is a UX contract, not a tuning knob: a larger
+// default makes the job counters jump in two-minute steps and a fresh job looks
+// stuck at 0/N. Regression guard for audit finding F-21.
+func TestIndexJobProgressChunkDefaultsToPerURL(t *testing.T) {
+	if got := (IndexJobOptions{}).normalized().Chunk; got != 1 {
+		t.Fatalf("default chunk = %d, want 1 (per-URL progress)", got)
+	}
+	if got := (IndexJobOptions{Chunk: 10}).normalized().Chunk; got != 10 {
+		t.Fatalf("explicit chunk must be kept, got %d", got)
+	}
+}
+
 func TestIndexJobStoreCRUD(t *testing.T) {
 	dir := t.TempDir()
 	store := NewIndexJobStore(dir)

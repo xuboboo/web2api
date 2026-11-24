@@ -649,7 +649,7 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("index_jobs.enabled", true)
 	v.SetDefault("index_jobs.dir", "")
 	v.SetDefault("index_jobs.max_urls", 5000)
-	v.SetDefault("index_jobs.chunk", 10)
+	v.SetDefault("index_jobs.chunk", 1)
 	v.SetDefault("index_jobs.max_unit_retries", 6)
 	// 收录查询的节奏与判定策略（见 docs/CONFIGURATION.md）：
 	// 标题探测消除 URL 短语漏判，Cookie 每 8 次轮换把验证码触发压到 ~1/130。

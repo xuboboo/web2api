@@ -23,7 +23,12 @@ import (
 type IndexJobOptions struct {
 	// MaxURLs caps one job (0 = DefaultIndexJobMaxURLs).
 	MaxURLs int
-	// Chunk is how many URLs are evaluated per progress write (0 = 10).
+	// Chunk is how many URLs are evaluated per progress write (0 = 1).
+	//
+	// One URL per write keeps progress honest: the runner can only report a row
+	// after the engine answered for it (~12s on Baidu), so a larger chunk makes
+	// the counters jump in two-minute steps and a fresh job looks stuck at 0/N.
+	// Each write is a ~1KB atomic rename, so per-URL granularity is free.
 	Chunk int
 	// MaxUnitRetries is how often a URL is retried after engine-level failures
 	// such as a cooldown or a captcha (0 = 6).
@@ -41,7 +46,7 @@ func (o IndexJobOptions) normalized() IndexJobOptions {
 		o.MaxURLs = DefaultIndexJobMaxURLs
 	}
 	if o.Chunk <= 0 {
-		o.Chunk = 10
+		o.Chunk = 1
 	}
 	if o.MaxUnitRetries <= 0 {
 		o.MaxUnitRetries = 6

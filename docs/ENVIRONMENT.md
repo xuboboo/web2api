@@ -142,7 +142,7 @@ environment:
 | `index_jobs.enabled` | `WEB2API_INDEX_JOBS_ENABLED` | true | 否 | 开启异步批量收录任务（>20 条转 202） |
 | `index_jobs.dir` | `WEB2API_INDEX_JOBS_DIR` | "" | 否 | 任务状态/结果落盘目录，空=data_dir/index_jobs |
 | `index_jobs.max_urls` | `WEB2API_INDEX_JOBS_MAX_URLS` | 5000 | 否 | 单任务 URL 上限 |
-| `index_jobs.chunk` | `WEB2API_INDEX_JOBS_CHUNK` | 10 | 否 | 每 N 条落一次进度 |
+| `index_jobs.chunk` | `WEB2API_INDEX_JOBS_CHUNK` | 1 | 否 | 每 N 条落一次进度 |
 | `index_jobs.max_unit_retries` | `WEB2API_INDEX_JOBS_MAX_UNIT_RETRIES` | 6 | 否 | 单条被冷却/验证码挡住后的重排次数 |
 
 ### 引擎：百度（`baidu.*`）
@@ -161,7 +161,7 @@ environment:
 | `security.admin_rate_per_ip` | `WEB2API_SECURITY_ADMIN_RATE_PER_IP` | 30 | 是 | 管理面单 IP 每分钟上限（防单客户端打满全局额度） |
 | `security.api_rate_per_minute` | `WEB2API_SECURITY_API_RATE_PER_MINUTE` | 120 | 是 | 单个 API Key 每分钟查询上限 |
 | `security.unauth_rate_per_minute` | `WEB2API_SECURITY_UNAUTH_RATE_PER_MINUTE` | 30 | 是 | 未通过鉴权请求的单 IP 上限 |
-| `security.data_plane_auth` | `WEB2API_SECURITY_DATA_PLANE_AUTH` | false | 是 | 数据面是否强制 X-API-Key。**默认 true；裸启也不匿名开放** |
+| `security.data_plane_auth` | `WEB2API_SECURITY_DATA_PLANE_AUTH` | true | 是 | 数据面是否强制 X-API-Key。**默认 true；裸启也不匿名开放** |
 | `security.trust_proxy_headers` | `WEB2API_SECURITY_TRUST_PROXY_HEADERS` | false | 条件 | 反代场景下信任 X-Forwarded-For 取真实 IP，直连时保持 false |
 | `security.mcp_allowed_origins` | `WEB2API_SECURITY_MCP_ALLOWED_ORIGINS` | []string{} | 否 | MCP 允许的跨域 Origin 列表 |
 | `security.metrics_token` | `WEB2API_SECURITY_METRICS_TOKEN` | "" | 条件 | /metrics 的 Bearer；空=仅 loopback 可抓 |

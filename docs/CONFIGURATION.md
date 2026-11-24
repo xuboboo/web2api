@@ -93,7 +93,7 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `index_jobs.enabled` | `true` | `true` | 开启异步批量收录任务（>20 条 URL 时返回 202 + job_id） |
 | `index_jobs.dir` | 空 | 空 | 任务状态与结果落盘目录，空 = `<platform.data_dir>/index_jobs`；进程重启后从这里续跑 |
 | `index_jobs.max_urls` | `5000` | `5000` | 单次提交上限（去重后计数） |
-| `index_jobs.chunk` | `10` | `10` | 每处理多少条落一次进度 |
+| `index_jobs.chunk` | `1` | `1` | 每处理多少条落一次进度（1 = 每条都落；设大只会让进度条按 2 分钟一跳，省不下什么 IO） |
 | `index_jobs.max_unit_retries` | `6` | `6` | 单条 URL 被冷却/验证码挡住后的重排次数 |
 | `resilience.max_retries` | `3` | `1` | 每引擎重试次数 |
 | `resilience.allow_endpoint_fallback` | `false` | `false` | 允许专用端点失败后回退到其它引擎 |
