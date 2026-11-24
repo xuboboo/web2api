@@ -43,6 +43,8 @@
 | F-35 | P3 | 容器 ENV 契约（`APP_BROWSER_PATH` 等）此前无任何测试兜底，键丢失会静默失效并在运行期才炸 | 已修复（新增 `cmd/dockerfile_env_test.go`） |
 | F-36 | P2 | 控制台指标口径歧义：总览「1 / 今日 0 次」、使用日志「HTTP 200 / 次数 0」看不出业务失败 | 已修复（文案 + `0 · 未计费` + title）+ P3 遗留（engine_stats 未展示） |
 | F-37 | P2 | F-25 改锁定语义后，设置页/API 文档三处仍写「同一 IP」，用户看到的是错的 | 已修复（全仓无 `同一 IP` 残留） |
+| F-38 | P2 | 任务终态发布与内存释放不在同一临界区：外部可读到「已完成」而 URL 列表仍在内存（`-race` 下暴露） | 已修复（`releaseLocked` 并入临界区） |
+| F-39 | P3 | `deploy/docker-compose.yml` 与根 compose 有同样的默认密码问题（F-34 只修了一个文件） | 已修复（两个 compose + 三个组合均验证） |
 
 ---
 
@@ -416,6 +418,58 @@ ADMIN_PASSWORD=*** docker compose config      → 正常解析，env/ports/volum
 **修复**：三处统一为「同一用户名连续 5 次密码失败即锁定 15 分钟（按用户名跨 IP 聚合，换 IP 不会重置）」；全仓 `grep '同一 IP'` 已无残留（`docs/OPERATIONS.md`、`docs/RELEASE_CHECKLIST.md` 此前已正确）。
 
 **教训（与 F-34 同类）**：凡是改动**用户可见语义**（安全策略、限额、计费口径），必须同时搜索面板文案、API 文档页与 markdown 文档。这类不一致不会让测试变红，只会让人在故障时按错的模型处理。已在 `docs/RELEASE_CHECKLIST.md` 增加一条复查项。
+
+---
+
+## F-38 任务终态与内存释放不在同一临界区（P2，已修复）
+
+**怎么发现的**：把 `-race` 用到**集成测试**（E30）后第一次跑就红：
+
+```
+--- FAIL: TestIndexJobReleasesMemoryWhenDone (0.02s)
+    index_job_test.go:326: finished job still holds 1 URLs in memory
+```
+
+**根因**：`Cancel` / `finish` 两条终态路径是
+
+```
+持锁: Status = terminal; snap := job   →  解锁  →  SaveMeta(snap)  →  再持锁释放 URLs
+```
+
+中间窗口里，**状态已经是"已完成"，但内存里那份 URL 列表还活着**。外部观察者（进度查询、测试、以后可能加的指标）在该窗口内看到的是自相矛盾的状态。日常运行窗口仅微秒级，`-race` 拉长调度后暴露。
+
+**影响**：不是数据错误，但会让"已完成 ⇒ 内存已释放"这个隐含契约不成立；如果将来有代码依赖它（例如按持有量做内存告警、或重启续跑时判断是否需要重放），就会在极小概率下出错。测试抖动本身也会让 CI 变红。
+
+**修复**：新增 `releaseLocked()`，在**同一临界区内**、取完快照后清空 `URLs`/`pending`/`attempts`；快照已持有列表，磁盘记录（含续跑所需 URL）不受影响。`release()` 已无调用者，删除。
+
+**验证**：`go test -race -tags=integration ./...` 11 包全绿（E30）；`go vet` / `staticcheck` 干净。
+
+**为什么不是"改测试"**：把断言改成轮询也能让 CI 变绿，但那等于承认"终态与释放不一致"，把真实契约降级成偶然时序。修代码让不变量真的成立，测试才是对的。
+
+---
+
+## F-39 第二个 compose 文件漏修（P3，已修复）
+
+**怎么发现的**：修完 F-34 后复盘"还有哪些部署入口会踩同一个坑"，查出仓库里其实有三个 compose：
+
+| 文件 | F-34 前状态 |
+| --- | --- |
+| `docker-compose.yaml`（根） | 已修 |
+| `deploy/docker-compose.yml` | **同样的坑**：`WEB2API_SERVER_HOST=0.0.0.0` 且无密码 → 容器退出 1 + 重启循环 |
+| `deploy/docker-compose.local.yaml`（覆盖层） | 自身不含 env，靠根文件提供；组合后继承根文件的必需变量 |
+
+**修复**：`deploy/docker-compose.yml` 同样改为 `${ADMIN_PASSWORD:?...}`；`deploy/README.md` 的启动/运维命令补上必需变量与 `.env` 用法。
+
+**验证（三种组合，无需 daemon）**：
+
+```
+docker compose -f deploy/docker-compose.yml config                      → 缺变量 exit 1
+ADMIN_PASSWORD=*** docker compose -f deploy/docker-compose.yml config   → exit 0
+ADMIN_PASSWORD=*** docker compose -f docker-compose.yaml \
+                              -f deploy/docker-compose.local.yaml config → exit 0（覆盖层保留必需变量）
+```
+
+**教训**：修一个入口不等于修完。凡是"部署形态"类问题，必须先枚举所有入口（根 compose、deploy compose、覆盖层、systemd、文档里的 `docker run`），否则用户按另一份文档操作照样踩坑。
 
 ---
 

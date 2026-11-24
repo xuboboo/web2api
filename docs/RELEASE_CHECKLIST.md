@@ -122,7 +122,7 @@ KEY=<新签发的 API Key>
 | --- | --- | --- | --- | --- |
 | I1 | 单元/集成测试 | `go test -count=1 ./...` | 全绿 | ☑ |
 | I2 | 静态检查 | `go vet ./...` | 无输出 | ☑ |
-| I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 ./...` | 全绿、无 DATA RACE | ☑（E26：11 包全绿；Windows 需 mingw + ASCII 的 gcc 路径与 GOTMPDIR，见 TESTING.md） |
+| I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 ./...` 与 `-race -tags=integration` | 全绿、无 DATA RACE | ☑（E26/E30：两个口径各 11 包全绿；Windows 需 mingw + ASCII 的 gcc 路径与 GOTMPDIR，见 TESTING.md） |
 | I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux go build` | 成功 | ☑ |
 | I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机无容器引擎；build 前因已静态排除，见 E28。**仍需在有 Docker 权限的机器实跑**） |
 | I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/Go1.27 导出数据限制，交由 CI） |

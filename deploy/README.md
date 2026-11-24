@@ -19,12 +19,22 @@
 
 ```powershell
 # 构建并启动（首次约 2 分钟，主要耗时在 Go 编译与 Chrome 镜像层）
+# ADMIN_PASSWORD 是必需的：容器必须绑 0.0.0.0 才能被端口映射访问，而服务在
+# "非 loopback + 默认管理员密码"时会拒绝启动（见 docs/audit/FINDINGS.md F-26）。
+# 缺这个变量时 docker compose 会在解析阶段直接报错，不会进重启循环。
+$env:ADMIN_PASSWORD = '<强密码>'
 docker compose -f deploy/docker-compose.yml up -d --build
 
 # 状态与健康
 docker compose -f deploy/docker-compose.yml ps
 curl.exe -s http://127.0.0.1:7000/web-tool/health
 ```
+
+> 之后每条 `docker compose -f deploy/docker-compose.yml ...` 命令都需要该变量（compose 每次都会插值整个文件）。不想每次设置就在 `deploy/` 下放一个 `.env`（已被 `.gitignore` 与 `.dockerignore` 排除）：
+>
+> ```powershell
+> 'ADMIN_PASSWORD=<强密码>' | Out-File -Encoding ascii deploy\.env
+> ```
 
 部署形态：
 

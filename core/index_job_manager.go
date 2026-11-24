@@ -67,12 +67,16 @@ type jobState struct {
 	running  bool
 }
 
-// release drops the heavy part of a finished job (the submitted URL list and the
-// pending queue) from memory. The record itself stays for progress queries; the
-// full state is on disk.
-func (s *jobState) release() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// releaseLocked drops the heavy part of a finished job (the submitted URL list
+// and the pending queue) from memory. The record itself stays for progress
+// queries; the full state is on disk. Caller must hold s.mu.
+//
+// Terminal transitions call this while still holding the lock, so "status is
+// terminal" and "URL list is gone" hold at the same instant. Clearing afterwards
+// left a real window: an observer (progress query, test) could read a finished
+// status while the URL list was still resident — surfaced by
+// TestIndexJobReleasesMemoryWhenDone under -race.
+func (s *jobState) releaseLocked() {
 	if !s.job.Status.Terminal() {
 		return
 	}
@@ -383,9 +387,9 @@ func (m *IndexJobManager) Cancel(id, ownerKeyID string) bool {
 	st.job.FinishedAt = &now
 	st.job.UpdatedAt = now
 	snap := st.job
+	st.releaseLocked() // terminal + released atomically; snap keeps the list for disk
 	st.mu.Unlock()
 	_ = m.store.SaveMeta(&snap)
-	st.release()
 	m.evictTerminal()
 	return true
 }
@@ -608,9 +612,9 @@ func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr st
 		st.job.LastError = lastErr
 	}
 	snapshot := st.job
+	st.releaseLocked() // terminal + released atomically; snapshot keeps the list for disk
 	st.mu.Unlock()
 	_ = m.store.SaveMeta(&snapshot)
-	st.release()
 	m.evictTerminal()
 }
 

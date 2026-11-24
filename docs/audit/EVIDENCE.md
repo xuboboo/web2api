@@ -548,6 +548,38 @@ PATH 含 /usr/bin : True (getent / apt-get 可解析)
 
 **过程中自我纠错一次（记录在案）**：我最初给使用日志加了一个「结果」列，把 `outcome=billed` 显示成"成功"。核对 `platform/model.go` 后确认 `billed` 的语义是"到达引擎且 HTTP 200"，而我们那条 200+引擎错误的记录正是 `billed`——那样显示会撒谎。于是撤回该列，改为只陈述事实（未计费）。**这类"看起来很合理但语义错误"的改动必须在提交前用代码语义校验一遍。**
 
+## E30 `-race` + 严格集成：先跑出 1 个真问题，修完全绿
+
+E26 只把 `-race` 跑在单元测试上。本轮把**集成测试也放在竞态检测器下**：
+
+```
+CGO_ENABLED=1 WEB2API_INTEGRATION_TESTS=1 WEB2API_INTEGRATION_STRICT=1 \
+  go test -race -count=1 -p 1 -tags=integration ./...
+```
+
+**第一次运行（暴露问题）**：
+
+```
+--- FAIL: TestIndexJobReleasesMemoryWhenDone (0.02s)
+    index_job_test.go:326: finished job still holds 1 URLs in memory
+FAIL github.com/xuboboo/web2api/core 38.856s
+```
+
+**根因不是测试写错，代码顺序有问题**：`Cancel` 与 `finish` 两条终态路径都是「持锁把 `Status` 置为终态 → 取快照 → 解锁 → 落盘 → 再调用 `release()` 释放 URL 列表」。中间存在一个真实窗口：**外部已经能读到"已完成"，而内存里那份 URL 列表还在**。普通运行时窗口只有微秒级，测试几乎不会踩到；`-race` 让调度变慢，把它放大了。
+
+**修复**：拆出 `releaseLocked()`，在**持有锁的同一临界区内**、取完快照后立刻清空 `URLs`/`pending`/`attempts`（快照已持有列表，磁盘记录不受影响）。这样"终态"与"内存已释放"成为同一瞬间成立的原子事实，`release()` 也随之删除（已无调用者）。
+
+**复测**：
+
+```
+ok  baidu 6.0s  ok bing 9.2s  ok cmd 16.1s  ok core 39.7s  ok core/browser 4.9s
+ok  core/fpcheck/detectors 2.1s  ok core/region 1.6s  ok mcp 3.2s
+ok  platform 85.9s  ok so360 3.4s  ok sogou 3.6s
+EXIT=0      ← 11 包全绿，无 DATA RACE
+```
+
+**为什么这条值得单独记**：它证明竞态检测不只是"确认没并发 bug"，还能把**测试里被掩盖的时序假设**翻出来；而这次的根因落在产品代码（内存释放时机）而不是测试上。若只在 CI 上跑非 race 的集成测试，这个窗口会一直存在。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |
