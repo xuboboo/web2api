@@ -178,6 +178,15 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 | 400 | `{"error":"bad_request",…,"reason":"EMPTY_QUERY"}` | `urls` 为空 |
 | 400 | `{"error":"bad_request",…,"reason":"TOO_MANY_URLS"}` | 超过 20 条但**未开启任务队列**，或超过 `index_jobs.max_urls` |
 | 400 | `{"error":"bad_request",…,"reason":"INVALID_PARAM"}` | 含未知引擎、非法 URL 等 |
+
+> **`urls` 的去重与校验规则（2026-11 起，实测）**：
+>
+> 1. **重复会被合并**：按归一化键（scheme/host 小写、去默认端口、去 fragment、去尾斜杠）去重，保留首次出现顺序。`["https://a.com/x","HTTPS://A.COM/x/"]` 只查 1 次、只计 1 个单元——同步与异步（`>20` 条转 job）**行为一致**。此前同步路径不去重，导致 20 条重复花 20 unit、21 条重复却塌成 1 条。
+> 2. **只接受 http/https**：`ftp:`、`file:`、`javascript:`、`data:`、`mailto:` 一律 `400 INVALID_PARAM`，错误信息会点出 `unsupported scheme`。
+> 3. **必须含公网域名**：单标签主机（`not-a-url`、`localhost`、`intranet`）拒绝，报 `has no public domain`；裸域名（`example.com`）仍按 http 处理。
+> 4. `>20` 与 `>5000` 的上限按**原始条数**判断，重复项不能用来绕过批量上限。
+>
+> 因为会去重，**返回的 `results` 条数可能少于提交的 `urls` 条数**；顺序与首次出现一致。
 | 401 | `{"error":"unauthorized"}` | key 缺失 / 未知 / 禁用 |
 | 429 | `{"error":"quota_exceeded"}`（`Retry-After` 头） | 当日配额用尽 |
 | 503 | `{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":600}`（`Retry-After` 头） | 所选引擎全部处于冷却期 |

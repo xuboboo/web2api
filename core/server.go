@@ -1360,7 +1360,14 @@ func indexCheckHasUnitError(results []IndexCheckURLResult) bool {
 }
 
 // validateIndexCheckURLs applies the platform URL rules (trim, 1..20 entries,
-// absolute URL) shared by the fiber request parser and CheckIndexBatch.
+// absolute URL, http/https only) shared by the fiber request parser and
+// CheckIndexBatch, and collapses duplicates.
+//
+// Duplicates collapse on the same normalization key the response cache and the
+// async job queue use, so one page is never queried (or billed) twice. The job
+// path already collapsed them; the sync path did not, so 20 copies of one URL
+// cost 20 units while 21 copies cost 1 — the same input behaved differently
+// depending only on its size.
 func validateIndexCheckURLs(urls []string) ([]string, *APIError) {
 	cleaned := make([]string, 0, len(urls))
 	for _, raw := range urls {
@@ -1372,12 +1379,70 @@ func validateIndexCheckURLs(urls []string) ([]string, *APIError) {
 	case len(cleaned) > MaxIndexCheckURLs:
 		return nil, errTooManyURLs(fmt.Sprintf("urls accepts at most %d entries, got %d", MaxIndexCheckURLs, len(cleaned)))
 	}
+	unique := make([]string, 0, len(cleaned))
+	seen := make(map[indexURLKey]struct{}, len(cleaned))
 	for i, u := range cleaned {
-		if _, ok := indexURLKeyFrom(u); !ok {
+		// Scheme first: it produces a message that names the actual problem,
+		// while the URL-shape check would only say "not a valid absolute URL".
+		if scheme, bad := unsupportedScheme(u); bad {
+			return nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q uses unsupported scheme %q (only http and https can be indexed)", i, u, scheme))
+		}
+		key, ok := indexURLKeyFrom(u)
+		if !ok {
 			return nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q is not a valid absolute URL", i, u))
 		}
+		// A single-label host ("not-a-url", "localhost") can never appear in a
+		// public search index. Accepting it would return indexed=false and bill a
+		// unit for a question nobody asked, which reads like a real answer.
+		if !strings.Contains(strings.SplitN(key.host, ":", 2)[0], ".") {
+			return nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q has no public domain (a dot-separated host is required)", i, u))
+		}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, u)
 	}
-	return cleaned, nil
+	return unique, nil
+}
+
+// unsupportedScheme reports a scheme other than http/https. Inputs without a
+// scheme stay accepted (a bare host is treated as http), and "host:port" is not
+// a scheme, so the check only fires when the text after the first colon is not a
+// numeric port.
+func unsupportedScheme(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if i := strings.Index(trimmed, "://"); i > 0 {
+		scheme := strings.ToLower(trimmed[:i])
+		if scheme != "http" && scheme != "https" {
+			return scheme, true
+		}
+		return "", false
+	}
+	i := strings.Index(trimmed, ":")
+	if i <= 0 {
+		return "", false
+	}
+	rest := trimmed[i+1:]
+	if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+		rest = rest[:j]
+	}
+	if rest != "" && !isAllDigits(rest) {
+		return strings.ToLower(trimmed[:i]), true
+	}
+	return "", false
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // engineByName resolves a requested engine name (alias-aware: 360/so/so.com →

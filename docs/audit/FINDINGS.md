@@ -46,6 +46,8 @@
 | F-38 | P2 | 任务终态发布与内存释放不在同一临界区：外部可读到「已完成」而 URL 列表仍在内存（`-race` 下暴露） | 已修复（`releaseLocked` 并入临界区） |
 | F-39 | P3 | `deploy/docker-compose.yml` 与根 compose 有同样的默认密码问题（F-34 只修了一个文件） | 已修复（两个 compose + 三个组合均验证） |
 | F-40 | **P1** | release 打包只含二进制，不含 `web/`；而面板是磁盘资源 → 下载 tar 包的用户官网与控制台全 404 | 已修复（CI 打包加 `web`，INSTALL §4 + DEPLOYMENT §4 + 排错行） |
+| F-41 | — | 「真实查询挂住」实为验证脚本不读管道导致服务端写阻塞 | 已撤回（非产品缺陷，见下） |
+| F-42 | **P2** | 同步路径不去重而同 URL 重复计费，异步路径却去重：同一输入按条数决定花多少额度；且非域名/`ftp:`/`javascript:` 输入被接受并计费 | 已修复（同步去重 + scheme 白名单 + 必须有域名） |
 
 ---
 
@@ -510,6 +512,38 @@ tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN
 **处置**：不记为产品缺陷；把自己刚写进 `INSTALL.md` 的那条错误排错项改成事实描述（降级后仍返回，但结果质量与指纹弱于真实浏览器）。
 
 **教训**：**验证工具本身也是被测对象**。看到"服务端无响应"时，先排除观测手段（管道、超时、并发槽位），再判定产品；否则会把 harness 缺陷写成产品缺陷，误导后续所有排障。
+
+---
+
+## F-42 同步/异步去重不一致 + 无效输入被计费（P2，已修复）
+
+**怎么发现的**：按真实用户流程打真接口（E33），三个断言同时红：
+
+```
+[7]  3 条相同 URL → results=3 units=3        ← 同步路径完全不去重
+[8]  "not-a-url"   → 200（接受，计 1 unit，回答"未收录"）
+[8]  "ftp://…"     → 200（接受，计 1 unit）
+```
+
+**根因有两个，且第一个是自相矛盾的设计**：
+
+1. 异步任务路径**已经**去重（`core/index_job_manager.go` 用 `seen` 表合并，`index_job_test.go` 还有断言 `Duplicate URLs must collapse`），而同步路径的 `validateIndexCheckURLs` 只做 trim + 校验，**不去重**。结果：**同一份输入，20 条重复只花 20 unit，21 条重复却塌成 1 条、只花 1 unit**——花多少额度取决于条数，这比"都计费"更难解释。
+2. 校验只要求"能解析出 host"，于是 `not-a-url` 被当成 `http://not-a-url` 接受，`ftp://`、`javascript:`、`data:`、`mailto:` 也全部放行。这些 URL 永远不可能出现在搜索引擎索引里，却被照常计费并回答 `indexed:false`——**用户看到的是一条"未收录"的假答案**。
+
+**修复**（`core/server.go`）：
+
+1. `validateIndexCheckURLs` 用与缓存/任务队列**同一个归一化键** `indexURLKeyFrom` 去重，保留首次出现顺序；`>20` 与 `>5000` 的上限仍按原始条数判断（防止用重复项绕过批量上限）。
+2. 新增 `unsupportedScheme`：带 `://` 的只允许 http/https；`host:port` 不算 scheme（避免误杀 `example.com:8080/x`）。
+3. 新增域名要求：单标签主机（`not-a-url`、`localhost`、`intranet`）拒绝，因为公网索引里不可能有它，回答"未收录"属于误导。
+4. 顺序调整为**先判 scheme 再判 URL 形状**，这样错误信息能说出真正原因（否则只会得到"not a valid absolute URL"）。
+
+**验证**：
+
+- 新增 `core/index_url_validation_test.go` 5 个用例：去重（含大小写/尾斜杠/空格差异）、保留不同页面、scheme 白名单（5 个反例 + 5 个正例）、单标签域名拒绝、超长原始列表仍报 `TOO_MANY_URLS`；
+- `go test -p 1 ./...` 11 包全绿；`staticcheck` 0；
+- 真实接口复测：3 个相同 URL → `results=1 units=1`；`not-a-url` → `400 INVALID_PARAM … has no public domain`；`ftp://www.qq.com/x` → `400 INVALID_PARAM … uses unsupported scheme "ftp"`（E33）。
+
+**兼容性影响（需告知）**：调用方如果依赖"提交 N 条就返回 N 条（即使重复）"，现在会拿到去重后的条数；`results` 顺序仍与首次出现顺序一致。已在 `docs/API.md` 写明。
 
 ---
 

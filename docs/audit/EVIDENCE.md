@@ -648,6 +648,64 @@ PASS  data dir has db + secret.key
 
 **一次自我纠错的完整记录（重要）**：中途我连续两次看到"真实查询 240 s 超时、随后 `/api/runtime` 也超时"，一度怀疑是浏览器通道或自动下载 Chromium 卡死。实际原因是**我的验证脚本用 `subprocess.PIPE` 接服务端 stdout 却从不读取**，管道写满后服务端自己阻塞在日志写上——是 harness 缺陷，不是产品缺陷。改成写文件后同一场景 **1.7–2.4 s** 正常返回；再用 `probe_lane.py` 单独验证"不配 browser_path"的情况，结果是**快速降级到 HTTP 通道、2.3 s 命中**，与 INSTALL §1 的说法一致。因此没有写成产品缺陷，而是把自己写错的文档行改掉。
 
+## E33 真实用户流程打真接口（百度收录为主线，31→39 步）
+
+不走单元测试，按用户路径打真接口、真引擎（`probe_user_flow.py`）：
+
+| 步骤 | 验证点 | 结果 |
+| --- | --- | --- |
+| 1 新用户 | 官网 200 / 引用自有静态资源 | ✅ 39837B |
+| 2 登录 | 控制台 200 / 登录拿到 token / `/api/me` 可读 | ✅ |
+| 3 建密钥 | 创建只回显一次完整 key；列表只显示前缀 | ✅ |
+| 4 在线调试 | `/api/playground/check` 真实查询返回百度结果 | ✅ 5.0s indexed=true |
+| 5 单条查询 | 已收录页面 `indexed=true`、命中 URL 一致、`meta` 带 request_id/units | ✅ 8.2s match=exact |
+| 6 负样本 | 伪造路径 `indexed=false`（无假阳性） | ✅ |
+| 7 异常输入 | 3 条相同 URL 去重为 1 条 / 1 单元 | ❌→已修（F-42） |
+| 8 异常输入 | 空数组 400；非域名、`ftp://` 曾返回 200 | ⚠️→已修（F-42） |
+| 9 批量任务 | 21 条转 202 + job_id；轮询 `2/21→3/21→4/21` 递增；ETA=192s | ✅ |
+| 10 刷新页面 | 重复 GET 同一 job 状态一致（状态在服务端） | ✅ running/5 |
+| 11 取消任务 | DELETE 被接受 | ✅ 200 |
+| 12 配额 | 额度用尽后 429 + `retry_after_seconds` | ✅ |
+| 13 鉴权 | 非法 key 401；伪造 JWT 401；数据面 key 不能当管理 JWT | ✅ |
+| 14 巡检 | health/ready/metrics/stats×4/openapi.yaml/llms.txt 全 200；未知 API → JSON 404；未知页面 → 品牌 404 | ✅ |
+| 15 用量 | 用量有记录；总览与用量一致；**对账接口 0 差异**（`charged_units == journaled_units`） | ✅ |
+
+**修复后复测（`probe_refix.py`，冷却期间只用 1 次真实查询）**：
+
+```
+PASS  同步路径去重：3 个相同 URL → results=1 units=1
+PASS  非域名输入被拒：400 INVALID_PARAM … has no public domain
+PASS  不支持的 scheme 被拒：400 INVALID_PARAM … uses unsupported scheme "ftp"
+```
+
+**过程中学到的两件事（都记进 FINDINGS）**：
+
+1. 密集打真实引擎会触发**冷却**（`503 engine_cooldown retry_after=48`）——这是设计正确，但也说明**验证脚本必须控制调用密度**，否则会把"保护生效"误读成"功能失败"。
+2. 我的第一版脚本把 `/api/auth/me`、`/version`、`/assets/` 当成真实端点/路径，实际分别是 `/api/me`、不存在、`assets/`（相对路径）。**断言写错会造成假失败**，每次红灯都要先确认期望本身是否正确。
+
+### E33b 单 IP 的真实调用上限（现场观测，非缺陷）
+
+当晚在这台机器上累计跑了 20+ 次真实百度查询后，百度开始对本机出口 IP 弹验证码，**两条通道都一样**：
+
+```
+browser lane : [error] Captcha detected: https://bioc-static.cdn.bcebos.com/pages/ds_svcp.html?…
+               [warning] CAPTCHA detected, skipping retries
+               [warning] code=captcha_detected error="captcha detected" Index check unit failed
+http lane    : {"engines":{"baidu":{"error":{"code":"captcha_detected","message":"captcha detected"}}}}
+```
+
+**系统的处理完全符合设计**（这条本身是"第三方不可用/反爬"场景的正向证据）：
+
+| 观察点 | 实测 |
+| --- | --- |
+| 是否重试浪费额度 | ❌ 不重试，日志明确写 `skipping retries` |
+| 单元结果是否诚实 | ✅ 单元内带 `error.code=captcha_detected`，不是伪装成"未收录" |
+| 是否计费 | ✅ **0 unit**（`units=0`、`used_today=0`、对账 `charged_units=0`） |
+| 整体 HTTP 状态 | 200（单单元失败不污染整批），全部引擎冷却时才 503 |
+| 恢复手段 | `POST /api/engines/baidu/cooldown/reset` 实测可用；配 `proxies.entries` 才是根治 |
+
+**结论**：无代理池时单 IP 约 20+ 次/小时即进入验证码状态——**这是业务规模的硬约束，不是 bug**。生产必须配代理池（`docs/DEPLOYMENT.md` 已写），单机自用则接受这个频率上限。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |
