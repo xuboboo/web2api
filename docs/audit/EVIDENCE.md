@@ -503,6 +503,35 @@ ports 127.0.0.1:7000 → 7000   volumes: config.yaml(ro) + web2api-data→/usr/s
 
 **仍然未知**：daemon 实际执行每一层（`apt-get` 能不能连通、`useradd` 分支是否按预期走到、`chromedp/headless-shell` 里是否真有 `/headless-shell/headless-shell`）。这三点只能由 CI 或你那边有 Docker 权限的机器确认，**我不把它写成"已验证"**。
 
+### E28b 把"仍然未知"里的两个直接验了（下载镜像层，不跑容器）
+
+网络恢复后，用 Docker Registry API 直接拉 `chromedp/headless-shell@sha256:f7e7ac72…` 的 linux/amd64 manifest（143.5 MiB，2 层），逐个流式解 tar 索引并核对关键路径：
+
+```
+FOUND   /headless-shell/headless-shell   mode=0o755  size=231238880
+FOUND   /headless-shell                  mode=0o755
+FOUND   /usr/bin/apt-get                 mode=0o755
+FOUND   /usr/bin/dpkg                    mode=0o755
+FOUND   /usr/bin/getent                  mode=0o755   ← Dockerfile 的 getent 探测可用
+FOUND   /usr/sbin/useradd                mode=0o755   ← 回退分支可用
+FOUND   /usr/bin/bash                    (useradd --shell /bin/bash 可用)
+ABSENT  /usr/bin/tini
+ABSENT  /usr/bin/wget                    ← 所以 apt-get 装这两个是必需的, 不是冗余
+```
+
+再从 image config 读 ENV/ENTRYPOINT：
+
+```
+ENTRYPOINT : ["/headless-shell/run.sh"]        ← 被本仓库 Dockerfile 的 tini 覆盖
+PATH       : /headless-shell:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH 含 /usr/sbin: True (useradd 可解析)
+PATH 含 /usr/bin : True (getent / apt-get 可解析)
+```
+
+**结论**：`WEB2API_APP_BROWSER_PATH=/headless-shell/headless-shell` 这个固定路径**真实存在且可执行（0755）**——之前"镜像里可能没有这个路径，Rod 会在运行时下载 Chromium 然后失败"的担心被排除。基础镜像是 Debian 系（有 apt-get/dpkg），`apt-get install wget tini` 与 `getent passwd chrome || useradd` 两条命令的依赖都在。
+
+**剩下真正未知的只有两件**：(1) 构建时能否连到 Debian 镜像源；(2) `docker run` 后健康检查是否真的转 healthy。这两件必须有 daemon。
+
 ## E29 登录后全页面 UX 走查（真实 Chrome，1440×900，8 个页面）
 
 此前只走查过登录页（桌面+移动）与总览。本轮把登录后的全部路由过了一遍：真实 Chrome 158（REA/Playwright 驱动，本机 localhost，无外网依赖），逐页截图并收集 console 与 page-error。

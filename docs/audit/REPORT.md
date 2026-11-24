@@ -198,7 +198,7 @@
 
 ### 阻塞上线的 1 项（必须完成）
 
-1. **`docker build` 镜像构建与容器冒烟**：本机没有可用容器引擎（`com.docker.service` 拒绝启动、未安装 Docker Desktop、WSL 发行版内无 `dockerd`），**daemon 实际执行每一层无法闭环**。已经把"build 会失败的一切前因"静态排除：COPY 源齐全且未被 `.dockerignore` 吃掉、两个 pinned 基础镜像 digest 在 registry 真实存在、`wget`/`tini`/入口路径/健康检查互相自洽、构建 flag 与 release.yml 一致、builder 阶段的等价命令产出 22 MiB linux ELF、`docker compose config` 解析通过（E28）。**仍未验证**：`apt-get` 能否连通、`useradd` 分支、基础镜像里是否真有 `/headless-shell/headless-shell`。
+1. **`docker build` 镜像构建与容器冒烟**：本机没有可用容器引擎（`com.docker.service` 拒绝启动、未安装 Docker Desktop、WSL 发行版内无 `dockerd`），**daemon 实际执行每一层无法闭环**。已经把"build 会失败的一切前因"静态排除并进一步直连 registry 验证（E28/E28b）：COPY 源齐全且未被 `.dockerignore` 吃掉、两个 pinned 基础镜像 digest 真实存在、`/headless-shell/headless-shell` 在镜像层里确实存在且 0755、`apt-get`/`dpkg`/`getent`/`useradd`/`bash` 都在、`tini`/`wget` 确实缺失（所以 apt 步骤必需）、PATH 含 `/usr/sbin`、builder 阶段等价命令产出 22 MiB linux ELF、`docker compose config` 解析通过。**仍未验证**：构建时能否连到 Debian 镜像源、`docker run` 后健康检查是否转 healthy。
 
 > 其余曾经"只能交 CI"的检查已全部转为本机实测：`-race`（E26）、`govulncheck`（E21）、`staticcheck`（E24）、严格集成（E20）、业务端点并发（E27）、compose 解析与 ENV 契约（E28）。
 
