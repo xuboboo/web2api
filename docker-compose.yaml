@@ -38,6 +38,14 @@ services:
     environment:
       WEB2API_SERVER_HOST: "0.0.0.0"
       WEB2API_SERVER_PORT: 7000
+      # REQUIRED. The container must bind 0.0.0.0 to be reachable through the
+      # port mapping, and the server refuses to start on a non-loopback bind
+      # while platform.admin_password is still the public default (see
+      # docs/audit/FINDINGS.md F-26). Either export a strong password here:
+      #   ADMIN_PASSWORD='...' docker compose up -d
+      # or set platform.admin_password in the mounted config.yaml. The ":?"
+      # form makes a missing value a clear error instead of an exit-1 loop.
+      WEB2API_PLATFORM_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD to a strong admin password before 'docker compose up'}
 
 volumes:
   web2api-data:

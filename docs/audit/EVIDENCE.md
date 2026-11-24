@@ -465,6 +465,44 @@ indexed values: [False]                ← 8 条合成 URL 全部判定未收录
 - 真正决定吞吐的是**引擎节拍**，不是 CPU/内存（进程 RSS 全程 25–35 MB）；
 - 想提高吞吐只能加引擎（bing/sogou/360 并行）或加出口 IP + 代理池，不是加机器。
 
+## E28 镜像构建：无 daemon 条件下能静态验证的全部验证完（含一个真 bug）
+
+**环境事实**：本机没有可用的容器引擎——`com.docker.service` 拒绝启动（权限），Docker Desktop 未安装在 `C:\Program Files\Docker\Docker\Docker Desktop.exe`，`docker-desktop` WSL 发行版里没有 `dockerd`。因此 `docker build` 仍然无法实机执行。
+
+**但 `docker build` 会失败的多数原因可以机械排除**，我写了脚本逐项验证（`D:\web2api-audit\tools\verify_dockerfile.py`）：
+
+```
+== COPY sources ==            go.mod / go.sum / . / config.yaml / web/site / web/admin 全部存在且未被 .dockerignore 排除
+== base images ==             golang:1.26.11-bookworm@sha256:dc40a13b…  → 200, 6531-byte manifest list
+                              chromedp/headless-shell:stable@sha256:f7e7ac72… → 200, 506 bytes
+== runtime wiring ==          wget / tini 已安装；HEALTHCHECK 用 wget（镜像内存在）；
+                              ENTRYPOINT /usr/bin/tini 与安装路径一致；HEALTHCHECK 打 /web-tool/health；USER chrome
+== build flags ==             Dockerfile 与 release.yml 的 -trimpath / -ldflags="-s -w" / CGO_ENABLED=0 一致
+== builder stage 等价执行 ==   CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" → 22 MiB ELF（magic 7f454c46）
+ALL STATIC DOCKER CHECKS PASS
+```
+
+**`docker compose` 可以完整验证（不需要 daemon）**：
+
+```
+$ docker compose config          # 未提供 ADMIN_PASSWORD
+error while interpolating services.web2api.environment.WEB2API_PLATFORM_ADMIN_PASSWORD:
+required variable ADMIN_PASSWORD is missing a value: set ADMIN_PASSWORD to a strong
+admin password before 'docker compose up'          → exit 1
+
+$ ADMIN_PASSWORD=*** docker compose config
+WEB2API_PLATFORM_ADMIN_PASSWORD: ***   WEB2API_SERVER_HOST: 0.0.0.0   WEB2API_SERVER_PORT: "7000"
+image: web2api:local   init: true   shm_size: "536870912"
+ports 127.0.0.1:7000 → 7000   volumes: config.yaml(ro) + web2api-data→/usr/src/app/data
+→ exit 0
+```
+
+**顺带抓到并修掉一个真 bug（F-34）**：compose 原本把 `WEB2API_SERVER_HOST` 固定为 `0.0.0.0` 且**不设**管理员密码——本会话新增的 F-26 守卫会让容器**直接退出 1**，`restart: unless-stopped` 会把它变成重启循环。已改为必需变量并在 `DEPLOYMENT.md` 说明 `.env` 用法；同时把 `.env` 加进 `.gitignore` 与 `.dockerignore`（否则运维按文档创建 `.env` 时可能把管理员密码提交进仓库或打进镜像）。
+
+**容器 ENV 契约现在有单元测试兜住**：`cmd/dockerfile_env_test.go` 断言 `WEB2API_APP_BROWSER_PATH` / `WEB2API_SERVER_HOST` / `WEB2API_SERVER_PORT` / `WEB2API_PLATFORM_ADMIN_PASSWORD` 真的能绑定到对应配置键。没有这条测试，某个键丢掉 `SetDefault` 就会静默变得不可绑定——镜像里 `browser_path` 变空后 Rod 会在运行时下载 Chromium，在无网/非 root 镜像里必然失败，而且是**上线后才炸**。
+
+**仍然未知**：daemon 实际执行每一层（`apt-get` 能不能连通、`useradd` 分支是否按预期走到、`chromedp/headless-shell` 里是否真有 `/headless-shell/headless-shell`）。这三点只能由 CI 或你那边有 Docker 权限的机器确认，**我不把它写成"已验证"**。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |

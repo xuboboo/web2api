@@ -68,3 +68,9 @@ qa/*.log
 
 # 一次性审计配置(如 config-audit.yaml)——避免误提交
 config-audit*.yaml
+
+# compose 环境文件(docker-compose.yaml 用 ${ADMIN_PASSWORD:?...} 取管理员密码;
+# 该文件若入库等同于把管理员密码写进仓库)
+.env
+.env.*
+!.env.example

@@ -45,6 +45,17 @@ curl -s http://127.0.0.1:7000/web-tool/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7000/web-tool/console/   # 预期 200/301
 ```
 
+> **`ADMIN_PASSWORD` 对每条 compose 命令都是必需的**：`docker-compose.yaml` 用 `${ADMIN_PASSWORD:?...}` 声明它，缺失时 `docker compose` 会在解析阶段直接报错（这是有意的——容器里进程必须绑 `0.0.0.0` 才能被端口映射访问，而服务在非 loopback + 默认密码时会拒绝启动，见 F-26）。
+>
+> 不想每条命令都带前缀，就在 compose 同目录放一个 `.env`（compose 自动读取，加入 `.gitignore`）：
+>
+> ```bash
+> install -m 600 /dev/null /opt/web2api/.env
+> printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >> /opt/web2api/.env
+> ```
+>
+> 故障时仍需查看重启前的日志：`ADMIN_PASSWORD=x docker compose logs --tail=200 web2api`（值不参与日志，只为通过插值）。
+
 要点：
 
 - **非 loopback 绑定 + 默认管理员密码会拒绝启动**（退出码 1）。Compose 默认容器内 `0.0.0.0`，必须通过 `ADMIN_PASSWORD` / `WEB2API_PLATFORM_ADMIN_PASSWORD` 传强密码；loopback 本地开发不受影响。

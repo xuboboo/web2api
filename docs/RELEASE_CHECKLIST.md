@@ -14,12 +14,14 @@ KEY=<新签发的 API Key>
 
 | # | 检查 | 命令 / 方法 | 通过标准 | 结果 |
 | --- | --- | --- | --- | --- |
-| A1 | 管理员密码已改 | 非 loopback + 默认密码启动必须退出码 1；改密后正常启动 | 无默认密码公网启动 | ☐ |
+| A1 | 管理员密码已改 | 非 loopback + 默认密码启动必须退出码 1；改密后正常启动 | 无默认密码公网启动 | ☑ 机制已实测（E19）；部署侧仍需确认密码已改 |
 | A2 | 数据目录已持久化 | `docker inspect` 挂载 / `df` 看目录 | 容器重建后 `web2api.db` 仍在 | ☐ |
 | A3 | `secret.key` 权限 0600 | `ls -l $DATA/secret.key` | `-rw-------` | ☐ |
 | A4 | 仓库/镜像内无运行态数据 | `docker run --rm web2api:local ls /usr/src/app` | 无 `data/` | ☐ |
 | A5 | 反代后 `trust_proxy_headers` 已开 | 看配置 + 登录失败日志里的 IP | 是真实客户端 IP | ☐ |
 | A6 | `app.debug_endpoints: false` | `curl -s -o /dev/null -w '%{http_code}' $BASE/debug/fingerprint-check` | 404 | ☐ |
+| A7 | compose 已提供 `ADMIN_PASSWORD` | `docker compose config` | 解析通过（缺失时明确报错） | ☑（E28：必需变量已实测；缺值 exit 1） |
+| A8 | `.env` / `config-*.yaml` 未入库 | `git ls-files | grep -E '^\.env$\|config-audit'` | 空 | ☑（`.env` 已进 `.gitignore` 与 `.dockerignore`） |
 | A7 | `metrics_token` 已设或仅本机采集 | 从外部 `curl $BASE/metrics` | 401 | ☐ |
 
 ## B. 鉴权与权限（阻塞项）
@@ -120,7 +122,7 @@ KEY=<新签发的 API Key>
 | I2 | 静态检查 | `go vet ./...` | 无输出 | ☑ |
 | I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 ./...` | 全绿、无 DATA RACE | ☑（E26：11 包全绿；Windows 需 mingw + ASCII 的 gcc 路径与 GOTMPDIR，见 TESTING.md） |
 | I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux go build` | 成功 | ☑ |
-| I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机 Docker daemon 未运行） |
+| I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机无容器引擎；build 前因已静态排除，见 E28。**仍需在有 Docker 权限的机器实跑**） |
 | I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/Go1.27 导出数据限制，交由 CI） |
 | I6a | **静态分析（本机替代）** | `staticcheck ./...` | 0 条 | ☑（E24：14 → 0） |
 | I9 | 依赖版本复核 | `go list -m all` 中 HTTP/S 解析层无已知漏洞 | 与 govulncheck 结论一致 | ☑（fasthttp v1.70.0） |

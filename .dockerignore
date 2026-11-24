@@ -30,6 +30,9 @@ logs-qa*.txt
 server-*.log
 config-qa*.yaml
 config-audit*.yaml
+# compose env file: holds the admin password used by ${ADMIN_PASSWORD:?...}
+.env
+.env.*
 
 # Local caches
 .gocache/

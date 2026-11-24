@@ -191,16 +191,16 @@
 | 6. 数据库无重大隐患 | ✅ bbolt 单写者、无 SQL 注入面、备份恢复实测 |
 | 7. 安全防护与权限经核实 | ✅ 见 §D.1（默认密码需运维改） |
 | 8. 关键异常有处理机制 | ✅ 冷却/熔断/重试/续跑 + 硬杀续跑 + 浏览器崩溃恢复 + **运行期任务目录不可写（500/0.01s，health 仍 200）**；仅真正写满磁盘未注入 |
-| 9. 部署/安装/环境文档完整 | ✅ 5 份文档齐备 |
+| 9. 部署/安装/环境文档完整 | ✅ 5 份文档齐备；compose 必需变量与 `.env` 用法已写入 DEPLOYMENT |
 | 10. 备份恢复实际验证 | ✅ 已实测（登录 + Key + 计数完好） |
 | 11. 监控/日志/排障可用 | ✅ 端点与审计齐备；告警阈值建议已给 |
 | 12. 关键回归全部通过 | ✅ 单测/vet/构建/**`-race` 全量**/严格集成/govulncheck/staticcheck 均在本机实机通过；仅 `docker build` 未在本机跑 |
 
 ### 阻塞上线的 1 项（必须完成）
 
-1. **`docker build` 镜像构建与容器冒烟**：Docker 服务需管理员权限（`Start-Service com.docker.service` 被拒），本机无法闭环。已用同参数 `CGO_ENABLED=0 GOOS=linux go build` 交叉编译替代验证可编译性，**但"镜像能构建、容器能起来"仍未实机验证**。
+1. **`docker build` 镜像构建与容器冒烟**：本机没有可用容器引擎（`com.docker.service` 拒绝启动、未安装 Docker Desktop、WSL 发行版内无 `dockerd`），**daemon 实际执行每一层无法闭环**。已经把"build 会失败的一切前因"静态排除：COPY 源齐全且未被 `.dockerignore` 吃掉、两个 pinned 基础镜像 digest 在 registry 真实存在、`wget`/`tini`/入口路径/健康检查互相自洽、构建 flag 与 release.yml 一致、builder 阶段的等价命令产出 22 MiB linux ELF、`docker compose config` 解析通过（E28）。**仍未验证**：`apt-get` 能否连通、`useradd` 分支、基础镜像里是否真有 `/headless-shell/headless-shell`。
 
-> 其余曾经"只能交 CI"的检查本轮全部转为本机实测：`-race`（E26）、`govulncheck`（E21）、`staticcheck`（E24）、严格集成（E20）、业务端点并发（E27）。
+> 其余曾经"只能交 CI"的检查已全部转为本机实测：`-race`（E26）、`govulncheck`（E21）、`staticcheck`（E24）、严格集成（E20）、业务端点并发（E27）、compose 解析与 ENV 契约（E28）。
 
 ### 已从阻塞项中移除（有实测证据）
 

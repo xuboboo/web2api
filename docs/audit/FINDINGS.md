@@ -39,6 +39,8 @@
 | F-31 | — | 运行期任务目录不可写：500 + 0.01s 响亮失败，health 仍 200，恢复权限即自愈 | 已实测通过（非缺陷） |
 | F-32 | P2 | 并发下业务延迟（p50 37.8s / p95 48.2s）超出清单阈值（15s/25s）：单引擎 12s/条串行导致的排队，非服务端缺陷 | 已量化（需写入容量规划/SLA） |
 | F-33 | — | `-race` 竞态检测在本机打通（mingw + ASCII 路径/GOTMPDIR），11 包全绿无 DATA RACE | 已实测通过 |
+| F-34 | **P1** | `docker-compose.yaml` 固定 `0.0.0.0` 却不设管理员密码 → 与本会话新增的 F-26 守卫冲突，容器退出 1 并重启循环 | 已修复（必需变量 + `.env` 忽略 + 文档） |
+| F-35 | P3 | 容器 ENV 契约（`APP_BROWSER_PATH` 等）此前无任何测试兜底，键丢失会静默失效并在运行期才炸 | 已修复（新增 `cmd/dockerfile_env_test.go`） |
 
 ---
 
@@ -325,6 +327,56 @@ status: {200: 8}     latency p50=37.82s  p95=48.16s  mean=33.88s
 结果：`go test -race -count=1 -p 1 ./...` 11 包全绿、无 DATA RACE。
 
 **意义**：并发正确性从"代码审查 + staticcheck"升级为"三个独立手段都通过"；`sessionCache.mu`（F-30）这类锁陷阱今后可以被竞态检测器兜住。
+
+---
+
+## F-34 compose 与默认密码守卫冲突，容器会进重启循环（P1，已修复）
+
+**这是本会话自己引入的回归**，也正是审计该抓的东西：F-26 让服务在"非 loopback + 默认管理员密码"时拒绝启动，而 `docker-compose.yaml` 恰好把 `WEB2API_SERVER_HOST` 固定成 `0.0.0.0`、又**没有**设置管理员密码。
+
+**影响链**：
+
+```
+docker compose up -d
+  → 容器内 host=0.0.0.0 + config.yaml 默认密码
+  → enforceAdminPasswordSafety 拒绝启动，进程 exit 1
+  → restart: unless-stopped 反复重启 → 无限重启循环，日志被刷屏
+```
+
+**为什么容器里躲不开**：端口映射必然要求进程绑 `0.0.0.0`，所以"loopback 可用默认密码"的豁免在容器里永远不成立。修复不是放宽守卫（那会退回 F-26 的漏洞），而是**让部署侧必须显式提供密码**。
+
+**修复**：
+
+1. `docker-compose.yaml` 增加必需变量（缺值即解析期报错，不会进重启循环）：
+   ```yaml
+   WEB2API_PLATFORM_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD to a strong admin password before 'docker compose up'}
+   ```
+2. `docs/DEPLOYMENT.md` 说明该变量对**每条** compose 命令都必需，并给出 `.env` 方案（含 `install -m 600` 与 `chmod` 提示）。
+3. `.env` 加入 `.gitignore`（否则运维照文档创建 `.env` 时可能把管理员密码提交进仓库）；同时加入 `.dockerignore`（避免进镜像层）。
+
+**实测（无需 daemon）**：
+
+```
+docker compose config                        → 明确报错 + exit 1（不再是重启循环）
+ADMIN_PASSWORD=*** docker compose config      → 正常解析，env/ports/volumes 全部符合预期
+```
+
+**兼容性/回滚**：这是**有意的破坏性变更**——已有部署升级后必须导出 `ADMIN_PASSWORD`（或改用挂载的 config.yaml 里的强密码），否则 compose 直接报错。回滚方式是删掉那一行环境变量，但会把 F-26 的漏洞带回来，不建议。
+
+---
+
+## F-35 容器 ENV 契约缺少测试兜底（P3，已修复）
+
+**问题**：镜像完全依赖 Viper 的 `BindEnv` 把 `WEB2API_<KEY>` 绑到配置键（`cmd/root.go` 的 `v.AllKeys()` 循环）。但 `AllKeys()` 只包含**已知键**，所以任何键一旦丢掉 `SetDefault`，对应环境变量就**静默失效**。
+
+具体后果：`WEB2API_APP_BROWSER_PATH` 失效 → `app.browser_path` 为空 → Rod 在运行时去下载 Chromium → 在无外网、非 root 的镜像里必然失败，而且只有**真正跑查询时**才暴露。
+
+**修复**：新增 `cmd/dockerfile_env_test.go`：
+
+- 断言 `WEB2API_APP_BROWSER_PATH`、`WEB2API_SERVER_HOST`、`WEB2API_SERVER_PORT`、`WEB2API_PLATFORM_ADMIN_PASSWORD` 都能绑定到预期配置值；
+- 断言 `config.yaml` 仍可读且保留 `server:` / `platform:` / `app:` 三段（镜像 `COPY` 它并依赖它）。
+
+**验证**：`go test -run 'TestDockerfileEnvContract|TestContainerConfigShipsDefaults' ./cmd/` 通过；全量回归 11 包全绿。
 
 ---
 
