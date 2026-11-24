@@ -1064,15 +1064,15 @@
     var defs;
     if (hasNew) {
       defs = [
-        { label: '今日有效调用', value: fmtNumber(stats.today_calls), sub: '今日 ' + fmtNumber(stats.today_units) + ' 次' },
-        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 ' + fmtNumber(stats.total_units) + ' 次' },
+        { label: '今日有效调用', value: fmtNumber(stats.today_calls), sub: '计费 ' + fmtNumber(stats.today_units) + ' 次' },
+        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '计费 ' + fmtNumber(stats.total_units) + ' 次' },
         { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
         { label: '有效成功率(24h)', value: fmtPercent(stats.success_rate_24h), sub: '全部请求 ' + fmtNumber(stats.today_calls_all) + ' 次,拒绝 ' + fmtNumber(stats.rejected_today_24h) + ' 次' }
       ];
     } else {
       defs = [
-        { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '今日 ' + fmtNumber(stats.today_units) + ' 次' },
-        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '累计 ' + fmtNumber(stats.total_units) + ' 次' },
+        { label: '今日调用', value: fmtNumber(stats.today_calls), sub: '计费 ' + fmtNumber(stats.today_units) + ' 次' },
+        { label: '累计调用', value: fmtNumber(stats.total_calls), sub: '计费 ' + fmtNumber(stats.total_units) + ' 次' },
         { label: '活跃密钥', value: fmtNumber(stats.active_keys), sub: '状态为启用的 API 密钥' },
         { label: '24h 成功率', value: fmtPercent(stats.success_rate_24h), sub: '近 24 小时请求成功率' }
       ];
@@ -2510,7 +2510,7 @@
         el('td', null, el('span', { class: 'chip', text: it.endpoint || '—' })),
         el('td', { text: fmtEngines(it.engines) }),
         el('td', { class: 'td-num', text: fmtNumber(it.urls) }),
-        el('td', { class: 'td-num', text: fmtNumber(it.units) }),
+        unitsCell(it),
         el('td', null, statusPill(it.status)),
         el('td', { class: 'td-num', text: fmtDuration(it.took_ms) }));
       var detailTr = el('tr', { class: 'detail-row hidden' },
@@ -2540,7 +2540,8 @@
       urls: Number(it.urls) || 0,
       units: Number(it.units) || 0,
       status: Number(it.status) || 0,
-      took_ms: Number(it.took_ms) || 0
+      took_ms: Number(it.took_ms) || 0,
+      outcome: it.outcome || ''
     };
     var statusCls = 'term-status';
     var n = Number(it.status);
@@ -2556,6 +2557,20 @@
       el('div', { class: 'term-foot' },
         el('span', { text: String(it.endpoint || '/v1/index/check') }),
         el('span', { class: statusCls }, el('i'), el('span', { text: isNaN(n) ? '—' : n + ' ' + httpReason(n) }))));
+  }
+
+  /* 次数列:0 次说明本次没有任何单元成功(计费口径为实扣,带 error 的单元不
+   * 计费)。界面上单看 "HTTP 200 + 次数 0" 会以为是"成功了但没记数",所以对 0
+   * 加一条弱化样式与说明,让"这次没产生有效结果"这件事自己说出来。
+   * 注意:outcome=billed 只表示请求到达引擎且 HTTP 200,不代表每个单元成功,
+   * 因此不能拿它当"成功"标记。 */
+  function unitsCell(it) {
+    var n = Number(it.units) || 0;
+    if (n > 0) return el('td', { class: 'td-num', text: fmtNumber(n) });
+    var note = '本次未计费:所有单元都返回 error(或引擎侧失败)';
+    return el('td', { class: 'td-num', title: note },
+      el('span', { class: 'muted', text: '0' }),
+      el('span', { class: 'muted', text: ' · 未计费' }));
   }
 
   function httpReason(n) {
@@ -3614,7 +3629,7 @@ async def run():
       children: [
         p('除 <code>POST /api/auth/login</code> 外均需 <code>Authorization: Bearer &lt;JWT&gt;</code>(面板登录获得)。管理 API 全局限速默认 60 次/分钟,超限返回 429 与 <code>Retry-After</code>。'),
         paramTable([
-          ['POST /api/auth/login', '—', '—', '管理员登录,返回 token、expires_in 与 user。同一用户名在同一 IP 连续 5 次失败将锁定 15 分钟,期间返回 429 too_many_attempts'],
+          ['POST /api/auth/login', '—', '—', '管理员登录,返回 token、expires_in 与 user。同一用户名连续 5 次失败将锁定 15 分钟(换 IP 不重置),期间返回 429 too_many_attempts'],
           ['POST /api/auth/password', 'JSON', '—', '修改管理员密码。请求体为 old_password 与 new_password(至少 8 位);成功后全部旧 token 立即失效'],
           ['GET /api/me', '—', '—', '当前管理员与调用概况'],
           ['POST /api/keys', 'JSON', '—', '创建 API 密钥。请求体为 name 与可选的 daily_quota;完整密钥仅返回一次'],
@@ -3652,7 +3667,7 @@ async def run():
       children: [
         ulHtml([
           '<strong>管理 API 限速</strong>:默认 60 次/分钟。超限返回 429,响应携带 <code>Retry-After</code>。',
-          '<strong>登录防爆破</strong>:同一用户名在同一 IP 下连续 5 次密码失败,锁定 15 分钟。期间登录返回 <code>429 {"error":"too_many_attempts"}</code> 与 <code>Retry-After</code>。',
+          '<strong>登录防爆破</strong>:同一用户名连续 5 次密码失败即锁定 15 分钟(按用户名跨 IP 聚合,换 IP 不会重置)。期间登录返回 <code>429 {"error":"too_many_attempts"}</code> 与 <code>Retry-After</code>。',
           '<strong>引擎冷却</strong>(每引擎独立):引擎返回 blocked(403)、429 或 captcha 时触发。第 1 次冷却 10 分钟,第 2 次 30 分钟,第 3 次及以上 120 分钟;连续 240 分钟无拦截则计数归零。',
           '<strong>冷却期内</strong>:该引擎的请求立即返回 <code>503 engine_cooldown</code>(携带 <code>Retry-After</code>),不发真实请求。<code>meta.engines_cooldown</code> 会列出冷却中的引擎。',
           '<strong>到期恢复</strong>:冷却到期后放行一个探测请求,成功即恢复,再次被拦截进下一档,其他失败(如超时)按当前档顺延重试。管理员可在「引擎状态」页强制恢复或强制冷却。'
@@ -3863,7 +3878,7 @@ async def run():
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '安全机制' })),
       el('div', { class: 'card-body' },
         el('ul', { class: 'info-list' },
-          el('li', null, el('b', { text: '登录锁定:' }), '同一用户名在同一 IP 下连续 5 次密码错误,锁定 15 分钟。期间登录返回 429 too_many_attempts,响应携带 Retry-After。'),
+          el('li', null, el('b', { text: '登录锁定:' }), '同一用户名连续 5 次密码错误即锁定 15 分钟(按用户名统计,换 IP 不重置)。期间登录返回 429 too_many_attempts,响应携带 Retry-After。'),
           el('li', null, el('b', { text: '管理 API 限速:' }), '管理 API(/api/*)默认限速 60 次/分钟,超限返回 429,响应携带 Retry-After。'),
           el('li', null, el('b', { text: '会话失效:' }), '密码以 bcrypt 哈希存储。修改密码后,全部已登录 token(含当前浏览器)立即失效,需重新登录。'),
           el('li', null, el('b', { text: '公网鉴权:' }), '公网 API 与 MCP 均使用 X-API-Key。密钥以哈希存储,面板中仅可见前缀。'))));

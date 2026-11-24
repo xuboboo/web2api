@@ -41,6 +41,8 @@
 | F-33 | — | `-race` 竞态检测在本机打通（mingw + ASCII 路径/GOTMPDIR），11 包全绿无 DATA RACE | 已实测通过 |
 | F-34 | **P1** | `docker-compose.yaml` 固定 `0.0.0.0` 却不设管理员密码 → 与本会话新增的 F-26 守卫冲突，容器退出 1 并重启循环 | 已修复（必需变量 + `.env` 忽略 + 文档） |
 | F-35 | P3 | 容器 ENV 契约（`APP_BROWSER_PATH` 等）此前无任何测试兜底，键丢失会静默失效并在运行期才炸 | 已修复（新增 `cmd/dockerfile_env_test.go`） |
+| F-36 | P2 | 控制台指标口径歧义：总览「1 / 今日 0 次」、使用日志「HTTP 200 / 次数 0」看不出业务失败 | 已修复（文案 + `0 · 未计费` + title）+ P3 遗留（engine_stats 未展示） |
+| F-37 | P2 | F-25 改锁定语义后，设置页/API 文档三处仍写「同一 IP」，用户看到的是错的 | 已修复（全仓无 `同一 IP` 残留） |
 
 ---
 
@@ -377,6 +379,43 @@ ADMIN_PASSWORD=*** docker compose config      → 正常解析，env/ports/volum
 - 断言 `config.yaml` 仍可读且保留 `server:` / `platform:` / `app:` 三段（镜像 `COPY` 它并依赖它）。
 
 **验证**：`go test -run 'TestDockerfileEnvContract|TestContainerConfigShipsDefaults' ./cmd/` 通过；全量回归 11 包全绿。
+
+---
+
+## F-36 控制台指标口径歧义：看不出「业务失败」（P2，已修文案 + 1 条 P3 遗留）
+
+**证据**（E29，真实 Chrome 登录后走查）：
+
+- 总览：卡片大字 `1`（调用次数），下方小字 `今日 0 次`（计费次数）——实测出现过「1 … 今日 0 次」，读起来像 bug；
+- 使用日志：一行 `HTTP 200 / URL 数 1 / 次数 0 / 12.0s`。实际那次请求引擎返回 `engine_internal`、0 计费。**界面没有任何位置能看出来它失败了**。
+
+**根因**：两处文案都用「次」表示两个不同量（调用次数 vs 计费次数），且使用日志只有 HTTP 状态列——而 `outcome`（billed/engine_failed/rejected）早在 API 里返回了，前端没用。
+
+**修复（只陈述事实，不美化）**：
+
+1. 总览小字改「计费 N 次」，与大字「调用次数」区分；
+2. 使用日志 `次数 0` 渲染为弱化的 `0 · 未计费`，`title` 说明「所有单元都返回 error（或引擎侧失败）」；
+3. 详情面板 JSON 里带出 `outcome` 字段。
+
+**自我纠错**：第一版我给使用日志加了「结果」列并把 `billed` 显示成"成功"。核对 `platform/model.go` 后确认 `billed` = 到达引擎且 HTTP 200，**那条 200+引擎错误的记录正是 billed**，显示"成功"等于撒谎，已撤回。
+
+**遗留（P3，需后端配合，未做）**：`UsageRecord.EngineStats`（每引擎 calls/ok）虽在结构体里，但本用例 `/api/usage` 响应里缺失（`omitempty` 未落库或未回传），所以界面无法直接显示"百度 1 次调用 / 0 次成功"。建议后续把 engine_stats 落库并在日志详情里展示——那才是"失败原因"的最终答案。
+
+---
+
+## F-37 锁定语义改了，用户可见文案没改（P2，已修复）
+
+**又一次「改了机制忘了改说法」**：F-25 把登录锁定从「用户名+IP」改成**按用户名跨 IP 聚合**，但控制台里三处用户可见文案仍写着"同一用户名在**同一 IP** 下连续 5 次密码失败"：
+
+- `web/admin/assets/app.js` API 文档页（`POST /api/auth/login` 说明）
+- `web/admin/assets/app.js` 安全机制卡片（登录防爆破）
+- `web/admin/assets/app.js` 系统设置页「安全机制」列表
+
+对运维的实际影响：安全说明告诉管理员"换 IP 会重置计数"，而实际不会——出事时会按错误的模型排查（以为攻击者换 IP 就能继续试，或以为自己被误锁是 bug）。
+
+**修复**：三处统一为「同一用户名连续 5 次密码失败即锁定 15 分钟（按用户名跨 IP 聚合，换 IP 不会重置）」；全仓 `grep '同一 IP'` 已无残留（`docs/OPERATIONS.md`、`docs/RELEASE_CHECKLIST.md` 此前已正确）。
+
+**教训（与 F-34 同类）**：凡是改动**用户可见语义**（安全策略、限额、计费口径），必须同时搜索面板文案、API 文档页与 markdown 文档。这类不一致不会让测试变红，只会让人在故障时按错的模型处理。已在 `docs/RELEASE_CHECKLIST.md` 增加一条复查项。
 
 ---
 
