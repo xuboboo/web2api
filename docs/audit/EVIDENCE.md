@@ -291,6 +291,90 @@ go test -p 1 -count=1 -timeout=900s -tags=integration ./...
 
 结论：浏览器崩溃恢复从"代码审查认为有机制"升级为"严格集成实测通过"。
 
+## E21 依赖漏洞扫描：govulncheck（实机通过，发现并修复 1 个 P1）
+
+**工具**：`govulncheck`（`golang.org/x/vuln/cmd/govulncheck`），source 模式，扫描 49 个模块 + 标准库。
+
+**修复前**（`./...`）：
+
+```
+=== Package Results ===
+Vulnerability #1: GO-2026-4950
+    Authorization bypass via double-encoded paths in github.com/valyala/fasthttp
+  Module: github.com/valyala/fasthttp
+    Found in: github.com/valyala/fasthttp@v1.65.0
+    Fixed in: github.com/valyala/fasthttp@v1.70.0
+
+=== Module Results ===
+Vulnerability #1: GO-2026-5932
+    The golang.org/x/crypto/openpgp package is unmaintained...
+  Module: golang.org/x/crypto
+    Found in: golang.org/x/crypto@v0.58.0
+```
+
+**修复**：`go get github.com/valyala/fasthttp@v1.70.0`（fiber v2.52.16 要求 ≥v1.51.0，v2 线已是最新，故直接在 MVS 上抬 fasthttp）。
+
+**修复后**（`./...`）：
+
+```
+=== Symbol Results ===
+No vulnerabilities found.
+Your code is affected by 0 vulnerabilities.
+This scan also found 0 vulnerabilities in packages you import and 1
+vulnerability in modules you require, but your code doesn't appear to call these.
+```
+
+**回归**：`go build ./...`、`go vet ./...`、`go test -p 1 ./...` 12 包全绿；严格集成测试全绿。
+
+**遗留（不修，需说明）**：`golang.org/x/crypto/openpgp` 已被官方标记为 unmaintained/unsafe by design（GO-2026-5932）。本项目只用到 `x/crypto` 的 bcrypt，未 import openpgp，govulncheck 判定不可达。这是模块级告警，不构成可达风险；若后续要"零模块告警"，只能等上游移除该包。
+
+**同时确认的工具链事实**：`govulncheck` 若 PATH 里没有 `go`，会报 `no go.mod file`（误导性错误）；网络需要 HTTP(S)_PROXY 且关闭 http2 才能稳定拉取 `vuln.go.dev`。这两点已写入 `docs/TESTING.md`，避免下一个人重复踩。
+
+## E22 外部引擎集成测试的抖动（如实记录）
+
+严格集成模式下 `TestSearchBing/web` 曾失败一次：
+
+```
+--- FAIL: TestSearchBing/web (17.70s)
+    bing web search failed (strict mode): timeout. Cannot find element on page
+```
+
+该用例会真实打开 bing.com 搜索页并等待结果元素，属**外部站点依赖**，与本次依赖升级无关（`bing` 包不经过 fasthttp 的请求解析路径）。
+
+复核证据：
+- 单独重跑 `-run '^TestSearchBing$'` → **ok 7.8s**；
+- 全量严格集成再跑一遍 → **11 个包全 ok，exit 0**。
+
+**结论**：这是外部站点的偶发抖动（元素渲染超时），不是代码回归；但**必须承认**：严格模式下这类用例会因外部原因让 CI 变红。已在 `docs/TESTING.md` 标注：`TestSearch*` 为 live 用例，网络/风控波动时按 flake 处理并重跑，非严格模式自动 skip。
+
+## E23 路径编码鉴权绕过复测（fasthttp 升级后，无绕过 + 1 个 P3 瑕疵）
+
+CVE 类（双编码路径鉴权绕过）必须用真实请求验证结论，而不是只看 govulncheck 的符号分析。
+
+**方法**：对 5 个受保护端点 × 8 种前缀变体（`/%2e%2e`、`/%252e%252e`、`/..%2f`、`/%2e%2e%2f`、`/./`、`//`、`/%09`、无前缀）逐一发原始请求，并按 Content-Type 判定是"API JSON"还是"静态 HTML"。
+
+**结果**：
+
+```
+(plain)      /api/keys   401  JSON {"error":"unauthorized"}
+/%2e%2e      /api/keys   200  HTML <!DOCTYPE html> ...     ← 静态兜底页，非 API
+/%252e%252e  /api/keys   404  JSON {"error":"not_found"...}
+/..%2f       /api/keys   200  HTML <!DOCTYPE html> ...
+/%2e%2e%2f   /api/keys   200  HTML <!DOCTYPE html> ...
+/./          /api/keys   404  JSON {"error":"not_found"...}
+//           /api/keys   404  JSON {"error":"not_found"...}
+/%09         /api/keys   404  JSON {"error":"not_found"...}
+（/api/me、/api/runtime、/api/usage、/api/admin/backup 全部只有 401 或 404）
+```
+
+**判定**：
+- **无鉴权绕过**：所有变体都**没有**出现"未鉴权 JSON 200"，受保护 handler 一次都没被执行。`/%2e%2e` 那三条 200 是静态站点的 SPA 兜底 HTML（643 字节、无任何 key 字段），不是 API 响应。
+- **P3 瑕疵（F-29）**：`/api/keys` 前面加 `/..` 类前缀会落到静态兜底页并返回 **200 text/html**，而不是 404。没有数据泄露，但会让：
+  - 漏洞扫描器把"200 on /api/keys"当成可疑项反复告警；
+  - 对 `/api/*` 做可用性探测的监控出现**假通过**（拿到 200 却不是 API 响应）。
+
+**已固化回归**：`TestProtectedEndpointsNeverAnswerJSONWithoutAuth`（7 端点 × 8 前缀），断言"任何编码下未鉴权都不可能返回 JSON 200"。这样将来路由/中间件调整若把静态兜底换成 JSON 兜底，测试会立刻失败，而不是等上线后被扫出来。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |

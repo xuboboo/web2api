@@ -157,6 +157,40 @@ func TestUsesDefaultAdminPasswordHonorsCustomMarker(t *testing.T) {
 	}
 }
 
+// TestProtectedEndpointsNeverAnswerJSONWithoutAuth pins the invariant behind
+// the fasthttp path-normalization class of bugs (GO-2026-4950): whatever the
+// encoding, an unauthenticated request must never reach a protected handler
+// and come back with a JSON 200. Encoded traversal prefixes may legitimately
+// 404 or fall through to a static page, but they must not execute the API.
+func TestProtectedEndpointsNeverAnswerJSONWithoutAuth(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	protected := []string{
+		"/api/keys", "/api/me", "/api/runtime", "/api/usage",
+		"/api/engines", "/api/admin/backup", "/api/settings",
+	}
+	prefixes := []string{
+		"", "/%2e%2e", "/%252e%252e", "/..%2f", "/%2e%2e%2f", "/./", "//", "/%09",
+	}
+	for _, path := range protected {
+		for _, prefix := range prefixes {
+			target := prefix + path
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			resp, err := env.app.Test(req, -1)
+			if err != nil {
+				t.Fatalf("GET %s: %v", target, err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			ctype := resp.Header.Get("Content-Type")
+			isJSON := strings.Contains(strings.ToLower(ctype), "json")
+			if isJSON && resp.StatusCode == http.StatusOK {
+				t.Fatalf("GET %s reached a protected handler unauthenticated: status=%d ctype=%s body=%.120s",
+					target, resp.StatusCode, ctype, body)
+			}
+		}
+	}
+}
+
 func TestLoginLockoutConfigFromSecurity(t *testing.T) {
 	env := newTestEnv(t, 200, false)
 	env.p.SetSecurity(SecurityConfig{

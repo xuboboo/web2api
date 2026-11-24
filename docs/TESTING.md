@@ -19,6 +19,29 @@ govulncheck ./...
 
 > Windows 本机无 gcc 时 `-race` 不可用；这是环境限制，不是测试被跳过。CI 固定 Go 1.26，与 `go.mod` 对齐。
 
+### 依赖漏洞扫描（本机可跑）
+
+```bash
+# 前提：go 在 PATH 里（否则会误报 "no go.mod file"）；
+# 网络经代理时若出现 EOF，加 GODEBUG=http2client=0。
+export PATH="$HOME/go/bin:$PATH"
+govulncheck -mode=source ./...
+govulncheck -show verbose .        # 看具体是哪个包/模块命中
+```
+
+判定口径：`=== Symbol Results === No vulnerabilities found` 表示**可达代码**无漏洞；`Package Results` / `Module Results` 里的条目要逐个判断是否被 import 或调用，不能直接当成"必须升级"。本次扫描据此把 fasthttp 从 v1.65.0 升到 v1.70.0（GO-2026-4950 双编码路径鉴权绕过）。
+
+### 严格集成测试（会启动真实 Chrome、访问真实站点）
+
+```bash
+WEB2API_INTEGRATION_TESTS=1 \
+WEB2API_INTEGRATION_STRICT=1 \
+WEB2API_APP_BROWSER_PATH="/path/to/chrome" \
+go test -p 1 -count=1 -timeout=900s -tags=integration ./...
+```
+
+> `TestSearch*` 是 live 用例（真实打开 bing/baidu/sogou/360）。严格模式下外部站点抖动（元素渲染超时、验证码、出口 IP 被限）会让它变红——先单独重跑该用例确认，再判定是否回归。非严格模式这类用例自动 skip。
+
 不需要浏览器或网络。覆盖：
 
 - 各引擎 `BuildURL`（含中文编码、site/filetype 折叠、翻页换算、非法入参）

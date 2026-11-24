@@ -32,6 +32,9 @@
 | F-24 | P2 | `ENVIRONMENT.md` 漏掉多行 map 默认键 `stability.engine_cooldown.per_engine` | 已修复 |
 | F-25 | P2 | 登录锁定按 (用户名,IP)，换 IP 可无限绕过失败阈值 | 已修复（+实机/回归） |
 | F-26 | P1 | 非 loopback 绑定 + 公开默认管理员密码仅告警，仍启动 | 已修复（拒绝启动） |
+| F-27 | P1 | 依赖 fasthttp v1.65.0 存在 GO-2026-4950（双编码路径鉴权绕过），已升至 v1.70.0 | 已修复（扫描复核 0 包漏洞） |
+| F-28 | P2 | `golang.org/x/crypto/openpgp` 上游已标记 unmaintained（GO-2026-5932），模块级告警 | 已确认（不可达，不修） |
+| F-29 | P3 | `..` 类前缀打到受保护 API 路径时落到静态兜底页返回 200 HTML（非 404），无数据泄露但会误导扫描器/监控 | 已记录（+回归固化） |
 
 ---
 
@@ -207,6 +210,64 @@ Playwright 控制台告警：`[DOM] Input elements should have autocomplete attr
 回归：`TestUsesDefaultAdminPasswordHonorsCustomMarker`。
 
 **兼容性**：依赖公网默认密码的部署会被拒绝——这是有意的安全收紧；loopback 开发与已改密部署不受影响。临时回退：绑 127.0.0.1，或设置强密码。
+
+---
+
+## F-27 依赖存在鉴权绕过漏洞 fasthttp GO-2026-4950（P1，已修复）
+
+**证据**：`govulncheck ./...` 在修复前报告：
+
+```
+Vulnerability #1: GO-2026-4950
+    Authorization bypass via double-encoded paths in github.com/valyala/fasthttp
+    Found in: github.com/valyala/fasthttp@v1.65.0
+    Fixed in: github.com/valyala/fasthttp@v1.70.0
+```
+
+**为什么对本项目重要**：本项目所有路由、鉴权中间件（`jwtGuard`、`X-API-Key`、限速、`platform` 前缀挂载）都建立在 fiber→fasthttp 的 URI 路径解析之上。"双编码路径"是典型的**路由/中间件绕过**手法：`/%252e%252e/` 之类在不同解码层得到不同结论，可能让请求匹配到不该匹配的路由。govulncheck 的符号可达性分析判定当前代码不直接触发，但 HTTP 层的路径规范化语义由 fasthttp 统一裁决，这类漏洞不应以"没直接调用"放过。
+
+**修复**：`go get github.com/valyala/fasthttp@v1.70.0`。fiber v2.52.16（v2 线最新）要求 `fasthttp >= v1.51.0`，MVS 直接抬到 v1.70.0 即可，无需改 fiber。
+
+**验证**：
+- 修复后 `govulncheck ./...`：`0 vulnerabilities` in imported packages；
+- `go build ./...` / `go vet ./...` 通过；
+- `go test -p 1 ./...` 12 包全绿；
+- 严格集成测试 11 包全绿。
+
+**回滚**：`go get github.com/valyala/fasthttp@v1.65.0`。回滚会把该 P1 一起带回来，不建议。
+
+---
+
+## F-28 x/crypto 模块级告警（P2，已确认不修）
+
+`govulncheck` 的 Module Results 仍列 GO-2026-5932：`golang.org/x/crypto/openpgp` 上游已标记 unmaintained / unsafe by design。
+
+**判断**：本项目只用 `x/crypto/bcrypt`，从未 import `openpgp`；govulncheck 明确 `0 vulnerabilities in packages you import`，该告警不可达。要彻底消除只能等上游把 openpgp 拆出模块或升级 `x/crypto` 到移除版本，**不应为此改动依赖**。
+
+**记录价值**：下一个人看到 Module Results 有一条时，不必重新排查一遍。
+
+---
+
+## F-29 `..` 前缀路径落到静态兜底返回 200（P3，已记录 + 回归固化）
+
+**证据**（E23，fasthttp 升级后实测）：
+
+| 请求 | 状态 | 类型 |
+| --- | --- | --- |
+| `GET /web-tool/api/keys` | 401 | JSON `unauthorized` |
+| `GET /web-tool/%2e%2e/api/keys` | **200** | **text/html**（静态 SPA 兜底，643 字节） |
+| `GET /web-tool/..%2f/api/keys` | **200** | **text/html** |
+| `GET /web-tool/%252e%252e/api/keys` | 404 | JSON `not_found` |
+
+**影响**：**没有数据泄露**——受保护 handler 未被调用，响应体是静态页面且不含任何 Key 字段。真正的代价是运维噪音：
+- 漏洞扫描器会把"200 on /api/keys"列为可疑，浪费排查时间；
+- 以 `/api/*` 做探活的监控会**假通过**（200 但不是 API 响应）。
+
+**为什么不改路由**：静态兜底改成"含 `..` 一律 404"会动到站点路由匹配，属于低收益高回归风险的改动（现有 UX 与 `nonexist → 404` 的行为已经不一致，说明兜底逻辑本身有特例）。按"稳定性优先"原则，本轮只固化不变量：
+
+`TestProtectedEndpointsNeverAnswerJSONWithoutAuth`（7 端点 × 8 前缀）断言**任何编码下未鉴权都不可能拿到 JSON 200**。若将来有人把静态兜底改成 JSON 兜底（或错误地给兜底挂上 API），测试立即失败。
+
+**后续建议（不阻塞上线）**：给 `/api`、`/v1` 前缀加一条前置中间件，命中即返回 JSON 404，避免落到静态兜底；同时把监控探活改为校验响应体结构而不是只看状态码。
 
 ---
 
@@ -415,12 +476,14 @@ q.GuardPrivateNetworks = true   // 调用方给的 URL 一律走私有网段防�
 
 ---
 
-## F-06 登录锁定可被换 IP 绕过（P2，待评估）
+## F-06 登录锁定可被换 IP 绕过（P2，**已修复**，详见 F-25）
 
-**证据**：`platform/security.go:245-289`，锁定键为 `loginAttemptKey{username, ip}`，状态存在进程内 map。
-**影响**：单管理员 + 单实例部署下，攻击者用代理池对同一用户名可继续尝试（每 IP 5 次/15 分钟）。若未来多实例，锁定完全失效。
-**现状缓解**：密码为 bcrypt(DefaultCost)，登录路径做了时延对齐（未知用户也跑一次 bcrypt），并有审计与告警日志。
-**待决策**：是否加"按用户名全局计数"（会引入对管理员自身的 DoS 风险）或"失败 N 次后强制冷却+验证码"。需产品取舍，未擅自实现。
+**证据**：`platform/security.go`，锁定键原为 `loginAttemptKey{username, ip}`，状态存在进程内 map。
+**影响**：单管理员 + 单实例部署下，攻击者用代理池对同一用户名可继续尝试（每 IP 5 次/15 分钟）。
+
+**结案**：已改为**按用户名跨 IP 聚合**（F-25 记录了完整修复、取舍与实测）。此条保留作为原始发现编号，结论以 F-25 为准。
+
+**仍存在（记录在案，非本项范围）**：多实例部署时锁定状态是进程内的，跨实例不共享；单机部署不受影响，多实例需要粘性会话或在反代层做登录限速。
 
 ---
 

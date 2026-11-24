@@ -117,9 +117,10 @@ KEY=<新签发的 API Key>
 | I3 | 竞态检测 | CI: `go test -race ./...` | 全绿（本机无 cgo，需 CI） | ☐ |
 | I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux go build` | 成功 | ☑ |
 | I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机 Docker daemon 未运行） |
-| I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/导出数据限制） |
-| I7 | 依赖漏洞扫描 | CI `govulncheck ./...` | 无 called-symbol 漏洞 | ☐（本机扫描受 Windows 分页限制，结果未取得） |
-| I8 | 严格集成测试 | `WEB2API_INTEGRATION_STRICT=1 go test -tags=integration ./...` | 全绿 | ☑（本次 12 包全过） |
+| I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/Go1.27 导出数据限制，交由 CI） |
+| I9 | 依赖版本复核 | `go list -m all` 中 HTTP/S 解析层无已知漏洞 | 与 govulncheck 结论一致 | ☑（fasthttp v1.70.0） |
+| I7 | 依赖漏洞扫描 | `govulncheck ./...` | 0 个可达漏洞 | ☑（本机实机跑通；据此修复 fasthttp GO-2026-4950 → v1.70.0） |
+| I8 | 严格集成测试 | `WEB2API_INTEGRATION_STRICT=1 go test -tags=integration ./...` | 全绿 | ☑（11 包全过；`TestSearch*` 属 live 用例，外部站点抖动时会偶发失败，重跑判定） |
 
 ---
 
