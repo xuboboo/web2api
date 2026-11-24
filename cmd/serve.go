@@ -151,8 +151,25 @@ func serve(cmd *cobra.Command, args []string) error {
 	}
 
 	serverOpts := buildServerOptions(corsCfg, proxyCfg, fingerprintBrowserOpts)
+	if err := probeIndexJobDir(serverOpts); err != nil {
+		return err
+	}
 	serv := core.NewServerWithOptions(config.Server.Host, config.Server.Port, serverOpts, engines...)
 	return startServerWithPlatform(serv, closeBrowsers)
+}
+
+// probeIndexJobDir fails fast when the async-job state directory cannot be
+// created or written. Without this check a misconfigured index_jobs.dir only
+// surfaces as a 500 "cannot persist the job" the first time a customer submits a
+// batch larger than 20 URLs — long after the deploy looked healthy.
+func probeIndexJobDir(opts core.ServerOptions) error {
+	if opts.IndexJobDir == "" {
+		return nil
+	}
+	if err := core.ProbeIndexJobDir(opts.IndexJobDir); err != nil {
+		return fmt.Errorf("index_jobs.dir 不可写(%s)，请检查目录权限或 index_jobs.dir 配置: %w", opts.IndexJobDir, err)
+	}
+	return nil
 }
 
 // startServerWithPlatform mounts the platform API groups and the static panels

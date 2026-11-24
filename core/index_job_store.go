@@ -117,6 +117,29 @@ func NewIndexJobStore(dir string) *IndexJobStore {
 // Dir reports the store root.
 func (s *IndexJobStore) Dir() string { return s.dir }
 
+// ProbeIndexJobDir verifies dir can be created and written. The serve command
+// calls it at startup so a misconfigured state directory fails fast instead of
+// surfacing as a 500 on the first large batch, hours after the deploy looked
+// healthy.
+func ProbeIndexJobDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("index job dir is empty")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".probe-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	if closeErr := f.Close(); closeErr != nil {
+		_ = os.Remove(name)
+		return closeErr
+	}
+	return os.Remove(name)
+}
+
 func (s *IndexJobStore) jobDir(id string) string {
 	return filepath.Join(s.dir, sanitizeJobID(id))
 }

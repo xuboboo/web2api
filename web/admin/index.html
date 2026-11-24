@@ -45,12 +45,12 @@
           <span>收录引擎 · 百度 / 搜狗 / 360 / 必应</span>
         </div>
         <div class="login-stat">
-          <b>20 条</b>
-          <span>单次批量收录判定上限</span>
+          <b>5000 条</b>
+          <span>单次批量上限 · &gt;20 条自动转异步任务</span>
         </div>
         <div class="login-stat">
-          <b>3 档</b>
-          <span>三档冷却 · 10 / 30 / 120 分钟</span>
+          <b>2 分钟起</b>
+          <span>风控冷却 · 按引擎分档, 百度首档 2 分钟</span>
         </div>
       </div>
     </div>
@@ -67,14 +67,14 @@
         </div>
         <h2 class="login-title">登录</h2>
         <p class="login-sub">管理控制台 · 管理员登录</p>
-        <form id="login-form" autocomplete="off" novalidate>
+        <form id="login-form" autocomplete="on" novalidate>
           <div class="field">
             <label class="field-label" for="login-username">用户名</label>
-            <input id="login-username" name="username" class="input" type="text" placeholder="请输入用户名" maxlength="64">
+            <input id="login-username" name="username" class="input" type="text" placeholder="请输入用户名" maxlength="64" autocomplete="username">
           </div>
           <div class="field">
             <label class="field-label" for="login-password">密码</label>
-            <input id="login-password" name="password" class="input" type="password" placeholder="请输入密码" maxlength="128">
+            <input id="login-password" name="password" class="input" type="password" placeholder="请输入密码" maxlength="128" autocomplete="current-password">
           </div>
           <div id="login-error" class="login-error hidden" role="alert"></div>
           <button id="login-submit" class="btn btn-primary btn-block" type="submit">登 录</button>

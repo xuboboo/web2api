@@ -22,6 +22,49 @@
 | F-14 | P2 | `admin-backup` 只含 `web2api.db`，不含 `secret.key` 与 `index_jobs/` | 已确认（文档已写明） |
 | F-15 | P2 | 收录结论随时间变化，接口/文档未说明时效性，用户易误读为"永久状态" | 已确认（需文档口径） |
 | F-16 | — | 核心业务准确性实测：正/负样本与时间变化复核 | 已验证（见 §F-16） |
+| F-17 | P2 | 登录页文案与后端能力不符（"20 条上限"、"10/30/120 冷却档"） | 已修复 |
+| F-18 | P2 | `index_jobs.dir` 无启动校验：部署健康，首个大批次才 500 | 已修复 |
+| F-19 | P3 | 登录表单 `autocomplete=off`，密码管理器无法填充 | 已修复 |
+
+---
+
+## F-17 登录页文案与后端能力不符（P2，已修复）
+
+**证据**（Playwright 实机截图 `ux-login-desktop.png`）
+- 品牌区："**20 条** 单次批量收录判定上限" —— 实际 `index_jobs.max_urls=5000`，>20 条转异步任务。
+- 同一区域："三档冷却 · **10 / 30 / 120** 分钟" —— 实际百度档位是 `[2, 10, 30]`（`stability.engine_cooldown.per_engine`）。
+
+这是"接口能力已改、前端文案仍旧逻辑"的典型：用户按 20 条上限规划批量，会白白多提交几十次。
+
+**修复**：改为"5000 条 · 单次批量上限，>20 条自动转异步任务"与"2 分钟起 · 按引擎分档，百度首档 2 分钟"。
+
+**验证**：390×844 移动视口重新截图，新文案渲染正确、无溢出。
+
+---
+
+## F-18 任务目录不可写只在首个大批次暴露（P2，已修复）
+
+**证据（实测）**
+- 修复前：把 `index_jobs.dir` 指到不可创建路径，服务照常启动、`/health` 200；提交 21 条才返回
+  `500 INTERNAL: cannot persist the job`，且无脏任务残留（这点是对的）。
+- 修复后：启动阶段即失败，退出码 1，报错指名路径
+  `index_jobs.dir 不可写(...)：mkdir ...: The system cannot find the path specified`。
+
+**影响**：修复前属于"部署看起来健康、客户第一次大批量才炸"的隐雷，排障成本极高（要等业务触发才发现）。
+
+**修复**：新增 `core.ProbeIndexJobDir`（MkdirAll + 临时文件写入）并在 `serve` 启动时调用。
+
+**验证**：上述两条实测；正常目录启动后 `/health` 200，任务提交路径不受影响。
+
+---
+
+## F-19 登录表单阻止密码管理器（P3，已修复）
+
+Playwright 控制台告警：`[DOM] Input elements should have autocomplete attributes (suggested: "current-password")`。
+`<form autocomplete="off">` + 输入框无属性 → 密码管理器不能填充，管理员每次手输。
+
+**修复**：form 改 `autocomplete="on"`，用户名 `autocomplete="username"`，密码 `autocomplete="current-password"`。
+**验证**：移动端截图页面正常；控制台告警消失（下次抓取可复核）。
 
 ---
 
