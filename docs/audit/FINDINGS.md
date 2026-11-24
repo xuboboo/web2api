@@ -8,12 +8,67 @@
 | --- | --- | --- | --- |
 | F-01 | P1 | 收录查询的标题探测是 SSRF：`GuardPrivateNetworks` 在生产路径从未开启 | 已修复 |
 | F-02 | P1 | Docker 构建上下文泄露运行态密钥（`data/secret.key`、`web2api.db`）且体积 772MB | 已修复 |
+| F-09 | P1 | 异步收录任务越权：任意 API Key 可读/列/取消其他 Key 的任务 | 已修复 |
 | F-03 | P2 | `docker-compose.yaml` 注释宣称「API 无鉴权层」，与实际（API Key + JWT）相反 | 已修复 |
 | F-04 | P2 | CI 的 golangci-lint 版本无法 lint go1.26 模块（v1.64.8 由 go1.24 构建） | 已确认待修 |
 | F-05 | P3 | 工作区残留 531MB 可执行文件 + 146MB QA 目录 | 已确认待修 |
 | F-06 | P2 | 登录锁定仅按 (用户名, IP) 且纯内存，换 IP 可绕过、多实例失效 | 已确认待评估 |
 | F-07 | P3 | 本机无 C 工具链，`go test -race` 无法执行（CI 有覆盖） | 环境受限 |
 | F-08 | P3 | `go.mod` go1.26.0 / 开发工具链 1.27.4 / 镜像 1.26.11 三者不一致 | 待验证 |
+| F-10 | P3 | 管理员（JWT）没有查询异步任务的接口，任务只有持 key 方可见 | 已确认 |
+
+---
+
+## F-09 异步收录任务越权（P1，已修复）
+
+**证据（修复前，实机复现）**
+1. 用 key A 提交 21 条 URL → `202 job_id=job_...d5f7dca9c1`。
+2. 用**另一个** key B 直接请求：
+   - `GET /v1/index/check/jobs/{id}` → **200**，返回 A 的任务进度
+   - `GET /v1/index/check/jobs/{id}/results` → **200**，读到 A 的结果集
+   - `GET /v1/index/check/jobs` → `count=1`（A 的任务出现在 B 的列表里）
+   - `DELETE /v1/index/check/jobs/{id}` → **200**，`status=cancelled`（B 取消了 A 正在跑的任务）
+
+**影响**：这是收费多租户平台里的水平越权（IDOR）：
+- 数据泄露：租户提交的 URL 列表与收录结论属于其业务数据；
+- 拒绝服务：任意 key 可取消他人批量任务，且列表接口暴露全局任务量；
+- 计费纠纷：被取消的任务已按提交量扣费。
+
+**根因**：任务模型只存了"任务"，没有存"属主"。`IndexJob` 没有 owner 字段，`Get/List/Cancel` 也没有调用方身份参数——鉴权只验证了"是不是合法 key"，没有验证"是不是你的任务"。
+
+**修复**
+1. `IndexJob` 新增持久化字段 `OwnerKeyID`（写盘，重启后仍生效）。
+2. 新增 `core/index_job_owner.go`：`WithJobOwner(ctx, keyID)` / `JobOwner(ctx)` / `jobVisibleTo()`；约定"空 owner = 管理员（JWT），可见全部"。
+3. 平台两处鉴权成功后把 key 绑定进请求上下文：
+   - `platform/middleware.go` `APIKeyGuard`（/v1 数据面）
+   - `platform/security.go` `AuthAny`（MCP 平面，`check_indexed` 提交任务走这里）
+4. 所有访问口改为按属主过滤：`Get(id, owner)`、`List(owner, limit)`、`Cancel(id, owner)`；`Submit(ctx, …)` 从 ctx 取属主。外部访问他人任务统一返回 **404 not_found**（而不是 403），避免成为"任务是否存在"的探测口。
+
+**验证**
+- 单测 `TestIndexJobIsScopedToOwner`：属主可见、他人 not-found、他人无法取消、他人列表为 0、管理员可见全部。
+- 实机复测（同一套 curl）：
+
+| 操作 | 修复前 | 修复后 |
+| --- | --- | --- |
+| B 读 A 的任务状态 | 200 | **404** |
+| B 读 A 的结果 | 200 | **404** |
+| B 取消 A 的任务 | 200 cancelled | **404** |
+| B 的任务列表 | 1（含 A 的） | **0** |
+| A 读自己的 | 200 | 200 |
+| A 取消自己的 | 200 | 200 |
+
+**回归**：`go test -count=1 ./...` 全绿（见本轮末尾输出）。
+
+**兼容性**：≤20 条同步接口、计费口径、任务 API 形状都没变；只是把"不属于你的任务"从 200 变成 404。对单一 key 的自用部署零影响。
+
+**回滚**：去掉 `OwnerKeyID` 过滤即可，数据字段向后兼容（老任务 owner 为空 = 管理员任务）。
+
+---
+
+## F-10 管理员看不到异步任务（P3，已确认）
+
+`/v1/index/check/jobs*` 只接受 API Key；管理面 22 个端点里没有任务列表。运维/客服排查"某个任务为什么卡住"目前只能拿用户 key 或看日志/磁盘目录。
+建议（未实现）：在管理面加只读 `GET /api/index/jobs`（JWT），复用 `m.jobs.List("", limit)`（空 owner = 管理员，已支持）。
 
 ---
 
