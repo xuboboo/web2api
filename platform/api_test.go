@@ -381,7 +381,7 @@ func TestAPIKeyGuardAuthAndQuota(t *testing.T) {
 	}
 
 	// Quota endpoint reflects usage.
-	status, body = doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
+	_, body = doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
 	if status != 200 || body["used_today"] != float64(2) || body["daily_quota"] != float64(5) ||
 		body["unlimited"] != false || body["used_total"] != float64(2) || body["key_id"] == "" || body["name"] != "ci" {
 		t.Fatalf("quota: status=%d body=%v", status, body)
@@ -393,7 +393,7 @@ func TestAPIKeyGuardAuthAndQuota(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("bearer check: status=%d", status)
 	}
-	status, body = doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
+	_, body = doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
 	if body["used_today"] != float64(4) {
 		t.Fatalf("quota after bearer: %v", body)
 	}
@@ -404,7 +404,7 @@ func TestAPIKeyGuardAuthAndQuota(t *testing.T) {
 		t.Fatalf("quota exceeded: status=%d body=%v", status, body)
 	}
 	// Rejected request consumed nothing.
-	status, body = doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
+	_, body = doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
 	if body["used_today"] != float64(4) {
 		t.Fatalf("quota after 429: %v", body)
 	}
@@ -450,7 +450,7 @@ func TestGuardAliasAndBadRequests(t *testing.T) {
 
 	// Malformed JSON body: no quota consumed.
 	before = quotaUsedToday(t, env.app, key)
-	status, _ = doJSONRaw(t, env.app, http.MethodPost, "/v1/index/check", "{bad json", keyHeaders(key))
+	_, _ = doJSONRaw(t, env.app, http.MethodPost, "/v1/index/check", "{bad json", keyHeaders(key))
 	if after := quotaUsedToday(t, env.app, key); after != before {
 		t.Fatalf("malformed body consumed quota: before=%v after=%v", before, after)
 	}
@@ -526,17 +526,17 @@ func TestUsageAndStats(t *testing.T) {
 	}
 
 	// key_id filter.
-	status, body = doJSON(t, env.app, http.MethodGet, "/api/usage?key_id="+id, nil, adminHeaders(token))
+	_, body = doJSON(t, env.app, http.MethodGet, "/api/usage?key_id="+id, nil, adminHeaders(token))
 	if body["total"] != float64(3) {
 		t.Fatalf("usage filter: %v", body)
 	}
-	status, body = doJSON(t, env.app, http.MethodGet, "/api/usage?key_id=absent", nil, adminHeaders(token))
+	_, body = doJSON(t, env.app, http.MethodGet, "/api/usage?key_id=absent", nil, adminHeaders(token))
 	if body["total"] != float64(0) {
 		t.Fatalf("usage filter absent: %v", body)
 	}
 
 	// Pagination: limit=1 offset=1.
-	status, body = doJSON(t, env.app, http.MethodGet, "/api/usage?limit=1&offset=1", nil, adminHeaders(token))
+	_, body = doJSON(t, env.app, http.MethodGet, "/api/usage?limit=1&offset=1", nil, adminHeaders(token))
 	if body["total"] != float64(3) {
 		t.Fatalf("usage pagination total: %v", body)
 	}

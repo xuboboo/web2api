@@ -375,6 +375,53 @@ CVE 类（双编码路径鉴权绕过）必须用真实请求验证结论，而�
 
 **已固化回归**：`TestProtectedEndpointsNeverAnswerJSONWithoutAuth`（7 端点 × 8 前缀），断言"任何编码下未鉴权都不可能返回 JSON 200"。这样将来路由/中间件调整若把静态兜底换成 JSON 兜底，测试会立刻失败，而不是等上线后被扫出来。
 
+## E24 静态分析：staticcheck 实机跑通（14 → 0）
+
+`golangci-lint` 在本机因 Windows 分页/导出数据问题跑不完整，改用**同源分析器** staticcheck 2026.2.2 直连 `go test` 的 type info：
+
+```bash
+export PATH="$HOME/go/bin:$PATH"   # 否则报 go command not found
+staticcheck ./...
+```
+
+**修复前 14 条**（不是纯风格）：
+
+| 位置 | 检查 | 性质 |
+| --- | --- | --- |
+| `core/index_check.go:780` | SA4006 | 死赋值：探针错误变量先赋默认值、随即被覆盖，读不到 |
+| `core/index_check.go:695` | U1000 | 未使用常量（注释声称"供调用方兼容"，但它是未导出的，外部根本引用不到） |
+| `platform/sessions.go:59` | U1000 | `sessionCache.mu` 从未使用——缓存其实靠 `Platform.sessionMu` 保护 |
+| `platform/security_test.go:362` | U1000 | 测试桩里未使用字段 `forceErrFor`（会让人误以为支持按引擎错误） |
+| `baidu/url.go:83` | ST1005 | 错误串大写 |
+| `platform/platform.go:160` | SA1019 | `bolt.ErrTimeout` 已弃用 |
+| 5 + 2 处测试 | SA4006 | `status`/`out` 赋值后从未使用 |
+
+**修复后**：`staticcheck ./...` **exit 0**，`go vet ./...` 通过，11 包测试全绿。
+
+**最值得记的一条**：`sessions.go` 的 `sessionCache.mu` 是"看起来自保护、实际不保护"的结构陷阱。我逐一核对了 `known`/`revoked` 的 **11 处访问全部在 `p.sessionMu` 之下**，因此删掉冗余字段并写明"由 Platform.sessionMu 保护"，避免下一个人误以为缓存自带锁而漏加锁——这类问题在 `-race` 跑不了的机器上最难发现。
+
+## E25 运行期任务目录不可写（实测：响亮失败 + 自愈）
+
+此前只验证了**启动期**探针（F-18）。本次验证更难的运行期场景：先正常启动、提交一个 21 条异步任务，然后**在服务运行中**把 `index_jobs` 目录 ACL 改成拒绝写入。
+
+```
+baseline submit : 202 {"job_id":"job_...","status":"queued","total":21,...}
+locking job dir ... (icacls /deny USER:(OI)(CI)(W))
+locked submit   : 500 in 0.01s
+                  {"error":"internal_error","code":500,
+                   "message":"INTERNAL: cannot persist the job"}
+health after    : 200
+unlocking ...   (icacls /remove:d)
+after unlock    : 202 {"job_id":"job_...","status":"queued"}
+```
+
+**结论**：
+- 0.01 秒内**响亮失败**，不是挂住、不是崩溃、不是"接受一个永远存不下来的任务"；
+- 失败后 `/health` 仍 200，进程不受影响；
+- 权限恢复后立即可用（无残留坏状态）。
+
+这条把"磁盘满/不可写"从"文档里写了有处理"升级为"运行期实测有处理"，只剩**真正写满磁盘**（无独立测试盘）未做。
+
 ## E11 受环境限制未执行的验证（禁止当作已通过）
 
 | 项 | 原因 | 影响 |

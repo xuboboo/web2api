@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
+	berrors "go.etcd.io/bbolt/errors"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -157,7 +157,7 @@ func isBoltLockError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, bolt.ErrTimeout) {
+	if errors.Is(err, berrors.ErrTimeout) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())

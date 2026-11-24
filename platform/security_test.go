@@ -353,13 +353,12 @@ func TestQuotaExceededCarriesRetryAfter(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type engineControlFake struct {
-	mu          sync.Mutex
-	status      any
-	resets      []string
-	forces      []string
-	forceErr    error
-	resetErr    error
-	forceErrFor map[string]error
+	mu       sync.Mutex
+	status   any
+	resets   []string
+	forces   []string
+	forceErr error
+	resetErr error
 }
 
 func (f *engineControlFake) EnginesStatusWithCooldown() any {

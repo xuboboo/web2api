@@ -31,6 +31,19 @@ govulncheck -show verbose .        # 看具体是哪个包/模块命中
 
 判定口径：`=== Symbol Results === No vulnerabilities found` 表示**可达代码**无漏洞；`Package Results` / `Module Results` 里的条目要逐个判断是否被 import 或调用，不能直接当成"必须升级"。本次扫描据此把 fasthttp 从 v1.65.0 升到 v1.70.0（GO-2026-4950 双编码路径鉴权绕过）。
 
+### 静态分析（本机可跑，替代 golangci-lint）
+
+`golangci-lint` 在本机受 Windows 分页文件与导出数据版本限制跑不完整，用同源分析器 staticcheck 就能拿到同一批高价值检查（未使用代码、可疑赋值、弃用 API）：
+
+```bash
+export PATH="$HOME/go/bin:$PATH"   # staticcheck 需要 go 命令，否则报 go command not found
+staticcheck ./...
+```
+
+本次据此从 14 条修到 0 条，其中 `sessionCache.mu` 未使用是真正的"锁陷阱"（结构体看起来自保护、实际不保护）。**在没有 `-race` 的机器上，静态分析是发现这类并发隐患的主要手段**，不要跳过。
+
+> **Windows 上 `gofmt -l .` 会列出几十个文件，这不是格式问题**：本机 `core.autocrlf=true`，工作区是 CRLF，而 gofmt 期望 LF。CI 在 Linux 以 LF 检出，因此不会报。判断自己改的文件是否合规，用 `gofmt -l $(git diff --name-only -- '*.go')`，不要为了消除噪音去批量重写 51 个文件。
+
 ### 严格集成测试（会启动真实 Chrome、访问真实站点）
 
 ```bash

@@ -591,7 +591,7 @@ func TestMalformedBodies(t *testing.T) {
 	mustRPCError(t, out, -32600)
 
 	// Missing method → -32600.
-	status, _, out = rpc(t, app, `{"jsonrpc":"2.0","id":1}`, authorized())
+	_, _, out = rpc(t, app, `{"jsonrpc":"2.0","id":1}`, authorized())
 	mustRPCError(t, out, -32600)
 }
 
@@ -686,11 +686,11 @@ func TestSessionLifecycle(t *testing.T) {
 func TestSessionlessRequestsStayAccepted(t *testing.T) {
 	// curl-style flows without Mcp-Session-Id must work end to end.
 	app := newTestApp(t, fakeAuth, Deps{})
-	status, _, out := rpc(t, app, rpcMsg(1, "initialize", map[string]any{}), authorized())
+	status, _, _ := rpc(t, app, rpcMsg(1, "initialize", map[string]any{}), authorized())
 	if status != fiber.StatusOK {
 		t.Fatalf("initialize status = %d", status)
 	}
-	status, _, out = rpc(t, app, rpcMsg(2, "tools/list", nil), authorized())
+	status, _, out := rpc(t, app, rpcMsg(2, "tools/list", nil), authorized())
 	if status != fiber.StatusOK {
 		t.Fatalf("tools/list status = %d", status)
 	}

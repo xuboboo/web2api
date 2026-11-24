@@ -63,6 +63,7 @@ KEY=<新签发的 API Key>
 | D7 | 队列积压可见 | 任务列表能看到排队数量与 ETA | ☐ |
 | D8 | **硬杀后续跑** | kill -9 后重启，未完成任务继续且不重查已完成项 | ☑（本次审计 E14：4/21 → 7 → … → 21/21） |
 | D9 | **存储降级告警** | `/health.storage=json` 触发 P1 | ☐（代码契约已实测 E15，告警需生产监控配置） |
+| D10 | **运行期写入失败** | 运行中把 `index_jobs` 置为不可写 → 提交任务应 500 且不挂起，`/health` 仍 200，恢复权限即自愈 | ☑（E25：500/0.01s + 自愈） |
 
 ## E. 性能（按实测填写，不允许编数字）
 
@@ -118,6 +119,7 @@ KEY=<新签发的 API Key>
 | I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux go build` | 成功 | ☑ |
 | I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机 Docker daemon 未运行） |
 | I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/Go1.27 导出数据限制，交由 CI） |
+| I6a | **静态分析（本机替代）** | `staticcheck ./...` | 0 条 | ☑（E24：14 → 0） |
 | I9 | 依赖版本复核 | `go list -m all` 中 HTTP/S 解析层无已知漏洞 | 与 govulncheck 结论一致 | ☑（fasthttp v1.70.0） |
 | I7 | 依赖漏洞扫描 | `govulncheck ./...` | 0 个可达漏洞 | ☑（本机实机跑通；据此修复 fasthttp GO-2026-4950 → v1.70.0） |
 | I8 | 严格集成测试 | `WEB2API_INTEGRATION_STRICT=1 go test -tags=integration ./...` | 全绿 | ☑（11 包全过；`TestSearch*` 属 live 用例，外部站点抖动时会偶发失败，重跑判定） |

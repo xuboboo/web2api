@@ -689,11 +689,6 @@ func (rs *ResilientSearcher) CheckIndexWithProtection(ctx context.Context, engin
 	return results, lookup.runtimeQuery(), err
 }
 
-// indexCheckWorkerLimit is retained for compatibility with callers that sized
-// their batches against it. Unit dispatch is now per-engine serial, so the
-// effective concurrency is len(selected engines).
-const indexCheckWorkerLimit = 8
-
 // IndexCheckBatchDeadline derives the request deadline for one index-check
 // batch: the base per-request retry budget (which covers one unit's attempt
 // cycle, slack included) plus the projected rate-limiter queue time of the
@@ -775,14 +770,14 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 					// engine_cooldown errors; the other engines still judge.
 					outcome = cooldownUnitOutcome(gate)
 				default:
-					var probeErr error
-					if gate.IsProbe() {
-						probeErr = errProbeIncomplete
-					}
 					serp, runtimeQ, err := rs.CheckIndexWithProtection(ctx, engine, out[ui].URL)
 					if gate.IsProbe() {
-						probeErr = err
-						gate.FinishProbe(probeErr)
+						// The probe must be settled exactly once with the real
+						// search outcome: nil means the engine answered (cooldown
+						// lifts), any error postpones it. There is no early return
+						// between the grant and here, so no defensive default is
+						// needed (server.go has one because it can bail out early).
+						gate.FinishProbe(err)
 					}
 					if err != nil {
 						outcome = indexCheckErrorOutcome(ctx, err)

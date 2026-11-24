@@ -35,6 +35,8 @@
 | F-27 | P1 | 依赖 fasthttp v1.65.0 存在 GO-2026-4950（双编码路径鉴权绕过），已升至 v1.70.0 | 已修复（扫描复核 0 包漏洞） |
 | F-28 | P2 | `golang.org/x/crypto/openpgp` 上游已标记 unmaintained（GO-2026-5932），模块级告警 | 已确认（不可达，不修） |
 | F-29 | P3 | `..` 类前缀打到受保护 API 路径时落到静态兜底页返回 200 HTML（非 404），无数据泄露但会误导扫描器/监控 | 已记录（+回归固化） |
+| F-30 | P2 | staticcheck 报 14 条：含 `sessionCache.mu` 未使用（锁陷阱）、探针错误死赋值、未使用常量/字段 | 已修复（staticcheck 0 条） |
+| F-31 | — | 运行期任务目录不可写：500 + 0.01s 响亮失败，health 仍 200，恢复权限即自愈 | 已实测通过（非缺陷） |
 
 ---
 
@@ -268,6 +270,25 @@ Vulnerability #1: GO-2026-4950
 `TestProtectedEndpointsNeverAnswerJSONWithoutAuth`（7 端点 × 8 前缀）断言**任何编码下未鉴权都不可能拿到 JSON 200**。若将来有人把静态兜底改成 JSON 兜底（或错误地给兜底挂上 API），测试立即失败。
 
 **后续建议（不阻塞上线）**：给 `/api`、`/v1` 前缀加一条前置中间件，命中即返回 JSON 404，避免落到静态兜底；同时把监控探活改为校验响应体结构而不是只看状态码。
+
+---
+
+## F-30 静态分析 14 条（P2，已修复）
+
+**背景**：`golangci-lint` 在本机因 Windows 分页/导出数据版本问题无法完整运行，改用同源分析器 `staticcheck 2026.2.2` 直连类型信息，实机跑通并修到 **0 条**。
+
+**修掉的实质问题（非风格）**：
+
+1. **`platform/sessions.go` `sessionCache.mu` 未使用**——最危险的一条。结构体里声明了互斥锁却从不加锁，实际保护来自 `Platform.sessionMu`。这种"看起来自保护"的结构是**漏加锁的温床**：下一个人新增一个缓存访问路径时很可能不想加锁。已核对 `known`/`revoked` 的 11 处访问**全部**在 `p.sessionMu` 之下，删掉冗余字段并写明"由 Platform.sessionMu 保护"。
+   > 在本机无法跑 `-race` 的前提下，这类问题只能靠静态分析发现。
+2. **`core/index_check.go` 探针错误死赋值**：`probeErr` 先赋 `errProbeIncomplete`，随后无条件被真实 `err` 覆盖。行为正确（`FinishProbe(nil)` 表示引擎有应答），但死代码会让人误以为存在"提前返回时保留 incomplete"的保护。已简化为 `gate.FinishProbe(err)` 并注明 `server.go` 那份才需要防御性默认值（那里能提前返回）。
+3. **未使用常量 `indexCheckWorkerLimit`**：注释称"为按它计算批大小的调用方保留兼容"，但它是**未导出**常量，包外无法引用——兼容性说法不成立，删除。
+4. **测试桩未使用字段 `forceErrFor`**：会误导读者以为支持按引擎注入错误，删除。
+5. 其余：错误串大写（ST1005）、`bolt.ErrTimeout` 弃用（改 `bbolt/errors.ErrTimeout`）、测试里 7 处赋值未使用。
+
+**验证**：`staticcheck ./...` exit 0；`go vet ./...` 通过；11 包测试全绿。
+
+**回滚**：改动均为删除死代码/等价替换，逐条可独立回滚，无兼容性影响。
 
 ---
 

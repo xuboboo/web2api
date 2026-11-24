@@ -80,7 +80,7 @@ func BuildURL(q core.Query) (string, error) {
 	}
 
 	if len(params.Get("wd")) == 0 {
-		return "", errors.New("Empty query built")
+		return "", errors.New("empty query built")
 	}
 
 	params.Add("f", "8")

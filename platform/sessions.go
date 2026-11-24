@@ -17,7 +17,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -55,8 +54,11 @@ func newSessionID() string {
 // sessionCache is the in-memory view of the sessions bucket: active IDs with
 // their expiry, plus a revoked set so a revocation answers instantly even
 // when the store lookup would race.
+//
+// Concurrency: the maps are guarded by Platform.sessionMu, not by a mutex of
+// their own — every access in this file takes that lock. The struct therefore
+// stays lock-free to avoid two locks guarding one map.
 type sessionCache struct {
-	mu      sync.Mutex
 	known   map[string]time.Time // sid -> expiry (active sessions seen recently)
 	revoked map[string]bool
 }
