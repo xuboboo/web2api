@@ -126,6 +126,12 @@ func fetchPageTitle(ctx context.Context, targetURL string, q Query) (string, err
 	ctx, cancel := context.WithTimeout(EnsureContext(ctx), pageTitleTimeout)
 	defer cancel()
 
+	// The probe target is caller-supplied (anyone holding an API key picks the
+	// URL), so it must never reach loopback/private/link-local addresses or a
+	// cloud metadata endpoint: without the guard the server itself becomes the
+	// SSRF request source. GuardedDialContext also pins the resolved IP, which
+	// closes the DNS-rebinding window, and every redirect hop is re-validated.
+	q.GuardPrivateNetworks = true
 	// The title probe must not inherit the SERP phrase; it is a plain page GET.
 	q.Text = ""
 	resp, err := RawSearchRequest(ctx, targetURL, q)
