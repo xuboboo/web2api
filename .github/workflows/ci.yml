@@ -38,5 +38,9 @@ jobs:
           version: v2.13.2
           args: --config .golangci.yml
 
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+
       - name: Scan known Go vulnerabilities
-        run: govulncheck ./...
+        run: |
+          "$(go env GOPATH)/bin/govulncheck" ./...
