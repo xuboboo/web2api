@@ -24,17 +24,7 @@
   }
 })();
 </script>
-<script>
-/* 主题预置:默认暗夜色;仅当用户显式选择过浅色(w2a_site_theme=light)才用浅色。
- * 在 CSS 生效前设置 class,避免主题闪变 */
-(function () {
-  try {
-    if (localStorage.getItem('w2a_site_theme') !== 'light') {
-      document.documentElement.classList.add('dark');
-    }
-  } catch (e) {}
-})();
-</script>
+<script src="/web-tool/assets/theme-boot.js?v=20261125"></script>
 <link rel="stylesheet" href="assets/style.css?v=20261118b">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
