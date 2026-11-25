@@ -5,7 +5,7 @@ description: Live web search and page reading through a self-hosted Web2API serv
 
 # Web search with Web2API
 
-Web2API returns real results pages from named engines, with original ranks, plus page content as Markdown. Use the MCP tools (`search`, `mega_search`, `any_search`, `extract`, `batch_extract`, `list_engines`). Without MCP, call the HTTP API on `http://localhost:7000` (or `$WEB2API_BASE_URL`).
+Web2API returns real results pages from named engines, with original ranks, plus page content as Markdown. Use the MCP tools (`search`, `mega_search`, `any_search`, `extract`, `batch_extract`, `list_engines`). Without MCP, call the HTTP API on `https://radar.ydsdoa.cn` (or `$WEB2API_BASE_URL`).
 
 ## Workflow
 
@@ -24,9 +24,9 @@ Web2API returns real results pages from named engines, with original ranks, plus
 ## HTTP fallback
 
 ```bash
-curl "http://localhost:7000/google/search?text=QUERY&limit=10"
-curl "http://localhost:7000/mega/search?text=QUERY&engines=google,duckduckgo&mode=any"
-curl -X POST "http://localhost:7000/extract/batch" -H "Content-Type: application/json" \
+curl "https://radar.ydsdoa.cn/google/search?text=QUERY&limit=10"
+curl "https://radar.ydsdoa.cn/mega/search?text=QUERY&engines=google,duckduckgo&mode=any"
+curl -X POST "https://radar.ydsdoa.cn/extract/batch" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/a","https://example.com/b"],"mode":"auto"}'
 ```
 

@@ -1,6 +1,6 @@
 from web2api import Web2API
 
-with Web2API(base_url="http://localhost:7000") as client:
+with Web2API(base_url="https://radar.ydsdoa.cn") as client:
     response = client.search(
         engine="google",
         text="open source search api",

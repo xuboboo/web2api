@@ -7,7 +7,7 @@ Web2API 查询指定网页能否在百度、搜狗、360 搜索和必应中检�
 在管理控制台的「API 密钥」页创建密钥并保存完整值。以下命令适用于 Bash，需安装 curl。示例使用本机地址，远程部署时把地址换成你的服务地址并保留 `/web-tool`。
 
 ```bash
-export W2A_BASE='http://127.0.0.1:7000/web-tool'
+export W2A_BASE='https://radar.ydsdoa.cn/web-tool'
 read -rsp 'Web2API API Key: ' W2A_KEY; printf '\n'
 export W2A_KEY
 
@@ -26,7 +26,7 @@ curl -sS -i --max-time 60 "$W2A_BASE/v1/index/check" \
 Windows 上也可以用 PowerShell 7.2 或更新版本执行。
 
 ```powershell
-$env:W2A_BASE = 'http://127.0.0.1:7000/web-tool'
+$env:W2A_BASE = 'https://radar.ydsdoa.cn/web-tool'
 $env:W2A_KEY = Read-Host -Prompt 'Web2API API Key' -MaskInput
 $headers = @{ 'X-API-Key' = $env:W2A_KEY }
 Invoke-RestMethod "$env:W2A_BASE/v1/quota" -Headers $headers
@@ -73,7 +73,7 @@ $result.results[0].engines.baidu
 | 约定 | 值 |
 | --- | --- |
 | 前缀 | 所有端点固定挂在 `/web-tool` 之下；`GET /` 与 `GET /health`（无前缀）一律 404 |
-| `{BASE}` | 你的服务根地址，如 `http://127.0.0.1:7000/web-tool` 或部署后的 `https://your-domain.com/web-tool`；下文示例均用它 |
+| `{BASE}` | 你的服务根地址，如 `https://radar.ydsdoa.cn/web-tool` 或部署后的 `https://your-domain.com/web-tool`；下文示例均用它 |
 | 请求体 | `Content-Type: application/json`（除静态资源与 MCP 通知外） |
 | 时间戳 | 任务与查询时间使用 RFC3339。公开状态页的 `generated_at` 使用服务器本地时间，格式为 `YYYY-MM-DD HH:MM:SS` |
 | 请求 ID | 每请求生成（可由 `X-Request-ID` 请求头带入），回显在响应头与多数信封的 `request_id` 字段 |

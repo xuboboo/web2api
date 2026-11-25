@@ -8,7 +8,7 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `docker-compose.yml` | 独立部署编排：从仓库根构建镜像、映射 `127.0.0.1:7000`、挂载 `config.yaml`、内置健康检查与日志轮转 |
+| `docker-compose.yml` | 独立部署编排：从仓库根构建镜像、映射 `radar.ydsdoa.cn`、挂载 `config.yaml`、内置健康检查与日志轮转 |
 | `docker-compose.local.yaml` | 覆盖层：复用根目录 `docker-compose.yaml` 时改用本地镜像（一般不单独使用） |
 | `e2e.mjs` | 平台 E2E 冒烟套件(前缀/官网与控制台静态挂载/管理 API/公网 API 契约、MCP 握手链、冷却 force→503→reset、openapi.yaml/llms.txt、登录锁定;零依赖 Node 18+) |
 | `steady-check.mjs` | 低节流稳态观测脚本(对搜索引擎的持续可用性,冷却 503 单独标记) |
@@ -27,7 +27,7 @@ docker compose -f deploy/docker-compose.yml up -d --build
 
 # 状态与健康
 docker compose -f deploy/docker-compose.yml ps
-curl.exe -s http://127.0.0.1:7000/web-tool/health
+curl.exe -s https://radar.ydsdoa.cn/web-tool/health
 ```
 
 > 之后每条 `docker compose -f deploy/docker-compose.yml ...` 命令都需要该变量（compose 每次都会插值整个文件）。不想每次设置就在 `deploy/` 下放一个 `.env`（已被 `.gitignore` 与 `.dockerignore` 排除）：
@@ -39,11 +39,11 @@ curl.exe -s http://127.0.0.1:7000/web-tool/health
 部署形态：
 
 - 容器名 `serp`，镜像 `web2api:local`（构建自仓库 `Dockerfile`，运行时为 `chromedp/headless-shell`）
-- 官网入口 **`http://127.0.0.1:7000/web-tool/`**；管理控制台 **`http://127.0.0.1:7000/web-tool/console/`**（根路径 `/` 无任何路由）
-- 端口 `127.0.0.1:7000`（仅回环；需要外部访问时改 compose 里的映射或在前面加反向代理,见下文 nginx 示例）
+- 官网入口 **`https://radar.ydsdoa.cn/web-tool/`**；管理控制台 **`https://radar.ydsdoa.cn/web-tool/console/`**（根路径 `/` 无任何路由）
+- 端口 `radar.ydsdoa.cn`（仅回环；需要外部访问时改 compose 里的映射或在前面加反向代理,见下文 nginx 示例）
 - `shm_size: 512mb`（Chrome 渲染所需共享内存；配合已启用的 `--disable-dev-shm-usage`，1.4G 小内存机器可安全使用。内存充足的机器可调回 `2gb`）、`init: true`（tini 回收 Chrome 子进程）
 - 配置以只读方式挂载：`../config.yaml:/usr/src/app/config.yaml:ro`
-- 健康检查：容器内 `wget --spider http://127.0.0.1:7000/web-tool/health`，30s 间隔
+- 健康检查：容器内 `wget --spider https://radar.ydsdoa.cn/web-tool/health`，30s 间隔
 - 日志：json-file，单文件 20MB × 3
 - 平台数据（API key、用量、JWT 密钥）写在容器 `/usr/src/app/data`;已挂载命名卷 `web2api-data` 做持久化,重建容器数据不丢失。首次升级从旧版（无卷）迁移时,旧容器内的数据不会自动进入新卷,请在升级前用 `docker cp serp:/usr/src/app/data ./data` 备份,升级后再写回卷
 
@@ -53,7 +53,7 @@ curl.exe -s http://127.0.0.1:7000/web-tool/health
 
 ```nginx
 location /web-tool/ {
-    proxy_pass http://127.0.0.1:7000;   # 不重写路径,原样透传 /web-tool 前缀
+    proxy_pass https://radar.ydsdoa.cn;   # 不重写路径,原样透传 /web-tool 前缀
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }
@@ -107,10 +107,10 @@ proxies:
 # 平台契约冒烟(前缀/官网与控制台/管理/公网 API + MCP 握手链 + 冷却 force→503→reset + 登录锁定;
 # E2E_LIVE_INDEX_CHECK=1 追加真实收录判定;E2E_SKIP_LOCKOUT=1 跳过锁定测试——
 # 该测试在套件末尾会锁定 admin@本机IP 默认 15 分钟)
-node deploy/e2e.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs https://radar.ydsdoa.cn
 
 # 搜索引擎稳态观测(单 IP 建议放长间隔;引擎冷却 503 会被单独标记为 cooldown)
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
+node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000
 
 # 单元测试
 go test ./...

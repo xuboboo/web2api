@@ -2085,7 +2085,7 @@
 
   /* 创建密钥弹窗 */
   function openCreateKeyModal(onCreated) {
-    var nameInput = el('input', { class: 'input', type: 'text', maxlength: '64', placeholder: '例如:生产服务 / 测试环境' });
+    var nameInput = el('input', { class: 'input', type: 'text', maxlength: '64', placeholder: '例如:生产服务 / 只读客户端' });
     var quotaInput = el('input', { class: 'input', type: 'number', min: '0', step: '1', placeholder: '0 表示不限' });
     var expiryInput = el('input', { class: 'input', type: 'datetime-local' });
     var ipsInput = el('input', { class: 'input', type: 'text', placeholder: '留空不限制;多个用逗号分隔' });
@@ -3090,7 +3090,7 @@
   function pageOrigin() {
     return (location.origin && location.origin.indexOf('http') === 0)
       ? location.origin
-      : 'http://localhost:7000';
+      : 'https://radar.ydsdoa.cn';
   }
 
   function pageAgents(root) {

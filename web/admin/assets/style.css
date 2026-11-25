@@ -2278,3 +2278,20 @@ html.dark .toast { background: #000; border-color: hsl(0 0% 20%); }
     transition: none !important;
   }
 }
+
+/* 页脚:文档快捷入口(与左侧 API 文档入口并存) */
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 0.8px solid color-mix(in oklab, var(--muted-fg) 20%, transparent);
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+.app-footer a { color: var(--brand); text-decoration: none; }
+.app-footer a:hover { text-decoration: underline; }
+.app-footer-brand { font-family: var(--mono, ui-monospace, monospace); }
+.app-footer-links { display: flex; flex-wrap: wrap; gap: 16px; }

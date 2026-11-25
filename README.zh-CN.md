@@ -54,7 +54,7 @@
 - **收录判定 API**：`POST /web-tool/v1/index/check` ≤20 条同步返回，>20 条自动转入服务端任务队列（202 + `job_id`，一次可提交上千条，服务端按引擎节奏排队跑完，进度/结果/CSV 走 `/v1/index/check/jobs/{id}`）；逐引擎返回 `indexed` 与匹配详情；1 条 URL × 1 个引擎 = 1 次，计费口径清晰。
 - **四引擎原始搜索**：`GET /web-tool/{engine}/search`，`format=json|markdown|text|ndjson`。
 - **Agent 双入口**：MCP streamable HTTP（6 个工具，含批量任务）+ OpenAPI 3.1 规范 + llms.txt 能力清单。
-- **管理控制台**：API 密钥、配额、用量日志、引擎风控看板、在线调试、系统设置。
+- **管理控制台**：API 密钥、配额、用量日志、引擎风控看板、在线调试、系统设置；API 文档为独立页面，侧栏与页脚均可直达。
 - **用户角色**：内置 `admin` / `operator` / `viewer` 三级最小权限，按用户库逐请求校验，用户管理与会话撤销仅管理员可用。
 - **日志自动清理**：滚动日志 `logs.txt.N` / `audit.log.N` 按 `app.log_retention_days`（默认 30 天）在启动、轮转后与每 12 小时自动按天清理，亦可手动调用 `POST /api/logs/cleanup`。
 - **IP 黑名单**：`security.blacklist` 首启种子 IP/CIDR，之后通过控制台/API 管理，命中即 403 并记审计。
@@ -100,19 +100,19 @@
 
 ```bash
 go build -o web2api .
-./web2api serve          # 默认读 ./config.yaml，监听 127.0.0.1:7000
-# 浏览器打开官网 http://127.0.0.1:7000/web-tool/
-# 管理控制台入口 http://127.0.0.1:7000/web-tool/console/
+./web2api serve          # 默认读 ./config.yaml，监听 radar.ydsdoa.cn
+# 浏览器打开官网 https://radar.ydsdoa.cn/web-tool/
+# 管理控制台入口 https://radar.ydsdoa.cn/web-tool/console/
 ```
 
 或 Docker Compose（详见 [deploy/README.md](deploy/README.md)）：
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d --build
-curl http://127.0.0.1:7000/web-tool/health
+curl https://radar.ydsdoa.cn/web-tool/health
 ```
 
-> 下文用 `{BASE}` 代表你的服务根地址：本机默认 `http://127.0.0.1:7000/web-tool`，部署后如 `https://your-domain.com/web-tool`。**所有端点都挂在 `/web-tool` 固定前缀下。**
+> 下文用 `{BASE}` 代表你的服务根地址：本机默认 `https://radar.ydsdoa.cn/web-tool`，部署后如 `https://your-domain.com/web-tool`。**所有端点都挂在 `/web-tool` 固定前缀下。**
 
 默认管理员 **`admin` / `admin123`** —— 首次部署后立即在控制台（`/web-tool/console/`）「系统设置」页改密码，或修改 `config.yaml` 的 `platform.admin_password`。绑定非回环地址且密码仍为默认 `admin123` 时，启动日志会给出安全告警（本机回环部署不触发；`security.data_plane_auth=false` 时另有数据面匿名告警）；控制台登录无验证码，切勿将管理端点暴露到公网。
 
@@ -290,7 +290,7 @@ Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code
 
 ```nginx
 location /web-tool/ {
-    proxy_pass http://127.0.0.1:7000;   # 原样透传，不做路径重写
+    proxy_pass https://radar.ydsdoa.cn;   # 原样透传，不做路径重写
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }
@@ -342,8 +342,8 @@ security:                 # 二期：控制平面加固
 go test ./...                                  # 单元测试（离线）
 go test -race -count=1 ./...                   # 竞态检测需 CGO；Windows 无本地 C 编译器时按 docs/TESTING.md 用
                                                # golang:1.26.11-bookworm + Chromium 运行库容器跑（已实测 11 包全绿，日志 qa/features-audit/race-final.log）
-node deploy/e2e.mjs http://127.0.0.1:7000      # 平台契约冒烟（含 MCP 握手、冷却恢复、openapi.yaml/llms.txt 断言）
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 引擎稳态观测
+node deploy/e2e.mjs https://radar.ydsdoa.cn      # 平台契约冒烟（含 MCP 握手、冷却恢复、openapi.yaml/llms.txt 断言）
+node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000   # 引擎稳态观测
 ```
 
 测试设计见 [docs/TESTING.md](docs/TESTING.md)。
