@@ -126,7 +126,7 @@ KEY=<新签发的 API Key>
 | I2 | 静态检查 | `go vet -p 1 ./...` | 无输出 | ☑（2026-11-25 当前树全量 vet 通过，见 E57；GitHub CI 独立复跑仍待确认） |
 | I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 -p 1 ./...` 与 `-race -tags=integration` | 全绿、无 DATA RACE | ☑（当前树 11 个单元包本轮均已分进程跑通且无 DATA RACE，见 E58；严格集成 race 沿用 E37，当前百度验证码状态下未重跑 live 部分） |
 | I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build` | 成功 | ☑（2026-11-25；最终修订树 Linux/amd64 ELF 23,290,018 bytes（E38）） |
-| I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☑（E60：Linux engine 构建成功；fresh named volume、非 root、最小权限、health、bbolt、HTTPS、完整恢复与容器重建均通过。远端 workflow 仍需在推送后执行一次） |
+| I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☑（E60：Linux engine 构建成功；fresh named volume、非 root、最小权限、health、bbolt、HTTPS、完整恢复与容器重建均通过。E61：远端 Docker workflow 在 PR 的代码 SHA `628daff` 上也通过） |
 | I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☑（2026-11-25；F-49 修复后 Go 1.26.11 当前树复跑 0 issues、exit 0，见 E45） |
 | I6a | **静态分析（本机替代）** | `staticcheck ./...` | 0 条 | ☑（2026-11-25 当前树复跑 0 条，见 E39；E24 为历史修复记录） |
 | I9 | 依赖版本复核 | `go list -m all` 中 HTTP/S 解析层无已知漏洞 | 与 govulncheck 结论一致 | ☑（fasthttp v1.70.0；2026-11-24 历史证据） |
@@ -138,5 +138,5 @@ KEY=<新签发的 API Key>
 ## 上线判定
 
 **只有在 A–H 全部 ☑、I 段全部 ☑ 时才能上线。**
-当前仍有多项未闭环：F-46 代理 DNS 重绑定端到端演练、H1/H2/H4 干净 Linux 与 systemd/反代部署走查、C2/C3 三组同口径人工百度正负样本，以及 A–G 中未完成的生产环境凭据、监控告警和容量规划人工项。I3、I5、I6、I7、I8 已有当前树证据；远端 workflow 仍需在推送后复跑。以各表当前勾选状态为准，不得据历史证据直接放行。
+当前仍有多项未闭环：F-46 代理 DNS 重绑定端到端演练、H1/H2/H4 干净 Linux 与 systemd/反代部署走查、C2/C3 三组同口径人工百度正负样本，以及 A–G 中未完成的生产环境凭据、监控告警和容量规划人工项。I3、I5、I6、I7、I8 已有当前树证据；E61 的远端 CI/Docker 门禁也已在代码 SHA `628daff` 通过。以各表当前勾选状态为准，不得据历史证据直接放行。
 当前状态见 `docs/audit/REPORT.md` 的"准入结论"一节。

@@ -924,4 +924,12 @@ C2/C3 仍缺“各 3 条”的完整人工百度对照，现有报告样本是 2
 - 删除并重建运行容器，继续挂载同一恢复数据卷和配置卷；health 仍为 healthy，登录仍成功，`keys_count=1` 且 Key 名不变，验证了容器重建持久性。
 - 最终修订树复跑 `go test -p 1 -count=1 ./...`、`go vet -p 1 ./...`、Linux/amd64 构建、定向 `-race`、golangci-lint v2.13.2、staticcheck 与 govulncheck，均退出码 0；lint/staticcheck 为 0 条，govulncheck 为 0 个可达漏洞。
 
-**边界**：该证据关闭本机 Docker 镜像构建、容器 HTTPS、最小权限、fresh volume、named-volume 完整恢复和重建持久性检查（I5/A2，Docker 部分的 F3）。修改后的 GitHub Docker workflow 尚未在远端 runner 执行；干净 Linux 主机、systemd unit 与 TLS 反代仍由 H1/H2/H4 和生产部署验收，不能用本证据替代。
+**边界**：该证据关闭本机 Docker 镜像构建、容器 HTTPS、最小权限、fresh volume、named-volume 完整恢复和重建持久性检查（I5/A2，Docker 部分的 F3）。远端 workflow 的独立结果见 E61；干净 Linux 主机、systemd unit 与 TLS 反代仍由 H1/H2/H4 和生产部署验收，不能用本证据替代。
+
+## E61 最终代码 SHA 的远端 CI 与 Docker 门禁（2026-11-25）
+
+- 分支 `codex/release-readiness-20261125` 已推送，PR #1 使用最终代码 SHA `628daff` 重跑门禁。
+- CI run [45540860716](https://github.com/xuboboo/web2api/actions/runs/45540860716) 的 `test-build-lint` 通过（2m46s），覆盖 race 单测、vet、build、golangci-lint 与 govulncheck。
+- 第一次远端 CI 在新增 commit 上暴露了真实流水线缺陷：runner 未安装 `govulncheck`，步骤以 127 失败。修复为固定安装 `golang.org/x/vuln/cmd/govulncheck@v1.10.0`，再从 `$(go env GOPATH)/bin` 执行；修复后的同 SHA 运行通过。
+- Docker run [45540860782](https://github.com/xuboboo/web2api/actions/runs/45540860782) 的 `build` 通过（1m30s），覆盖最终镜像构建、非 root/无烘焙运行态断言、fresh named volume、health、CapDrop/ALL、no-new-privileges 与容器内 HTTPS。
+- 这说明自动构建与容器门禁已经在最终代码上闭环；C2/C3 人工百度对照、F-46 隔离代理演练、H1/H2/H4 干净 Linux/systemd/反代和生产监控凭据仍是独立上线门槛。
