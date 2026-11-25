@@ -10,7 +10,7 @@
        V4:自内联脚本外置(theme-boot.js),为控制台 CSP 转正铺路;三态 light/dark/system -->
   <script src="assets/theme-boot.js?v=20261117e"></script>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='27' cy='27' r='13.5' fill='%23FFFFFF'/%3E%3Cpath d='M20.5 27.5 25.5 32.5 34 22.5' fill='none' stroke='%23177E5B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M37 37 47 47' fill='none' stroke='%23FFFFFF' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="assets/style.css?v=20261118a">
+  <link rel="stylesheet" href="assets/style.css?v=20261125f">
 </head>
 <body>
 
@@ -38,21 +38,12 @@
         <rect y="480" width="800" height="120" fill="url(#lm-fog)"/>
       </svg>
       <h1 class="login-wordmark">Web2API</h1>
-      <div class="login-brand-rule" aria-hidden="true"></div>
-      <div class="login-stats">
-        <div class="login-stat">
-          <b class="ls-accent">4</b>
-          <span>收录引擎 · 百度 / 搜狗 / 360 / 必应</span>
-        </div>
-        <div class="login-stat">
-          <b>5000 条</b>
-          <span>单次批量上限 · &gt;20 条自动转异步任务</span>
-        </div>
-        <div class="login-stat">
-          <b>2 分钟起</b>
-          <span>风控冷却 · 按引擎分档, 百度首档 2 分钟</span>
-        </div>
-      </div>
+      <p class="login-brand-intro">网站收录查询与引擎管理</p>
+      <ul class="login-stats">
+        <li>查看引擎状态与冷却进度</li>
+        <li>创建和轮换 API 密钥</li>
+        <li>核对配额与请求用量</li>
+      </ul>
     </div>
     <div class="login-panel">
       <button id="btn-login-theme" class="icon-btn login-theme-btn" type="button" aria-label="切换主题(浅色 / 深色 / 系统)" aria-haspopup="menu" aria-expanded="false">
@@ -65,8 +56,8 @@
             <rect width="64" height="64" rx="14" fill="#177E5B"/><circle cx="27" cy="27" r="13.5" fill="#FFFFFF"/><path d="M20.5 27.5 25.5 32.5 34 22.5" fill="none" stroke="#177E5B" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 37 47 47" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
           </svg>
         </div>
-        <h2 class="login-title">登录</h2>
-        <p class="login-sub">管理控制台 · 管理员登录</p>
+        <h2 class="login-title">登录管理控制台</h2>
+        <p class="login-sub">使用此实例的管理员账号登录。</p>
         <form id="login-form" autocomplete="on" novalidate>
           <div class="field">
             <label class="field-label" for="login-username">用户名</label>
@@ -74,11 +65,21 @@
           </div>
           <div class="field">
             <label class="field-label" for="login-password">密码</label>
-            <input id="login-password" name="password" class="input" type="password" placeholder="请输入密码" maxlength="128" autocomplete="current-password">
+            <div class="password-field">
+              <input id="login-password" name="password" class="input" type="password" placeholder="请输入密码" maxlength="128" autocomplete="current-password">
+              <button id="login-password-toggle" class="icon-btn password-toggle" type="button" aria-label="显示密码" aria-pressed="false" aria-controls="login-password">
+                <svg class="password-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                <svg class="password-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 18 18M10.5 6.1c.5-.1 1-.1 1.5-.1 6.4 0 10 6 10 6a15 15 0 0 1-3.1 3.5M6.1 7.7A17 17 0 0 0 2 12s3.6 6 10 6c1.2 0 2.3-.2 3.3-.6"/></svg>
+              </button>
+            </div>
           </div>
           <div id="login-error" class="login-error hidden" role="alert"></div>
-          <button id="login-submit" class="btn btn-primary btn-block" type="submit">登 录</button>
+          <button id="login-submit" class="btn btn-primary btn-block" type="submit">
+            登录
+            <svg class="login-submit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
+          </button>
         </form>
+        <a class="login-home-link" href="../">← 返回官网</a>
       </div>
     </div>
   </div>
@@ -123,6 +124,19 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
           <span>系统设置</span>
         </a>
+        <div class="nav-label">管理</div>
+        <a class="nav-item" data-route="#/users" href="#/users">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <span>用户管理</span>
+        </a>
+        <a class="nav-item" data-route="#/logs" href="#/logs">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          <span>系统日志</span>
+        </a>
+        <a class="nav-item" data-route="#/blacklist" href="#/blacklist">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
+          <span>黑名单</span>
+        </a>
       </nav>
       <div class="sidebar-foot">Web2API · 管理控制台</div>
     </aside>
@@ -165,6 +179,6 @@
   <div id="toast-box" class="toast-box" aria-live="polite"></div>
   <div id="modal-root"></div>
 
-  <script src="assets/app.js?v=20261122b"></script>
+  <script src="assets/app.js?v=20261125f"></script>
 </body>
 </html>

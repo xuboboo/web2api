@@ -30,6 +30,9 @@ type AdminSession struct {
 	IP           string    `json:"ip"`
 	UserAgent    string    `json:"user_agent"`
 	Revoked      bool      `json:"revoked"`
+	// UserID binds the session to a console user. Empty on legacy sessions,
+	// which are treated as the bootstrap admin.
+	UserID string `json:"user_id,omitempty"`
 	// Current marks the session of the requesting admin (listing only).
 	Current bool `json:"current,omitempty"`
 }
@@ -51,6 +54,12 @@ func newSessionID() string {
 
 // createSession stores a fresh session for the admin login and returns it.
 func (p *Platform) createSession(ip, userAgent string, ttl time.Duration) (*AdminSession, error) {
+	return p.createUserSession(nil, ip, userAgent, ttl)
+}
+
+// createUserSession stores a fresh session bound to a console user. A nil user
+// creates a legacy session (no user id) for compatibility helpers.
+func (p *Platform) createUserSession(u *User, ip, userAgent string, ttl time.Duration) (*AdminSession, error) {
 	now := time.Now()
 	s := &AdminSession{
 		ID:           newSessionID(),
@@ -59,6 +68,9 @@ func (p *Platform) createSession(ip, userAgent string, ttl time.Duration) (*Admi
 		ExpiresAt:    now.Add(ttl),
 		IP:           ip,
 		UserAgent:    userAgent,
+	}
+	if u != nil {
+		s.UserID = u.ID
 	}
 	p.sessionMu.Lock()
 	defer p.sessionMu.Unlock()

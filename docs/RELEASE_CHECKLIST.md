@@ -38,6 +38,10 @@ KEY=<新签发的 API Key>
 | B6 | 登录爆破被锁 | 连续 5 次错误密码 → 429 + Retry-After；**换 IP 不能重置计数** | ☑（同 IP 与轮换 IP 登录锁定契约测试，E51） |
 | B7 | 配额生效 | `daily_quota=1` 的 Key 第 2 次调用 → 429 | ☑（超配额 429/Retry-After 契约测试，E51） |
 | B8 | 限流生效 | 单 Key 高频调用 → 429 `rate_limited` | ☑（per-key limiter 真实路由测试，E51） |
+| B9 | 角色最小权限 | viewer/operator 访问 `/api/users*` → 403；admin → 2xx | ☐（需本轮新增角色门禁回归） |
+| B10 | 黑名单全站前置 | 封禁测试 IP 后 `/health`、`/web-tool/`、`/api/*`、`/v1/*`、`/mcp` 全部 403 `reason=blacklisted`，写 `blacklist.hit` | ☐（需真机跨平面验证） |
+| B11 | 自锁保护与 force | 创建覆盖当前 IP 的规则默认 400；显式 `force:true` 可创建 | ☐（需真机验证） |
+| B12 | 日志角色与配置 | viewer 可读 `/api/logs*`，admin 可 `POST /api/logs/cleanup`；`retention_days` 与配置一致 | ☐（需真机验证） |
 
 ## C. 核心业务（阻塞项）
 
@@ -115,16 +119,16 @@ KEY=<新签发的 API Key>
 | H4 | `docs/OPERATIONS.md` 的备份/恢复/冷却命令实测可用 | ☑（E35/E59 验证本地完整恢复点；E60 验证 Docker named volume；E63 在 Debian systemd 停服生成含配置/secret/任务/审计的完整归档并在 7001 隔离 unit 恢复，登录与 Key 数量一致） |
 | H5 | `docs/API.md` 与实现一致（本会话已逐条核对） | ☑ |
 | H6 | `docs/audit/FINDINGS.md` 中 P0/P1 全部关闭 | ☑（F-46 重绑定回归 E62；F-52 反代真实 IP E63；F-50/F-51 与 TLS/认证等既有 P1 均有当前修复和验证） |
-| H7 | **改了语义必须改说法**：安全策略/限额/计费口径变更后，面板文案、API 文档页、markdown 文档三处同步 | ☑（F-43–F-46 本轮同步已核对；最终发布树需再检） |
+| H7 | **改了语义必须改说法**：安全策略/限额/计费口径变更后，面板文案、API 文档页、markdown 文档三处同步 | ☐（新增角色/黑名单/日志语义后需重新核对面板与全部 markdown；本轮文档收尾已执行，发布前再确认） |
 | H8 | 控制台指标口径无歧义（调用次数 vs 计费次数、失败可见） | ☑（E29：总览 + 使用日志已修） |
 
 ## I. 回归
 
 | # | 检查 | 命令 | 通过标准 | 结果 |
 | --- | --- | --- | --- | --- |
-| I1 | 单元/集成测试 | `go test -p 1 -count=1 ./...` | 全绿 | ☑（2026-11-25 当前树以 Go 1.27.4 低内存配置完整重跑，所有有测试的包通过，见 E57） |
+| I1 | 单元/集成测试 | `go test -p 1 -count=1 ./...` | 全绿 | ☑（2026-11-25 当前树以 Go 1.26.x（`go.mod` 为 1.26.0）低内存配置完整重跑，所有有测试的包通过，见 E57） |
 | I2 | 静态检查 | `go vet -p 1 ./...` | 无输出 | ☑（2026-11-25 当前树全量 vet 通过，见 E57；GitHub CI 独立复跑仍待确认） |
-| I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 -p 1 ./...` 与 `-race -tags=integration` | 全绿、无 DATA RACE | ☑（当前树 11 个单元包本轮均已分进程跑通且无 DATA RACE，见 E58；严格集成 race 沿用 E37，当前百度验证码状态下未重跑 live 部分） |
+| I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 -p 1 ./...` 与 `-race -tags=integration` | 全绿、无 DATA RACE | ☑（全量 race 已在 Docker Linux 镜像 `golang:1.26.11-bookworm`（预装 Chromium 运行库）完成，11 个测试包全绿、无 DATA RACE，原始日志 `qa/features-audit/race-final.log`；严格集成 race 沿用 E37） |
 | I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build` | 成功 | ☑（2026-11-25；最终修订树 Linux/amd64 ELF 23,290,018 bytes（E38）） |
 | I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☑（E60：Linux engine 构建成功；fresh named volume、非 root、最小权限、health、bbolt、HTTPS、完整恢复与容器重建均通过。E61：远端 Docker workflow 在 PR 的代码 SHA `628daff` 上也通过） |
 | I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☑（2026-11-25；F-49 修复后 Go 1.26.11 当前树复跑 0 issues、exit 0，见 E45） |

@@ -55,10 +55,13 @@
 - **四引擎原始搜索**：`GET /web-tool/{engine}/search`，`format=json|markdown|text|ndjson`。
 - **Agent 双入口**：MCP streamable HTTP（6 个工具，含批量任务）+ OpenAPI 3.1 规范 + llms.txt 能力清单。
 - **管理控制台**：API 密钥、配额、用量日志、引擎风控看板、在线调试、系统设置。
+- **用户角色**：内置 `admin` / `operator` / `viewer` 三级最小权限，按用户库逐请求校验，用户管理与会话撤销仅管理员可用。
+- **日志自动清理**：滚动日志 `logs.txt.N` / `audit.log.N` 按 `app.log_retention_days`（默认 30 天）在启动、轮转后与每 12 小时自动按天清理，亦可手动调用 `POST /api/logs/cleanup`。
+- **IP 黑名单**：`security.blacklist` 首启种子 IP/CIDR，之后通过控制台/API 管理，命中即 403 并记审计。
 - **IP 风控内建**：桌面浏览器指纹、浏览器/HTTP 双通道兜底、CAPTCHA 门控、按引擎限速、熔断保护与引擎冷却状态机。
 - **零外部存储依赖**：bbolt 单文件保存全部状态，无数据库、无消息队列；构建产物是单个可执行文件（`./web2api serve`；浏览器模式需本机 Chrome/Chromium/Edge）。
 
-我们先说清楚**不做什么**：不做全球引擎覆盖、不做 Google 垂直矩阵、不做位置/语言参数、不做异步任务归档、没有 reranker 增值层。也如实说明两点：计费口径是**按成功单元计费**——HTTP 200 完成后按响应信封逐引擎核对，仅成功次数扣费；引擎级失败单元（`error` 字段，含 raw 模式 `not_implemented`）不计费，响应信封无法解析时按请求单元全额计费（兜底口径）；4xx / 429 / 503 不计费。批量判定为同步模式，单请求上限 20 URL。
+我们先说清楚**不做什么**：不做全球引擎覆盖、不做 Google 垂直矩阵、不做位置/语言参数、不做异步任务归档、没有 reranker 增值层。也如实说明两点：计费口径是**按成功单元计费**——HTTP 200 完成后按响应信封逐引擎核对，仅成功次数扣费；引擎级失败单元（`error` 字段，含 raw 模式 `not_implemented`）不计费，响应信封无法解析时按请求单元全额计费（兜底口径）；4xx / 429 / 503 不计费。批量判定 ≤20 URL 同步返回，>20 条转服务端任务队列（202 + `job_id`，默认上限 5000，进度/结果/CSV 走 `/v1/index/check/jobs/*`），不含任务归档。
 
 下面是功能级矩阵（✓=有，✗=无，部分=有但有明显限制）。**截至 2026-11，基于各家公开资料整理，未逐项复核**：
 
@@ -134,7 +137,7 @@ curl -X POST {BASE}/v1/index/check \
 curl -s -X POST {BASE}/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"<你的管理员密码>"}'
-# → {"token":"<ADMIN_JWT>","expires_in":86400,"user":{"username":"admin"}}
+# → {"token":"<ADMIN_JWT>","expires_in":86400,"user":{"username":"admin","role":"admin","user_id":"<用户 ID>"}}
 
 # 2) 创建 API Key（完整密钥形如 sk-w2a-<32位hex>，仅返回这一次，请立即保存）
 curl -s -X POST {BASE}/api/keys \
@@ -187,11 +190,13 @@ Agent 平面
   GET  /web-tool/openapi.yaml      OpenAPI 3.1 全端点规范
   GET  /web-tool/llms.txt          Agent 能力清单
 
-控制平面（JWT）
-  /web-tool/api/auth/login|password、/web-tool/api/keys、/web-tool/api/stats/*、
-  /web-tool/api/usage、/web-tool/api/engines（冷却状态机）、
-  /web-tool/api/engines/{name}/cooldown/reset|force、
-  /web-tool/api/playground/check（控制台在线调试，不计费）
+控制平面（JWT；括号内为最小角色；不足 → 403 insufficient_role）
+  viewer+：/api/me（含 role/user_id）、/api/keys GET、/api/stats/*、/api/usage、
+           /api/audit、/api/engines、/api/sessions GET、/api/logs、/api/logs/config、/api/playground/check
+  operator+：/api/keys 增删改与轮换、/api/engines/{name}/cooldown/reset|force、/api/blacklist CRUD
+  admin：/api/users CRUD 与 /api/users/:id/password、DELETE /api/sessions/:id、
+         POST /api/logs/cleanup、GET /api/admin/backup
+全站黑名单守卫命中 → 403 reason=blacklisted（先于其它中间件）。
 
 健康观测（免鉴权）
   /web-tool/health、/ready、/stats、/stats/cache|proxy|cb
@@ -223,7 +228,7 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 
 Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP（streamable HTTP）的客户端可按各自文档接入，其余客户端以各自文档的远程传输支持为准。各客户端配置字段名略有差异，以各自文档为准。
 
-接入后 Agent 可直接调用 6 个工具：`web_search`（四引擎搜索，每次调用计 1 次）、`check_indexed`（收录判定，按 URL 数 × 引擎数计次；超过 20 条自动转异步任务并返回 `job_id`）、`get_index_job`（任务进度/结果）、`cancel_index_job`（取消任务）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。**必须携带 API Key**，无鉴权请求一律 401。
+接入后 Agent 可直接调用 6 个工具：`web_search`（四引擎搜索，每次调用计 1 次）、`check_indexed`（收录判定，按 URL 数 × 引擎数计次；超过 20 条自动转异步任务并返回 `job_id`）、`get_index_job`（任务进度/结果）、`cancel_index_job`（取消任务）、`get_quota`（配额）、`list_engines`（引擎与冷却状态）。协议为 MCP streamable HTTP，JSON-RPC 2.0，protocolVersion `2025-06-18`，支持 `Mcp-Session-Id` 内存会话。**鉴权二选一：API Key（按单元计费）或绑定有效会话的管理员 JWT（必须含 sid，逐请求按用户库复核角色/状态）**；operator/viewer JWT 返回 403 `insufficient_role`，无鉴权请求返回 401；管理员 JWT 调用不计入任何 API Key 配额。
 
 ### Dify / n8n / LangChain（OpenAPI 导入）
 
@@ -257,9 +262,9 @@ Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code
 ## 8. 安全模型
 
 - **凭据存储**：管理员密码 bcrypt 哈希（settings 桶，修改密码后覆盖 config 默认值）；API key 只存 SHA-256 哈希，完整 key 仅创建响应返回一次；JWT 签名密钥为随机 32 字节，存 `<data_dir>/secret.key`（0600）。
-- **登录防爆破**：同一 用户名+IP 连续 5 次失败锁定 15 分钟（`security.login_lockout.{fails:5,minutes:15}`），期间一律 `429 {"error":"too_many_attempts"}` + `Retry-After`。
+- **登录防爆破**：同一用户名（跨来源 IP）连续 5 次失败即锁定 15 分钟（`security.login_lockout.{fails:5,minutes:15}`）；IP 只记入审计，不参与锁定计数，锁定期内正确密码也返回 `429 {"error":"too_many_attempts"}` + `Retry-After`。
 - **管理 API 限速**：默认 60 req/min（`security.admin_rate_per_minute`），超限 429 + `Retry-After`。
-- **token 版本化**：修改密码（`POST /web-tool/api/auth/password`，新密码 ≥ 8 位）后 `token_version` +1，**全部旧 JWT（控制台与 MCP 的 Bearer 会话）立即失效**。
+- **token 版本化**：`POST /web-tool/api/auth/password` 改密后返回新 token、无需重新登录；仅配置管理员（bootstrap admin）改密会 `token_version` +1 并使全部旧 JWT（含 MCP Bearer）失效，其他账号只撤销本人会话。离线 `web2api admin-reset --data-dir <dir> --username admin --password <新密码>` 同时更新 users/settings 桶并递增 `token_version`。
 - **传输**：CORS 默认放开但非回环绑定 + 无鉴权组合会在启动日志给出告警；生产环境建议绑回环、收紧 `cors.allow_origins` 或前置 nginx + TLS。
 - **存储**：bbolt（纯 Go 无 CGO）单文件 `<data_dir>/web2api.db`；数据目录被第二个进程占用时启动直接失败（fail-closed，防双实例分裂记账），其余打开失败自动回退等价 JSON 文件存储（接口不变，`/health` 的 `storage` 字段暴露实际类型）。
 
@@ -300,6 +305,11 @@ location /web-tool/ {
 配置优先级：**CLI 参数 > `WEB2API_*` 环境变量 > `config.yaml` > 内置默认值**（Viper）。逐键注释见仓库根 [config.yaml](config.yaml)，完整参考见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。平台相关节（字段名固定）：
 
 ```yaml
+app:
+  log_max_mb: 10           # 单文件轮转上限(MB)；0=仅关闭按大小轮转，按天清理仍生效
+  log_backups: 5
+  log_retention_days: 30   # 按 mtime 清理 logs.txt.N / audit.log.N，0=不按天清理
+
 platform:
   enabled: true           # false 时不挂载 /api/* 与 /v1/*，官网与控制台静态页与健康端点仍可用
   data_dir: "./data"      # bbolt 库 web2api.db + JWT 密钥 secret.key 的目录（.gitignore 已忽略 data/）
@@ -314,10 +324,12 @@ stability:                # 二期：引擎冷却状态机
 
 security:                 # 二期：控制平面加固
   login_lockout:
-    fails: 5              # 同一 用户名+IP 连续失败次数阈值
+    fails: 5              # 同一用户名跨 IP 连续失败次数阈值（轮换来源 IP 不会重置预算）
     minutes: 15           # 锁定时长
   admin_rate_per_minute: 60  # 管理 API 全局限速（超限 429 rate_limited）
-  data_plane_auth: true      # true 时数据面 /{engine}/search 与 /stats/* 也要求 X-API-Key（本仓库模板默认;代码内置默认仍 false 以兼容既有部署）
+  data_plane_auth: true      # 模板与 serve 内置默认均为 true：数据面 /{engine}/search 与 /stats/* 要求 X-API-Key
+                             # 须显式设为 false 才匿名开放（兼容既有部署），生产保持 true
+  blacklist: []              # 首启种子 IP/CIDR；一次性写入后仅以控制台/API 为准
 ```
 
 引擎与反爬参数（限速、指纹、熔断、代理、2captcha）说明见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 与 config.yaml 内注释。
@@ -328,6 +340,8 @@ security:                 # 二期：控制平面加固
 
 ```bash
 go test ./...                                  # 单元测试（离线）
+go test -race -count=1 ./...                   # 竞态检测需 CGO；Windows 无本地 C 编译器时按 docs/TESTING.md 用
+                                               # golang:1.26.11-bookworm + Chromium 运行库容器跑（已实测 11 包全绿，日志 qa/features-audit/race-final.log）
 node deploy/e2e.mjs http://127.0.0.1:7000      # 平台契约冒烟（含 MCP 握手、冷却恢复、openapi.yaml/llms.txt 断言）
 node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 引擎稳态观测
 ```

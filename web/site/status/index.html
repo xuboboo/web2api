@@ -1,286 +1,48 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>服务状态 · Web2API 网站收录查询开放平台</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服务状态 · Web2API</title>
+<meta name="description" content="查看 Web2API 的引擎是否可用、处于冷却期或熔断状态。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='27' cy='27' r='13.5' fill='%23FFFFFF'/%3E%3Cpath d='M20.5 27.5 25.5 32.5 34 22.5' fill='none' stroke='%23177E5B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M37 37 47 47' fill='none' stroke='%23FFFFFF' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
-<script>
-/* 规范 URL 兜底:裸 /web-tool/status(无结尾斜杠)会把 ../assets/* 解析到站点根导致 404 裸页面。
- * 服务端已 301,这里覆盖缓存/旧页面刷新场景。 */
-(function () {
-  if (location.pathname === '/web-tool/status') {
-    location.replace('/web-tool/status/' + location.search + location.hash);
-  }
-})();
-</script>
-<script src="/web-tool/assets/theme-boot.js?v=20261125"></script>
-<link rel="stylesheet" href="../assets/style.css?v=20261118b">
-<style>
-/* 状态页内联样式:与官网 assets/style.css V3 token 对齐(引同一份 CSS,自动级联双主题) */
-.status-page { min-height: 100vh; }
-.status-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  max-width: calc(var(--container) + 48px);
-  margin: 0 auto;
-  padding: 26px 24px;
-}
-.status-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--foreground); }
-.status-brand svg { width: 30px; height: 30px; }
-.status-brand b { font: 600 15px/1 var(--font-sans); }
-.status-links { display: flex; gap: 6px; align-items: center; }
-.status-links a {
-  padding: 7px 12px;
-  border-radius: var(--radius-sm);
-  font: 500 13.5px/1 var(--font-sans);
-  color: var(--muted-foreground);
-  text-decoration: none;
-  white-space: nowrap; /* A-02:导航项整条换行,390px 不再逐字竖排 */
-  transition: color .15s ease, background-color .15s ease;
-}
-.status-links a:hover { color: var(--foreground); background: var(--accent); }
-.status-main { max-width: calc(var(--container) + 48px); margin: 0 auto; padding: 12px 24px 64px; }
-.banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  padding: 20px 24px;
-  margin-bottom: 28px;
-}
-.banner .b-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.banner.b-ok .b-dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(0, 168, 107, .18); }
-.banner.b-ok .b-title { color: var(--foreground); }
-.banner.b-degraded { border-color: rgba(240, 180, 65, .4); }
-.banner.b-degraded .b-dot { background: var(--warn); box-shadow: 0 0 0 4px rgba(240, 180, 65, .18); }
-.banner.b-degraded .b-title { color: var(--warn); }
-.b-title { font: 600 17px/1.4 var(--font-sans); }
-.b-meta { margin-left: auto; font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); }
-.panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  padding: 6px 22px;
-  margin-bottom: 24px;
-}
-.eng-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 2px;
-  border-bottom: 1px solid var(--border-faint);
-  flex-wrap: wrap;
-}
-.eng-row:last-child { border-bottom: 0; }
-.eng-name { font: 600 13.5px/1 var(--font-mono); color: var(--foreground); }
-.eng-cn { font: 400 12.5px/1 var(--font-sans); color: var(--muted-foreground); }
-/* 状态 pill:与官网看板同构(§6.4 tint 底 + 同色字) */
-.st-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: var(--radius-pill);
-  font: 500 12px/1 var(--font-sans);
-}
-.st-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
-.st-ok { background: rgba(0, 168, 107, .12); color: var(--ok); }
-.st-cool { background: rgba(240, 180, 65, .14); color: var(--warn); }
-.st-cb { background: rgba(214, 69, 69, .12); color: var(--destructive); }
-html.dark .st-ok { background: rgba(62, 207, 142, .14); }
-html.dark .st-cool { background: rgba(240, 180, 65, .17); }
-html.dark .st-cb { background: rgba(229, 100, 92, .08); }
-.st-count { font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); font-variant-numeric: tabular-nums; margin-left: 4px; }
-.st-reason { font: 400 12px/1 var(--font-sans); color: var(--muted-foreground); }
-.seg-bar { display: flex; gap: 6px; flex-basis: 100%; margin-top: 12px; }
-.seg { flex: 1; height: 6px; border-radius: 3px; background: var(--muted); }
-.seg.on-ok { background: var(--ok); }
-.seg.on-warn { background: var(--warn); }
-.seg.on-err { background: transparent; border: 1px solid var(--destructive); }
-.apis-note {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  padding: 18px 22px;
-  font-size: 13.5px;
-  line-height: 24px;
-  color: var(--muted-foreground);
-}
-.apis-note b { color: var(--foreground); font-weight: 600; }
-.apis-note code { font: 500 12px/1 var(--font-mono); background: var(--muted); border-radius: var(--radius-sm); padding: 2px 6px; }
-.status-foot {
-  max-width: calc(var(--container) + 48px);
-  margin: 0 auto;
-  padding: 0 24px 48px;
-  font: 400 12.5px/20px var(--font-sans);
-  color: var(--muted-foreground);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 22px;
-}
-.status-foot a { color: var(--brand); text-decoration: none; }
-.status-foot a:hover { text-decoration: underline; }
-/* A-02:窄屏头部允许整组换行堆叠 */
-@media (max-width: 560px) {
-  .status-head { flex-wrap: wrap; }
-  .status-links { gap: 4px; }
-  .status-links a { padding: 6px 10px; font-size: 13px; }
-}
-</style>
+<script src="../assets/theme-boot.js?v=20261125"></script>
+<link rel="stylesheet" href="../assets/style.css?v=20261125g">
+<link rel="stylesheet" href="../assets/status.css?v=20261125f">
+<script src="../assets/engine-status.js?v=20261125g" defer></script>
 </head>
 <body class="status-page">
+<a class="skip-link" href="#main">跳到主要内容</a>
 <header class="status-head">
-  <a class="status-brand" href="../">
-    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#177E5B"/><circle cx="27" cy="27" r="13.5" fill="#FFFFFF"/><path d="M20.5 27.5 25.5 32.5 34 22.5" fill="none" stroke="#177E5B" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 37 47 47" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/></svg>
-    <b>Web2API · 服务状态</b>
-  </a>
-  <nav class="status-links">
-    <a href="../">官网</a>
-    <a href="../console/">控制台</a>
-    <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>
-  </nav>
+  <div class="container status-nav">
+    <a class="brand" href="../" aria-label="Web2API 官网">
+    <svg width="32" height="32" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#177E5B"/><circle cx="27" cy="27" r="13.5" fill="#FFFFFF"/><path d="M20.5 27.5 25.5 32.5 34 22.5" fill="none" stroke="#177E5B" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 37 47 47" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/></svg>
+      <span class="brand-name">Web2API</span>
+    </a>
+    <nav class="status-links" aria-label="服务状态导航">
+      <a class="btn btn-ghost" href="../openapi.yaml">API 文档</a>
+      <a class="btn btn-secondary" href="../console/">进入控制台</a>
+    </nav>
+  </div>
 </header>
-
-<main class="status-main">
-  <div class="banner" id="overallBanner">
-    <span class="b-dot"></span>
-    <span class="b-title" id="overallTitle">正在获取服务状态…</span>
-    <span class="b-meta" id="generatedAt"></span>
+<main class="container status-main" id="main">
+  <div class="status-heading">
+    <div>
+      <h1>服务状态</h1>
+      <p>查看此实例的引擎运行情况。页面每 10 秒刷新一次。</p>
+    </div>
+    <button class="btn btn-secondary" id="statusRefresh" type="button">
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M4.6 9a8 8 0 0 1 13.2-3.5L20 8M4 16l2.2 2.5A8 8 0 0 0 19.4 15"/></svg>
+      刷新状态
+    </button>
   </div>
-
-  <div class="panel" id="enginePanel">
-    <div class="eng-row"><span class="eng-name">…</span><span class="st-pill st-ok">加载中</span></div>
+  <div class="status-summary" id="statusSummary" data-state="unknown">
+    <span class="status-summary-dot" aria-hidden="true"></span>
+    <p id="statusSummaryText" role="status">正在获取引擎状态…</p>
+    <time id="statusUpdated"></time>
   </div>
-
-  <div class="apis-note">
-    <b>API 平面</b> —— 收录判定与四引擎搜索对外服务中;引擎风控冷却 / 熔断属设计内自愈行为。接入方式、错误码与冷却语义见官网「API 文档」或 <a href="../openapi.yaml" target="_blank" rel="noopener noreferrer">OpenAPI 规范</a>。
-  </div>
+  <ul class="status-list status-grid" data-engine-status aria-label="各引擎当前状态"></ul>
+  <p class="status-note">分段条表示当前状态；冷却进度从本页首次观测时开始计算。单次查询结果可在 <a href="../console/">管理控制台</a>查看。</p>
 </main>
-
-<footer class="status-foot">
-  <span>数据每 10 秒自动刷新 · 更新时间 <span id="genAt2">—</span></span>
-  <a href="../">返回官网</a>
-  <a href="../console/">进入控制台</a>
-</footer>
-
-<script>
-(function () {
-  var CN = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
-  /* A-15:引擎展示统一排序 百度/搜狗/360 搜索/必应(看板数据为 API 序,前端按此固定序重排) */
-  var ENGINE_ORDER = ['baidu', 'sogou', 'so360', 'bing'];
-  var SEGS = 12;
-
-  function pill(state) {
-    if (state === 'cooldown') return '<span class="st-pill st-cool">冷却</span>';
-    if (state === 'circuit_open') return '<span class="st-pill st-cb">熔断</span>';
-    return '<span class="st-pill st-ok">正常</span>';
-  }
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g, function (ch) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
-    });
-  }
-  function remainingText(untilStr) {
-    if (!untilStr) return '';
-    var ms = new Date(untilStr).getTime() - Date.now();
-    if (ms <= 0) return '等待恢复探测';
-    var m = Math.floor(ms / 60000);
-    var s = Math.floor((ms % 60000) / 1000);
-    return '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-  }
-
-  var lastData = null;
-  function render(data) {
-    lastData = data;
-    var engines = (data && data.engines) || [];
-    var panel = document.getElementById('enginePanel');
-    var banner = document.getElementById('overallBanner');
-    var title = document.getElementById('overallTitle');
-    var gen = document.getElementById('generatedAt');
-    var gen2 = document.getElementById('genAt2');
-
-    var degraded = engines.some(function (eng) {
-      return eng.state === 'cooldown' || eng.state === 'circuit_open';
-    });
-    banner.className = degraded ? 'banner b-degraded' : 'banner b-ok';
-    title.textContent = degraded ? '部分引擎降级 —— 冷却 / 熔断自愈中' : '全部系统正常运行';
-
-    var stamp = data && data.generated_at ? data.generated_at : '';
-    if (gen) gen.textContent = stamp ? '数据更新于 ' + stamp : '';
-    if (gen2) gen2.textContent = stamp || '—';
-
-    if (!engines.length) {
-      panel.innerHTML = '<div class="eng-row"><span class="eng-name">—</span><span class="st-pill st-ok">暂无引擎数据</span></div>';
-      return;
-    }
-    engines = engines.slice().sort(function (a, b) {
-      var ia = ENGINE_ORDER.indexOf(a.engine); if (ia === -1) ia = 99;
-      var ib = ENGINE_ORDER.indexOf(b.engine); if (ib === -1) ib = 99;
-      return ia - ib;
-    });
-    var html = '';
-    engines.forEach(function (eng) {
-      var state = eng.state || 'ok';
-      var now = Date.now();
-      var remMin = Infinity;
-      if (state === 'cooldown' && eng.until) {
-        remMin = Math.max(0, (new Date(eng.until).getTime() - now) / 60000);
-      }
-      var filled = 0;
-      if (state === 'ok') filled = SEGS;
-      else if (state === 'cooldown' && isFinite(remMin)) filled = Math.max(1, Math.round(SEGS * Math.min(1, remMin / 120)));
-      var segs = '';
-      for (var i = 0; i < SEGS; i++) {
-        var cls = 'seg';
-        if (state === 'circuit_open') cls += ' on-err';
-        else if (i < filled) cls += state === 'cooldown' ? ' on-warn' : ' on-ok';
-        segs += '<span class="' + cls + '"></span>';
-      }
-      var extra = state === 'cooldown' && eng.until
-        ? '<span class="st-count cd-remaining" data-until="' + esc(eng.until) + '">' + esc(remainingText(eng.until)) + '</span>'
-        : '';
-      var REASON_CN = { FORCED: '计划内维护', COOLDOWN: '引擎风控' };
-      var reason = state === 'cooldown' && eng.reason ? '<span class="st-reason">' + esc(REASON_CN[eng.reason] || '') + '</span>' : '';
-      html += '<div class="eng-row">'
-        + '<span class="eng-name">' + esc(eng.engine) + '</span>'
-        + '<span class="eng-cn">' + esc(CN[eng.engine] || eng.engine) + '</span>'
-        + pill(state) + extra + reason
-        + '<div class="seg-bar" aria-hidden="true">' + segs + '</div>'
-        + '</div>';
-    });
-    panel.innerHTML = html;
-  }
-  function tick() {
-    Array.prototype.forEach.call(document.querySelectorAll('.cd-remaining[data-until]'), function (el) {
-      var u = el.getAttribute('data-until');
-      if (!u) return;
-      var ms = new Date(u).getTime() - Date.now();
-      if (ms <= 0) { el.textContent = '等待恢复探测'; return; }
-      var m = Math.floor(ms / 60000);
-      var s = Math.floor((ms % 60000) / 1000);
-      el.textContent = '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-    });
-  }
-  function load() {
-    fetch('../engines/status')
-      .then(function (r) { return r.json(); })
-      .then(function (data) { render(data); tick(); })
-      .catch(function () {
-        var banner = document.getElementById('overallBanner');
-        banner.className = 'banner b-degraded';
-        document.getElementById('overallTitle').textContent = '状态获取失败 —— 请确认服务运行中';
-      });
-  }
-  load();
-  setInterval(load, 10000);
-  setInterval(tick, 1000);
-})();
-</script>
 </body>
 </html>

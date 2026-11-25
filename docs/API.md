@@ -1,10 +1,55 @@
 # Web2API API 参考
 
-本文档是 **Web2API 网站收录查询开放平台** 的全量接口文档。整个应用固定部署在 **`/web-tool`** 子路径下（代码内常量 `core.BasePath`，根路径无任何路由），本文所有路径均已带前缀，可逐字拷贝使用。
+Web2API 查询指定网页能否在百度、搜狗、360 搜索和必应中检索到。REST API 支持单条查询、同步批量查询和异步批量任务。
 
-**第一次接入？先看 [QUICKSTART.md](QUICKSTART.md)** —— 5 分钟从零到第一个收录判定结果，含真实响应样例、Python/JS/curl 可复制代码与排错表。本文是逐端点的完整参考。
+## 第一次调用
 
-配置、部署与架构分别见 [CONFIGURATION.md](CONFIGURATION.md)、[deploy/README.md](../deploy/README.md)、[ARCHITECTURE.md](ARCHITECTURE.md)；面向 Agent 开发者的 5 分钟接入指南见 [AGENT-README.md](AGENT-README.md)。
+在管理控制台的「API 密钥」页创建密钥并保存完整值。以下命令适用于 Bash，需安装 curl。示例使用本机地址，远程部署时把地址换成你的服务地址并保留 `/web-tool`。
+
+```bash
+export W2A_BASE='http://127.0.0.1:7000/web-tool'
+read -rsp 'Web2API API Key: ' W2A_KEY; printf '\n'
+export W2A_KEY
+
+# 验证密钥和配额。这一步不会访问百度。
+curl -sS -i "$W2A_BASE/v1/quota" -H "X-API-Key: $W2A_KEY"
+
+# 查询一条 URL，只选百度。
+curl -sS -i --max-time 60 "$W2A_BASE/v1/index/check" \
+  -H "X-API-Key: $W2A_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"urls":["https://www.onlinedown.net/article/10049071.htm"],"engines":["baidu"]}'
+```
+
+收到 `200` 后，查看 `results[0].engines.baidu`。有 `error` 表示查询失败。有 `indexed` 表示查询成功，`true` 为命中，`false` 为本次未命中。
+
+Windows 上也可以用 PowerShell 7.2 或更新版本执行。
+
+```powershell
+$env:W2A_BASE = 'http://127.0.0.1:7000/web-tool'
+$env:W2A_KEY = Read-Host -Prompt 'Web2API API Key' -MaskInput
+$headers = @{ 'X-API-Key' = $env:W2A_KEY }
+Invoke-RestMethod "$env:W2A_BASE/v1/quota" -Headers $headers
+
+$body = @{
+    urls = @('https://www.onlinedown.net/article/10049071.htm')
+    engines = @('baidu')
+} | ConvertTo-Json -Compress
+$result = Invoke-RestMethod "$env:W2A_BASE/v1/index/check" -Method Post `
+    -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 60
+$result.results[0].engines.baidu
+```
+
+| 要做什么 | 调用方式 | 拿到什么 |
+| --- | --- | --- |
+| 查询 1–20 条 URL | [POST /v1/index/check](#21-post-web-toolv1indexcheck) | `200`，整批完成后一次返回 JSON |
+| 查询 21 条及以上 | [POST /v1/index/check](#22b-批量提交异步任务)，需开启任务队列 | `202`，用回执中的链接查进度、下载结果 |
+| 查看引擎是否冷却 | `GET /web-tool/engines/status`，无需鉴权 | 当前状态和冷却结束时间，不发起搜索 |
+| 查看密钥剩余配额 | [GET /v1/quota](#23-get-web-toolv1quota) | 当日上限和已用量，不扣查询额度 |
+
+**只查百度时请显式传 `"engines":["baidu"]`。** 省略引擎会使用全部可用引擎。同步查询 20 条百度 URL 通常需约 4 分钟，客户端和反向代理都要允许连接持续到整批结束。
+
+也可以通过 API 创建密钥、按其他语言接入或导入机器可读规范。 [接入教程](QUICKSTART.md) · [OpenAPI 3.1](../mcp/openapi.yaml) · [MCP 接入指南](AGENT-README.md) · [配置](CONFIGURATION.md) · [部署](DEPLOYMENT.md)
 
 ---
 
@@ -30,11 +75,11 @@
 | 前缀 | 所有端点固定挂在 `/web-tool` 之下；`GET /` 与 `GET /health`（无前缀）一律 404 |
 | `{BASE}` | 你的服务根地址，如 `http://127.0.0.1:7000/web-tool` 或部署后的 `https://your-domain.com/web-tool`；下文示例均用它 |
 | 请求体 | `Content-Type: application/json`（除静态资源与 MCP 通知外） |
-| 时间戳 | RFC3339 UTC，如 `2026-11-15T08:00:00Z` |
+| 时间戳 | 任务与查询时间使用 RFC3339。公开状态页的 `generated_at` 使用服务器本地时间，格式为 `YYYY-MM-DD HH:MM:SS` |
 | 请求 ID | 每请求生成（可由 `X-Request-ID` 请求头带入），回显在响应头与多数信封的 `request_id` 字段 |
 | 鉴权 | 公网 API：`X-API-Key`（兼容 `Authorization: Bearer <key>`）；管理 API：`Authorization: Bearer <JWT>`；MCP：两者皆可（见 §5） |
 | 引擎名 | `baidu` / `sogou` / `so360` / `bing`；`360` 是 `so360` 的别名，响应中一律归一化为 `so360` |
-| 交叉引用 | 本仓库同时发布 `GET /web-tool/openapi.yaml`（OpenAPI 3.1 机器可读规范）与 `GET /web-tool/llms.txt`（Agent 友好端点清单），内容与本文一致 |
+| 机器可读文档 | `GET /web-tool/openapi.yaml` 提供公开 REST 和 MCP 规范，`GET /web-tool/llms.txt` 提供 Agent 接入说明 |
 
 配置键优先级：**CLI 参数 > `WEB2API_*` 环境变量 > `config.yaml` > 内置默认值**（Viper），逐键说明见 [CONFIGURATION.md](CONFIGURATION.md)。
 
@@ -73,15 +118,18 @@
 | --- | --- | --- |
 | 400 | `bad_request` | `code` 与 `reason` 同值，为 `EMPTY_QUERY` / `TOO_MANY_URLS` / `INVALID_PARAM` 之一 |
 | 401 | `unauthorized` | 无 |
+| 403 | `forbidden` | 无（来源 IP 不符合密钥访问限制） |
+| 403 | `forbidden` + `"code":"insufficient_role"` | 角色不足：`{"error":"forbidden","code":"insufficient_role"}`（§6） |
+| 403 | `forbidden` + `"reason":"blacklisted"` | IP/CIDR 黑名单命中：`{"error":"forbidden","reason":"blacklisted"}`（§6.12） |
 | 404 | `not_found` | 无 |
 | 429 | `quota_exceeded` | `retry_after_seconds`（响应亦带 `Retry-After` 头） |
 | 429 | `too_many_attempts` | `retry_after_seconds`（登录防爆破锁定；响应亦带 `Retry-After` 头） |
-| 429 | `rate_limited` | 管理 API 全局限速超限（响应带 `Retry-After` 头） |
-| 500 | `server_error` | `message` |
+| 429 | `rate_limited` | 接口访问超限，含 `retry_after_seconds` 与 `Retry-After` |
+| 500 | `server_error` | 仅含 `request_id`（取自 X-Request-ID），不含 `message`；原因只写服务端日志 |
 
 ### 1.3 冷却信封（stability，契约 503）
 
-引擎处于冷却期时，该引擎的所有 search/check 快速失败，**不发真实请求**：
+请求单个搜索引擎时，如果该引擎已冷却，服务直接返回 503。同步收录批次在开始时发现所选引擎全部冷却，也会直接返回 503。以下为关键字段：
 
 ```json
 {"error": "engine_cooldown", "reason": "COOLDOWN", "retry_after_seconds": 600}
@@ -89,13 +137,13 @@
 
 HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。实际响应体还会携带核心信封惯例的 `request_id` 与 `meta`（含 `engine`、`until`、以及完整 `engines_cooldown` 快照，见 §2.1）。信封顶层 `reason` 恒为 `COOLDOWN`；自然冷却与运维强制冷却（cooldown/force）的区分体现在 `meta.engines_cooldown[].reason`（`COOLDOWN` / `FORCED`）与管理端点状态里。`retry_after_seconds` 为距冷却解除的秒数。
 
-> **解析建议**：`/v1/*`、`/api/*` 只按 §1.2/§1.3 解析（`error` 为字符串，无整型 `code`）；`/{engine}/search` 按 §1.1 解析（有整型 `code`）。两者不会混用。
+> 客户端先判断 HTTP 状态，再用顶层 `error` 和可选的 `reason` 分支。一个端点可返回不同的错误形状，例如收录请求的鉴权错误来自平台，参数校验则来自核心。同步返回 200 时，再检查每个引擎结果内的 `error.code`。
 
 ---
 
 ## 2. 数据平面 `/v1/*`（公网 API，X-API-Key）
 
-鉴权：请求头 `X-API-Key: sk-w2a-…`（兼容 `Authorization: Bearer sk-w2a-…`）。key 缺失、未知或被禁用一律 `401 {"error":"unauthorized"}`。配额预检：`当日已用 + 本次计费 unit 数 > daily_quota`（`daily_quota=0` 为不限）时拒绝，`429 {"error":"quota_exceeded"}`，**预检拒绝不写用量记录、不扣费**。
+使用 `X-API-Key: sk-w2a-…`，也可使用 `Authorization: Bearer sk-w2a-…`。密钥缺失、无效或已禁用时返回 `401 unauthorized`。来源 IP 不在该密钥允许范围内时返回 `403 forbidden`。日配额检查会加上在途预留和本次请求单元数。超限返回 `429 quota_exceeded`，本次不扣费。将日配额设为 `0` 表示不限量。
 
 计费口径：**1 URL × 1 引擎 = 1 unit**。
 
@@ -103,21 +151,17 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 批量收录判定：每个 (URL × 引擎) 单元在引擎内检索前 10 条结果并做归一化匹配。
 
-> **判定口径（baidu）**：百度开启 `baidu.index_title_probe`（默认开启）后，检索词是目标页面的 `<title>`（直接 HTTP 抓取，不经过百度；为防 SSRF 与 DNS 重绑定，不使用搜索代理；目标站无法直连时会回退），结果按标题相似度匹配（阈值 0.72，已归一化标点/空格/来源后缀/截断省略号），并校验命中结果的主机与目标一致（同标题转载不算本页）。之所以不用 `wd=<URL>`：实测已收录文章用 URL 当检索词也常返回空结果，会把"已收录"判成"未收录"。标题抓取失败时自动回退到 URL 短语检索。
->
-> 百度明确返回"没有相关结果"（`div.content_none`）时本单元判 `indexed:false`，不再按超时重试；收录单元默认只重试 1 次（`stability.index_check.max_retries`）。
-
 **请求体**
 
 ```json
 {
-  "urls": ["https://example.com/post-1", "https://example.com/post-2"],
-  "engines": ["baidu", "sogou", "so360", "bing"]
+  "urls": ["https://example.com/post-1"],
+  "engines": ["baidu", "sogou"]
 }
 ```
 
 - `urls`：1 条以上，上限为 `index_jobs.max_urls`（默认 5000）。
-  - **≤ 20 条**：同步返回 200（本节形状）。
+  - **≤ 20 条**：同步执行。服务端等整批完成后一次性返回 JSON，连接期间没有逐条响应或进度事件。同一引擎按 URL 顺序逐条查询，每批在该引擎上同时只跑一条。选择多个引擎时，引擎之间可以并行。
   - **> 20 条**：请求被接收入队，返回 **202** + `job_id`（异步任务，见 §2.2b）；调用方随后查进度/取结果。
   - 未开启任务队列（`index_jobs.enabled=false`）时，> 20 条仍返回 400 `TOO_MANY_URLS`。
   - 为空 → 400 `EMPTY_QUERY`；非法 URL → 400 `INVALID_PARAM`。
@@ -149,7 +193,7 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
   "meta": {
     "request_id": "01936d3a-8f2e-7d4a-9c1b-2e6f8a0b3c5d",
     "took_ms": 2501,
-    "units": 8,
+    "units": 2,
     "engines_cooldown": [
       { "engine": "bing", "until": "2026-11-15T08:10:00Z", "reason": "COOLDOWN" }
     ]
@@ -160,14 +204,14 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 字段说明：
 
 - 成功单元：`indexed`（是否收录）、`match`（仅 `exact` / `none` 两种取值）、`matched_result_url`（命中的候选地址，`match=none` 时字段存在但为空串 `""`，解析方按空串判断即可）、`total_results`（SERP 内 organic 条数）、`took_ms`（该单元耗时）。
-  - 百度按标题判定命中时，`matched_result_url` 可能是同一站点的移动域（如 `m.example.com` 命中 `www.example.com` 的文章）；判定已按可注册域名校验同站，不会把转载站算成本页。
-  - **`indexed` 的语义边界（必读）**：`true` = "此刻用该页标题检索，前 10 条 organic 里出现了同站且标题相似的页面"，即**搜索引擎视角的可检索性**，**不等于**百度站长平台的官方收录状态。`false` = "此刻在前 10 条里没找到"，建议 24–72 小时后复查——实测同一 URL 从 `false` 变 `true` 可能只需数小时。
-  - 已知会漏判（`false` 但实际已收录）的三种情况：百度大幅改写了标题、外站转载的排名压过原站、命中位置在前 10 条之外。当前没有自动发现机制，重要结论请抽样人工复核。
+- 百度默认用页面标题检索，并在返回的候选结果里按标题相似度和可注册域名匹配。标题抓取失败时回退到 URL 短语检索。命中地址可能使用同站的移动子域。百度改写标题、命中结果排名靠后时，本次可能返回 `false`。`indexed` 表示本次检索的匹配结果，官方收录状态以搜索引擎站长平台为准。
 - 失败单元：`error.code` / `error.message`，错误码与搜索端点同表（见 §7.2），例如 `blocked`、`captcha_detected`、`circuit_open`、`not_implemented`。
 - `meta.units = len(urls) × len(engines)`，即本次请求的 unit 总数（计费口径为**实扣**：带 `error` 的单元不扣费）。
-- **批量超时预算**：引擎限流（防验证码，经实测标定）决定了批量的串行吞吐——百度默认 `5 次/分钟`（约每 12 秒放行一个查询），20 条 URL 的百度批量需要约 4 分钟的令牌排队。请求预算按批量规模动态放宽：`基础重试预算 + (单元数 × 最大尝试次数 − 1) × 最慢所选引擎的令牌间隔`，**上限 12 分钟**。正常批量在此预算内真实跑完；若仍超出（极端配置），排队单元返回 `engine_queue_exceeded`（§7.2），未发起真实查询、不计费。
+- **批量超时预算**：百度默认 `5 次/分钟`、突发 `1`。首个令牌就绪时，首条可立即开始。后续查询通常约每 12 秒放行一条，20 条大约需要 4 分钟，实际还取决于引擎响应和重试。服务端按去重后的 URL 数量放宽基础预算：`基础预算 + (URL 数 × 最大尝试次数 − 1) × 最慢所选引擎的令牌间隔`，批量预算扩展上限 12 分钟。因预算不足而无法获准发送的单元可能返回 `engine_queue_exceeded`（§7.2），该单元不扣费。同步调用的客户端和反向代理需要允许连接等待整批结束。
 - 超过 20 条的批量不要靠提高预算硬撑，走 §2.2b 的异步任务：同样的节奏，但不受单次 HTTP 连接寿命限制。
-- `meta.engines_cooldown`：请求发出时已处于冷却期的引擎列表，元素为 `{"engine","until","reason"}`；`reason` 为 `COOLDOWN`（自然冷却）或 `FORCED`（运维强制冷却）。冷却中的引擎不会对真实引擎发请求——若**部分**引擎冷却，其余单元照常执行（200 信封内冷却单元的 `error.code` 为 `engine_cooldown`，附 `retry_after_seconds`）；若**所选引擎全部**冷却，整个请求 503（§1.3）。
+- `meta.engines_cooldown`：响应生成时观测到的冷却状态，元素为 `{"engine","until","reason"}`，原因包括 `COOLDOWN`（自然冷却）或 `FORCED`（运维强制冷却）。若同步批次开始时所选引擎全部在冷却，请求立即返回 503（§1.3）。若只有部分引擎在冷却，或执行过程中触发冷却，批次仍返回 200。冷却期间跳过的单元包含 `error.code=engine_cooldown` 和 `error.retry_after_seconds`，其他单元保留各自结果。异步批次的等待规则见 §2.2b。
+
+**本机实测**（2026-11-25）：一个请求提交 20 条 URL，仅选百度。230 秒后一次收到 20 条结果，5 条命中、15 条未命中、0 条报错，实扣 20 个单元。批次结束后引擎仍为 `ok`，无额外冷却。
 
 **错误响应**
 
@@ -178,44 +222,48 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 | 400 | `{"error":"bad_request",…,"reason":"EMPTY_QUERY"}` | `urls` 为空 |
 | 400 | `{"error":"bad_request",…,"reason":"TOO_MANY_URLS"}` | 超过 20 条但**未开启任务队列**，或超过 `index_jobs.max_urls` |
 | 400 | `{"error":"bad_request",…,"reason":"INVALID_PARAM"}` | 含未知引擎、非法 URL 等 |
-
-> **`urls` 的去重与校验规则（2026-11 起，实测）**：
->
-> 1. **重复会被合并**：按归一化键（scheme/host 小写、去默认端口、去 fragment、去尾斜杠）去重，保留首次出现顺序。`["https://a.com/x","HTTPS://A.COM/x/"]` 只查 1 次、只计 1 个单元——同步与异步（`>20` 条转 job）**行为一致**。此前同步路径不去重，导致 20 条重复花 20 unit、21 条重复却塌成 1 条。
-> 2. **只接受 http/https**：`ftp:`、`file:`、`javascript:`、`data:`、`mailto:` 一律 `400 INVALID_PARAM`，错误信息会点出 `unsupported scheme`。
-> 3. **必须含公网域名**：单标签主机（`not-a-url`、`localhost`、`intranet`）拒绝，报 `has no public domain`；裸域名（`example.com`）仍按 http 处理。
-> 4. `>20` 与 `>5000` 的上限按**原始条数**判断，重复项不能用来绕过批量上限。
->
-> 因为会去重，**返回的 `results` 条数可能少于提交的 `urls` 条数**；顺序与首次出现一致。
 | 401 | `{"error":"unauthorized"}` | key 缺失 / 未知 / 禁用 |
+| 403 | `{"error":"forbidden"}` | 来源 IP 不符合密钥访问限制 |
 | 429 | `{"error":"quota_exceeded"}`（`Retry-After` 头） | 当日配额用尽 |
+| 429 | `{"error":"rate_limited"}`（`Retry-After` 头） | 接口访问频率超过限额 |
 | 503 | `{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":600}`（`Retry-After` 头） | 所选引擎全部处于冷却期 |
 | 503 | `job_queue_full`（`reason=JOB_QUEUE_FULL`，带 `Retry-After`） | 异步任务队列已满，本次未入队、未计费。MCP 以 HTTP 503 返回 JSON-RPC 错误，同样可退避后重试 |
 | 503 | `server_draining`（`reason=SERVER_DRAINING`，带 `Retry-After`） | 服务进入停机排水，暂停接收新异步任务。REST 和 MCP 本次均未入队、未计费 |
 
-> **本端点 400 的信封现状（实测）**：契约目标形状是上面的三字段平台信封（`platform/errors.go` 注释与 §1.2），管理端 `/api/*` 的 400 已是该形状；但 `/web-tool/v1/index/check` 的参数校验当前由核心 index 处理器应答，实测返回的是 §1.1 核心信封：
->
-> ```json
-> {"error":"bad_request","code":400,"request_id":"01a1db49-…","message":"TOO_MANY_URLS: urls accepts at most 5000 entries per job, got 6000","reason":"TOO_MANY_URLS"}
-> ```
->
-> 两种形状的 `error` 恒为 `bad_request`、`reason` 同值——**客户端按 `reason` 字段分支即可两代兼容**（仓库自带 e2e 也是按 `reason` 断言的）。信封统一列入集成收尾清单。
+**`urls` 的去重与校验规则**
 
-```bash
-# curl 示例
-curl -X POST {BASE}/v1/index/check \
-  -H "X-API-Key: sk-w2a-3f9c…" -H "Content-Type: application/json" \
-  -d '{"urls":["https://example.com/post-1"],"engines":["baidu","bing"]}'
+1. 同步按归一化后的 URL 去重，并保留首次出现顺序。例如 `https://a.com/x` 与 `HTTPS://A.COM/x/` 在同步结果中合为一行。异步按去掉首尾空白后的 URL 字符串去重。
+2. 只接受 HTTP(S)。`ftp:`、`file:`、`javascript:`、`data:`、`mailto:` 返回 `400 INVALID_PARAM`。
+3. URL 必须含有效的公网域名。单标签主机（如 `localhost`、`intranet`）返回 `400 INVALID_PARAM`，裸域名（如 `example.com`）按 HTTP 处理。
+4. 同步与异步的 20 条分界按提交的原始条数判断，异步任务上限按去除完全重复项后的条数判断。配额预检仍按提交条数估算，建议调用方在提交前去重。
+
+参数校验错误遵循 §1.1 的核心格式。客户端可用 `reason` 判断具体参数问题。
+
+```json
+{"error":"bad_request","code":400,"request_id":"01a1db49-…","message":"TOO_MANY_URLS: urls accepts at most 5000 entries per job, got 6000","reason":"TOO_MANY_URLS"}
 ```
 
+以下服务端 JavaScript 示例使用「第一次调用」中设置的环境变量。保存为 `check-index.mjs`，用支持 `fetch` 的 Node.js 运行。
+
 ```js
-// fetch 示例
-const res = await fetch('{BASE}/v1/index/check', {
+const { W2A_BASE, W2A_KEY } = process.env;
+const res = await fetch(`${W2A_BASE}/v1/index/check`, {
   method: 'POST',
-  headers: { 'X-API-Key': 'sk-w2a-3f9c…', 'Content-Type': 'application/json' },
-  body: JSON.stringify({ urls: ['https://example.com/post-1'], engines: ['baidu', 'bing'] }),
+  headers: { 'X-API-Key': W2A_KEY, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    urls: ['https://www.onlinedown.net/article/10049071.htm'],
+    engines: ['baidu'],
+  }),
 });
 const data = await res.json();
+if (res.status !== 200) {
+  const retryAfter = res.headers.get('Retry-After');
+  throw new Error(`HTTP ${res.status} ${data.error} ${data.reason ?? ''} (Retry-After: ${retryAfter ?? '无'})`);
+}
+for (const row of data.results) {
+  const baidu = row.engines.baidu;
+  console.log(row.url, baidu.error ? `查询失败 ${baidu.error.code}` : baidu.indexed ? '命中' : '未命中');
+}
 ```
 
 ### 2.2 GET /web-tool/v1/index/check
@@ -228,17 +276,11 @@ curl "{BASE}/v1/index/check?url=https%3A%2F%2Fexample.com%2F&engines=360" \
 ```
 
 - `url`：必填（URL 编码）；`engines`：可选，逗号分隔，别名 `360` 可用。
-- 该请求计费 unit 数恒为 `1 × len(engines)`（缺省引擎时为 4）。
+- 请求单元数为 `1 × len(engines)`（省略时使用所有可用引擎），实际仅扣成功单元。
 
 ### 2.2b 批量提交（异步任务）
 
-> 一次提交整张表，服务端排队跑完。**≤20 条仍然是同步返回**（2.1），所以现有调用一行都不用改；只有超过 20 条时才会拿到一个任务号。
-
-`POST /v1/index/check` 的请求体不变，只是 `urls` 允许超过 20 条（默认上限 5000，见 `index_jobs.max_urls`）：
-
-```json
-{ "urls": ["https://www.onlinedown.net/article/10048973.html", "…共 800 条"], "engines": ["baidu"] }
-```
+向同一个 `POST /web-tool/v1/index/check` 提交超过 20 条 URL。任务队列开启时，接口返回 `202`，查询在后台继续执行。默认上限为 5000 条，由 `index_jobs.max_urls` 控制。保存回执中的 `job_id` 和链接，后续查询使用提交任务时的 API Key。返回的链接已含 `/web-tool`，拼接时只加服务的协议和主机名。
 
 **202 Accepted**
 
@@ -256,44 +298,114 @@ curl "{BASE}/v1/index/check?url=https%3A%2F%2Fexample.com%2F&engines=360" \
 }
 ```
 
-服务端按引擎实测节奏串行执行（百度 12s/条），遇到验证码冷却会**等冷却结束再继续**（`status:"waiting"` + `wait_seconds`），不会把剩余 URL 全判成失败；被冷却/验证码挡住的单条会重排（`max_unit_retries`）。
+后台每次处理一条 URL。同一条的多个引擎可并行。所选引擎全部冷却时，任务进入 `waiting`，用 `wait_seconds` 查看当前等待时间。某条 URL 的所有引擎均以可重试错误结束时，整条会重新排队。仅部分引擎失败时，保留该行的成功和失败结果。
 
 **GET `/v1/index/check/jobs/{id}`** — 进度
 
 ```json
 {
   "job_id": "job_…", "status": "running",
-  "progress": 0.66, "total": 30, "completed": 20,
+  "progress": 0.6666666666666666, "total": 30, "completed": 20,
   "indexed": 12, "not_indexed": 8, "failed": 0, "retrying": 0,
-  "eta_seconds": 120, "interval_ms": 12000,
-  "engines": ["baidu"], "wait_seconds": 0,
-  "created_at": "…", "updated_at": "…", "finished_at": null,
+  "eta_seconds": 120, "interval_ms": 12000, "engines": ["baidu"],
+  "created_at": "2026-11-24T05:46:13Z", "updated_at": "2026-11-24T05:50:13Z",
   "poll_url": "…", "results_url": "…", "csv_url": "…"
 }
 ```
 
-`status`：`queued` → `running` →（冷却时 `waiting`）→ `done` | `cancelled` | `failed`。
+| 字段 | 含义 |
+| --- | --- |
+| `status` | `queued` 排队、`running` 执行、`waiting` 等待。终态为 `done`、`cancelled`、`failed` |
+| `total` / `completed` | 去重后的 URL 总数和已完成行数（包含失败行）。显示精确比例时用 `completed / total` |
+| `indexed` | 至少一个引擎命中的行数 |
+| `not_indexed` | 至少一个引擎完成查询，且没有命中的行数 |
+| `failed` | 所有引擎都失败的行数 |
+| `retrying` | 等待重试的行数 |
+| `progress` / `wait_seconds` / `eta_seconds` | 服务端报告的进度、当前等待秒数、预计剩余秒数。等待时间和 ETA 字段可能省略，是否结束以 `status` 为准 |
+
+即使任务状态是 `done`，也应检查每行的引擎结果。存在部分引擎失败时，`failed` 行数可以为 0。
 
 **GET `/v1/index/check/jobs/{id}/results`** — 结果
 
-- 默认 JSON：`{"job_id","status","total","offset","count","results":[…]}`，`results` 与 2.1 的行结构完全一致，支持 `?offset=&limit=` 分页。
+- 默认 JSON 含 `job_id`、`status`、`total`、`offset`、`count`、`results`。目前只返回已落盘的结果，可在任务运行中读取。用 `offset`（从 0 开始）与 `limit` 分页，向下翻页时按实际 `count` 增加偏移。按 `url` 关联提交记录，重试后的写入顺序可能变化。
 - `?format=csv`：直接下载 Excel 可打开的 CSV（UTF-8 BOM + CRLF），列形如 `url,baidu_indexed,baidu_match,baidu_matched_result_url,baidu_total_results,baidu_error`。
 
 **GET `/v1/index/check/jobs`** — 最近任务（`?limit=` 默认 50，最大 500）
 
-```json
-{ "count": 2, "jobs": [ { "job_id": "job_…", "status": "running", "progress": 0.66, … } ] }
-```
+响应中的 `jobs` 数组由进度对象组成，按创建时间倒序排列。`count` 是本次返回的任务数。没有任务时返回 `{"count":0,"jobs":[]}`。
 
 **DELETE `/v1/index/check/jobs/{id}`** — 取消；成功返回该任务的进度对象（`status:"cancelled"`），已结束的任务返回 409 `conflict`，未知 id 返回 404 `not_found`。
 
 其它约定：
 
-- 计费：202 时按提交的 `urls × engines` 计 units（服务端确实会消耗这么多引擎调用）；查询任务进度/结果、取消均不计费。
+- 计费在返回 202 时完成，按提交的 URL 条数 × 计费引擎数扣费，重复提交项也计入。回执中的 `total` 是去重后的任务行数。取消或单元失败不会退回额度。查询进度、读取结果和取消本身均不扣费。
 - 断点续跑：任务状态与逐条结果落在 `index_jobs.dir`（默认 `<platform.data_dir>/index_jobs`），进程重启后自动续跑，已完成的 URL 不会重复查询。
 - 同一时刻只跑一个任务（引擎按出口 IP 限速，并发只会互相抢令牌）；其余任务 FIFO 排队。
-- 单个 URL 连续被冷却/验证码挡住时，最多重排 `index_jobs.max_unit_retries` 次（默认 6）；用尽后该条以 `error` 计入 `failed`，任务继续。
+- 每条 URL 最多重排 `index_jobs.max_unit_retries` 次（默认 6）。重试用尽后记录该行最终的引擎结果，任务继续执行其他 URL。
+- 超时或连接中断时，原提交可能已入队。可先列出同一密钥的最近任务，结合时间、引擎和条数确认，再决定是否重提。直接重复提交可能创建另一个任务并再次扣费。
 - 控制台在线调试（`POST /api/playground/check`）仍是 **1–20 条同步**，不返回任务号——它的界面只渲染同步信封。
+
+**Python 示例 · 从 URL 清单提交并下载 CSV**
+
+把 URL 保存到 `urls.txt`，每行一条，至少 21 条。将下例保存为 `batch-index.py`，使用「第一次调用」中的环境变量，运行 `python batch-index.py`。脚本提交一次，打印任务 ID，随后查询状态。若脚本中断，可用已打印的任务 ID 继续查询。
+
+```python
+import json
+import os
+import time
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
+
+base = os.environ["W2A_BASE"].rstrip("/")
+key = os.environ["W2A_KEY"]
+urls = [
+    line.strip()
+    for line in Path("urls.txt").read_text(encoding="utf-8-sig").splitlines()
+    if line.strip()
+]
+if len(urls) <= 20:
+    raise SystemExit("异步批次需要超过 20 条 URL")
+
+def call(url, payload=None):
+    headers = {"X-API-Key": key}
+    body = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps(payload).encode("utf-8")
+    try:
+        with urlopen(Request(url, data=body, headers=headers), timeout=30) as response:
+            return response.status, response.read()
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        retry_after = exc.headers.get("Retry-After", "无")
+        raise SystemExit(f"HTTP {exc.code} · Retry-After: {retry_after} · {detail}") from exc
+
+status, body = call(f"{base}/v1/index/check", {"urls": urls, "engines": ["baidu"]})
+if status != 202:
+    raise SystemExit(f"预期 HTTP 202，收到 {status}")
+accepted = json.loads(body)
+job_id = accepted["job_id"]
+print(f"已入队 {job_id}，共 {accepted['total']} 条", flush=True)
+
+poll_url = urljoin(f"{base}/", accepted["poll_url"])
+while True:
+    _, body = call(poll_url)
+    job = json.loads(body)
+    state = job["status"]
+    print(f"{state} · {job['completed']}/{job['total']}", flush=True)
+    if state == "done":
+        break
+    if state in {"cancelled", "failed"}:
+        raise SystemExit(f"{job_id} 已停止：{job.get('last_error') or state}")
+    time.sleep(min(60, max(15, job.get("wait_seconds", 0))))
+
+_, csv_data = call(urljoin(f"{base}/", accepted["csv_url"]))
+destination = Path(f"{job_id}.csv")
+destination.write_bytes(csv_data)
+print(f"已下载 {destination}")
+```
 
 ### 2.3 GET /web-tool/v1/quota
 
@@ -392,10 +504,13 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 | 参数 | 说明 |
 | --- | --- |
 | `text` | 查询词（必填，缺失 → 400 `EMPTY_QUERY`） |
-| `limit` | 返回条数（非法值 → 400 `INVALID_LIMIT`） |
-| `start` | 分页偏移（非法值 → 400 `INVALID_START`） |
+| `limit` | 返回条数 1–100，默认 10。非法值返回 `400 INVALID_LIMIT` |
+| `start` | 非负分页偏移，默认 0。非法值返回 `400 INVALID_START` |
 | `format` | `json`（默认）/ `markdown` / `text` / `ndjson`；未知值 → 400 `UNKNOWN_FORMAT`；也可用 `Accept: text/markdown`、`text/plain`、`application/x-ndjson` 头选择 |
-| `site` / `file` / 日期参数等 | 引擎语法透传，详见 [ARCHITECTURE.md](ARCHITECTURE.md)（HTTP 查询参数名为 `file`，`filetype` 是内部字段名） |
+| `output` | `output=markdown` 同样选择 Markdown 输出 |
+| `lang` / `region` / `date` / `site` / `file` | 语言、区域、日期范围、站点和文件类型提示，实际支持情况由引擎决定 |
+| `filter` / `features` | 搜索结果过滤和 SERP 特性解析开关。默认开启，可用 `true` / `false` 或 `1` / `0` |
+| `resolve_urls` | `true` 解析全部跳转链接，`false` 或 `0` 不解析，正整数 N 仅处理前 N 条自然结果。省略时使用服务端配置 |
 
 **鉴权与计费**：该组端点由核心管道直接挂载，**不计费**。鉴权随 `security.data_plane_auth` 开关：本仓库 config.yaml 模板默认 `true`，`/{engine}/search` 与 `/stats/*` 需要 `X-API-Key`（兼容 `Authorization: Bearer <密钥本体>`），缺失或无效返回 401；置 `false` 时匿名可用（启动日志会给出安全告警）。无论开关如何，都受引擎限速、熔断、冷却（见 §8）与 CORS 保护，请不要将其当作公网匿名接口暴露。
 
@@ -417,16 +532,20 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 
 ## 4. 健康与观测端点
 
-全部免鉴权，用于探针与排障：
+这些端点读取当前状态和统计，不发起引擎查询。按下表选择探针及凭据。
 
-| 端点 | 说明 |
-| --- | --- |
-| `GET /web-tool/health` | 聚合健康：`{"status":"healthy\|degraded\|unhealthy","uptime":"2h13m","engines":[{"name":"baidu","initialized":true,"status":"ready\|not_initialized\|circuit_open"}],"storage":"bolt\|json"}`；`unhealthy` 时 HTTP 503。运行指标（goroutines/memory_mb/go_version）已移至鉴权后的 `/api/runtime`，不再在此匿名端点暴露 |
-| `GET /web-tool/ready` | 就绪探针；停机排水期返回 503 + `status=draining` |
-| `GET /web-tool/stats` | 缓存 / 代理 / 熔断 / 验证码求解器指标聚合 |
-| `GET /web-tool/stats/cache` | 端点响应缓存命中统计 |
-| `GET /web-tool/stats/proxy` | 代理池与健康度 |
-| `GET /web-tool/stats/cb` | 各引擎熔断器状态 |
+| 端点 | 鉴权 | 响应 |
+| --- | --- | --- |
+| `GET /web-tool/health` | 公开 | `healthy` 或 `degraded` 返回 200，所有引擎不可用时返回 `503 unhealthy`。包含 `uptime` 和 `engines[].{name,initialized,status}`。平台开启时附 `storage`（`bbolt` 或 `json`） |
+| `GET /web-tool/ready` | 公开 | `200 {"status":"ready"}`，停机排水时返回 `503 {"status":"draining"}` |
+| `GET /web-tool/engines/status` | 公开 | 引擎冷却、结束时间和熔断快照。适合发批次前检查，缓存 5 秒 |
+| `GET /web-tool/stats` | 随 `security.data_plane_auth`，配置模板默认需要 API Key | `cache`、`proxy`、`circuit_breakers`、`captcha` |
+| `GET /web-tool/stats/cache` | 同 `/stats` | 响应缓存统计 |
+| `GET /web-tool/stats/proxy` | 同 `/stats` | 代理池统计 |
+| `GET /web-tool/stats/cb` | 同 `/stats` | `{"circuit_breakers":[…]}` |
+| `GET /web-tool/metrics` | 已配置 `security.metrics_token` 时使用该专用 Bearer token，否则仅允许回环来源 | OpenMetrics 文本。凭据缺失或错误返回 401，回环限制拒绝返回 403 |
+
+`/health` 的单引擎状态为 `ready`、`not_initialized` 或 `circuit_open`。要查冷却时间，读取 `/engines/status` 的 `engines[].state` 与 `until`。状态为 `cooldown` 时，`until` 是 RFC3339 时间戳。其余状态的 `until` 为 `null`。
 
 ---
 
@@ -437,10 +556,11 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 | 入口 | 用途 |
 | --- | --- |
 | `POST /web-tool/mcp` | MCP (Model Context Protocol) streamable HTTP 端点：Claude / Claude Desktop / Claude Code / 自研 Agent 直接把本平台当工具集调用 |
-| `GET /web-tool/openapi.yaml` | OpenAPI 3.1 全端点规范（静态文件，`go:embed` 内嵌）：Dify / n8n / LangChain 导入即用 |
+| `DELETE /web-tool/mcp` | 用原身份和 `Mcp-Session-Id` 关闭会话，成功返回 204 |
+| `GET /web-tool/openapi.yaml` | 公开 OpenAPI 3.1 规范。管理端点见[管理 OpenAPI](internal/openapi-admin.yaml) |
 | `GET /web-tool/llms.txt` | 平台简介 + 端点清单（llms.txt 约定），供 LLM 自主发现能力 |
 
-`openapi.yaml` 与 `llms.txt` 免鉴权、200，`Cache-Control` 允许缓存。
+`openapi.yaml` 与 `llms.txt` 默认分别返回 YAML 和纯文本。浏览器请求含 `Accept: text/html` 时返回阅读页。导入工具可在地址末尾加 `?raw=1` 固定获取原文。
 
 ### 5.1 POST /web-tool/mcp
 
@@ -449,9 +569,9 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 **鉴权**（二选一）：
 
 - `X-API-Key: sk-w2a-…` —— API key 身份，**工具调用计费**（走配额，见 §9）；
-- `Authorization: Bearer <管理员JWT>` —— 管理员身份，**不计费**。
+- `Authorization: Bearer <管理员JWT>` —— 管理员身份，**不计费**；仅接受登录签发、携带 `sid` 且持久化角色为 `admin` 的会话 JWT，无 `sid` 或 operator/viewer JWT 返回 `403 {"error":"forbidden","code":"insufficient_role"}`。
 
-鉴权失败返回平台信封 `401 {"error":"unauthorized"}`；API key 配额用尽返回 `429 {"error":"quota_exceeded"}`。
+鉴权失败返回平台信封 `401 {"error":"unauthorized"}`；JWT 身份/角色不符返回 `403 {"error":"forbidden","code":"insufficient_role"}`；API key 配额用尽返回 `429 {"error":"quota_exceeded"}`。
 
 **会话**：`initialize` 响应头返回 `Mcp-Session-Id`。后续请求在使用同一 API Key 身份或管理员账号时可以复用会话，也可以无状态调用。关闭会话时用相同身份和 `Mcp-Session-Id` 发送 `DELETE /web-tool/mcp`。成功返回 204，未鉴权返回 401，已过期、未知或归属其他身份的会话返回 404。
 
@@ -649,7 +769,17 @@ Agent 友好的能力清单（平台简介、端点、鉴权约定、四引擎�
 
 ## 6. 控制平面 `/api/*`（管理 API，JWT）
 
-鉴权：除登录外一律 `Authorization: Bearer <JWT>`；缺失/过期/无效 → `401 {"error":"unauthorized"}`。修改密码会使全部旧 token 立即失效（见 §6.9）。管理 API 默认全局限速 **60 req/min**（`security.admin_rate_per_minute`），超限 `429 {"error":"rate_limited"}` + `Retry-After`。
+程序调用使用 `Authorization: Bearer <JWT>`，浏览器管理台使用登录时设置的 HttpOnly 会话 Cookie。凭据缺失、过期或无效时返回 `401 unauthorized`。修改密码会使旧 token 失效（见 §6.9）。管理 API 默认全局限速每分钟 60 个请求，超限返回 `429 rate_limited` 和 `Retry-After`。
+
+**角色与最小权限**：固定三种角色 `admin` / `operator` / `viewer`（权限 `admin > operator > viewer`），按持久化用户记录逐请求校验，角色/状态变更立即生效；未知或缺失角色一律拒绝。配置 `platform.admin_username` / `admin_password` 仅在首次启动迁移进用户库，之后用户库是唯一事实来源；不含 `uid`/`role` 声明的旧 JWT 按 `sub` 查找持久化用户，按其当前角色与状态逐请求校验；仅当用户库为空才回退 bootstrap admin。MCP 的 JWT 必须携带 `sid` 且持久化角色为 `admin`，否则 403 `insufficient_role`。
+
+| 最小角色 | 端点范围 |
+| --- | --- |
+| `viewer` | 所有 GET 读取端点（含 `/api/me`、`/api/keys` 列表、`/api/stats/*`、`/api/usage*`、`/api/reconcile`、`/api/engines`、`/api/sessions`、`/api/audit`、`/api/logs`、`/api/logs/config`）、`POST /api/playground/check`、`POST /api/auth/password`、`POST /api/auth/logout`、`POST /api/auth/refresh` |
+| `operator` | API key 创建/更新/删除/轮换、引擎冷却 `reset` / `force`、黑名单全部端点 |
+| `admin` | 用户管理 `/api/users*`、`DELETE /api/sessions/:id`、`GET /api/admin/backup`、`POST /api/logs/cleanup` |
+
+角色不足返回 `403 {"error":"forbidden","code":"insufficient_role"}`；黑名单命中在其它中间件之前返回 `403 {"error":"forbidden","reason":"blacklisted"}`（§6.12）。
 
 ### 6.1 POST /web-tool/api/auth/login
 
@@ -665,26 +795,32 @@ curl -X POST {BASE}/api/auth/login \
 {
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…",
   "expires_in": 86400,
-  "user": { "username": "admin" }
+  "user": { "username": "admin", "role": "admin", "user_id": "<用户 ID>" }
 }
 ```
 
 **401**：`{"error":"unauthorized"}`（凭据错误）。
-**429**：`{"error":"too_many_attempts"}`（同一 用户名+IP 连续 5 次失败后锁定 15 分钟，期间登录一律 429，带 `Retry-After`；`security.login_lockout.{fails,minutes}` 可调）。
+**429**：`{"error":"too_many_attempts"}`（同一用户名跨 IP 连续 5 次失败后锁定 15 分钟，期间登录一律 429，带 `Retry-After`；`security.login_lockout.{fails,minutes}` 可调）。
+
+`user` 中 `role`（`admin`/`operator`/`viewer`）与 `user_id` 为 additive 字段。
 
 ### 6.2 GET /web-tool/api/me
 
 ```json
-{ "username": "admin", "keys_count": 2, "today_calls": 17, "total_calls": 1337 }
+{ "username": "admin", "role": "admin", "user_id": "<用户 ID>",
+  "keys_count": 2, "today_calls": 17, "total_calls": 1337 }
 ```
+
+`role` 与 `user_id` 均为字符串 additive 字段。
 
 ### 6.3 API key 管理
 
 | 端点 | 请求 | 响应 |
 | --- | --- | --- |
-| `POST /web-tool/api/keys` | `{"name":"ci-robot","daily_quota":500}`（`daily_quota` 缺省/0 = 不限） | key 对象 + **仅返回这一次**的完整 `key` |
+| `POST /web-tool/api/keys` | `name` 必填，可传 `daily_quota`、`expires_at` 和 `allowed_ips` | 密钥对象和一次性明文 `key` |
 | `GET /web-tool/api/keys` | — | key 对象数组（新→旧） |
-| `PATCH /web-tool/api/keys/:id` | `{"name"?,"status":"active\|disabled"?,"daily_quota"?}` | 更新后的 key 对象 |
+| `PATCH /web-tool/api/keys/:id` | 可更新 `name`、`status`、`daily_quota`、`expires_at`、`allowed_ips` | 更新后的密钥对象 |
+| `POST /web-tool/api/keys/:id/rotate` | 无请求体 | 原密钥对象和一次性新 `key`，旧密钥立即失效，ID 和使用记录保留 |
 | `DELETE /web-tool/api/keys/:id` | — | `{"ok":true}` |
 
 **POST 200 响应**：
@@ -704,7 +840,7 @@ curl -X POST {BASE}/api/auth/login \
 }
 ```
 
-完整密钥形如 `sk-w2a-<32位hex>`，仅创建响应返回一次，请立即保存；服务端只存 SHA-256 哈希，**列表中不再出现**。禁用（`status:"disabled"`）后的 key 调用公网 API 一律 401。
+完整密钥形如 `sk-w2a-<32位hex>`，只在创建或轮换响应中返回。禁用或过期后返回 401。`daily_quota: 0` 表示不限量，`expires_at` 接受 RFC3339 或 `null`，`allowed_ips` 接受 IP 或 CIDR 数组，空数组表示不限制。
 
 参数非法（空名、负配额、未知状态）→ 400 `{"error":"bad_request","code":"INVALID_PARAM","reason":"INVALID_PARAM"}`；`:id` 不存在 → 404 `{"error":"not_found"}`。
 
@@ -803,7 +939,7 @@ curl -X POST {BASE}/api/engines/baidu/cooldown/force \
 
 ### 6.9 POST /web-tool/api/auth/password
 
-修改管理员密码：
+修改当前登录账号的密码（管理员、运维员、只读用户均可自助修改）：
 
 ```bash
 curl -X POST {BASE}/api/auth/password \
@@ -817,11 +953,11 @@ curl -X POST {BASE}/api/auth/password \
 { "ok": true, "token": "eyJhbGciOi…", "expires_in": 86400, "token_version": 2 }
 ```
 
-（响应携带**新签发的 token**，当前会话无需重新登录；其余旧 token 全部失效。）
+（响应携带**新签发的 token**，当前会话无需重新登录。）
 
 - `new_password` 长度 < 8 → 400 `{"error":"bad_request","code":"INVALID_PARAM","reason":"INVALID_PARAM"}`。
 - `old_password` 错误 → 401 `{"error":"unauthorized"}`。
-- 成功后：新密码以 bcrypt 哈希存入 settings 桶并**覆盖 config.yaml 中的默认值**；`token_version` +1，**除本次返回的新 token 外，全部旧 JWT（含控制台与 MCP 的 Bearer 会话）立即失效**。
+- 成功后：新密码以 bcrypt 哈希写入**用户库**并撤销该用户的会话。仅当操作者是配置管理员（`platform.admin_username` 对应的 bootstrap admin）时，还会写入 settings 桶覆盖 config 默认值、`token_version` +1，并让**全局旧 JWT 立即失效**（含控制台与 MCP Bearer）；其他账号改密只影响本人会话。
 
 ### 6.10 POST /web-tool/api/playground/check
 
@@ -835,6 +971,71 @@ curl -X POST {BASE}/api/playground/check \
 
 错误：401（无/坏 token，平台信封）、400（参数，同 §2.1 表）、503（冷却信封）。
 
+### 6.11 用户与角色（admin）
+
+用户对象（`/api/users` 的 `items[]` 或创建的 `user`）：`{"id","username","role","status","created_at","last_login_at"?}`；`role ∈ admin|operator|viewer`，`status ∈ active|disabled`（不含密码哈希）。
+
+| 端点 | 请求 | 响应 |
+| --- | --- | --- |
+| `GET /web-tool/api/users` | — | `{"total":N,"items":[用户对象…]}` |
+| `POST /web-tool/api/users` | `{"username","password","role"}` | `{"ok":true,"user":用户对象}` |
+| `PATCH /web-tool/api/users/:id` | `{"role"?,"status"?}` | `{"ok":true,"user":用户对象}` |
+| `DELETE /web-tool/api/users/:id` | — | `{"ok":true}` |
+| `POST /web-tool/api/users/:id/password` | `{"new_password"}` | `{"ok":true}` |
+
+- 参数非法（用户名长度、未知角色/状态、用户名重复、密码过短）或违反保护规则 → 400 `{"error":"bad_request","code":"INVALID_PARAM","reason":"INVALID_PARAM"}`（消息为中文）；`:id` 不存在 → 404 `{"error":"not_found"}`。
+- 保护规则：不能删除/降级/禁用**最后一名 active admin**（存储读取失败时按 fail-closed 处理）；不能通过用户管理修改或删除**当前登录账号**。
+- 状态改为 `disabled`、降级、删除以及管理员重置该用户密码都会撤销其会话。管理员自助改密走 §6.9，仍沿用 `token_version` 全局失效契约；非管理员改自己的密码只撤销本人会话。
+
+### 6.12 IP 黑名单（operator 及以上）
+
+黑名单守卫作为全站前置中间件挂在所有路由注册之前（先于其它中间件），命中即返回 `403 {"error":"forbidden","reason":"blacklisted"}`，并写一条 `blacklist.hit` 审计、累加命中计数。客户端 IP 取自 `security.trust_proxy_headers` / `security.trusted_proxies`。
+
+| 端点 | 请求 | 响应 |
+| --- | --- | --- |
+| `GET /web-tool/api/blacklist` | — | `{"total":N,"items":[条目…]}` |
+| `POST /web-tool/api/blacklist` | `{"value","kind"?,"reason"?,"expires_at"?,"force"?}` | `{"ok":true,"entry":条目}` |
+| `PATCH /web-tool/api/blacklist/:id` | `{"reason"?,"expires_at"?}` | `{"ok":true,"entry":条目}` |
+| `DELETE /web-tool/api/blacklist/:id` | — | `{"ok":true}` |
+
+条目：`{"id","kind":"ip|cidr","value","reason","created_by","created_at","expires_at"?,"hits","last_hit_at"?,"expired":bool}`，其中 `expired` 为派生字段。
+
+- `kind` 省略时按 `value` 推断 IP / CIDR；非法 IP/CIDR 或重复规则 → 400 `INVALID_PARAM`（中文消息）。`:id` 不存在 → 404。
+- `expires_at` 须为 RFC3339 且晚于当前时间；`PATCH` 传空串表示永久。**过期规则只被忽略，不会被日志清理自动删除**，需要时用 `DELETE` 移除。
+- 初始规则来自 `security.blacklist`，仅首次启动写入（一次性标记落 settings 桶），之后以控制台/API 为准；存储读取失败时守卫 fail-open（不拦截）。
+- 自锁保护：创建覆盖当前客户端 IP 的规则时默认 400；确需封禁自身须显式传 `force:true`，此操作会使该 IP 立即失去包括解除规则在内的所有 Web 访问。
+
+### 6.13 服务日志（查询 viewer+，清理 admin）
+
+```bash
+curl -s "$BASE/api/logs?level=info&q=captcha&since=2026-11-25T00:00:00Z&limit=50&offset=0" \
+  -H "Authorization: Bearer $TOKEN"
+curl -s "$BASE/api/logs/config" -H "Authorization: Bearer $TOKEN"
+curl -s -X POST "$BASE/api/logs/cleanup" -H "Authorization: Bearer $TOKEN"
+```
+
+- `GET /api/logs` → `{"total":N,"items":[{"time":"RFC3339","level":"…","message":"…","source":"logs.txt|logs.txt.1|…"}]}`。`level` 精确过滤、`q` 子串过滤、`since` 接受 RFC3339；`limit` 默认 50、最大 200，`offset` 默认 0。同时解析方括号文本与 JSON 两种日志格式；日志行按**不可信诊断数据**处理，只展示不执行。
+- `GET /api/logs/config` → `{"max_mb":10,"backups":5,"retention_days":30,"format":"text|json","file_logging_enabled":true,"audit_retention_days":30}`。`file_logging_enabled=false` 表示当前进程未写 `logs.txt`（quiet/debug/关闭落盘），此时查询到的历史文件不代表本次运行。
+- `POST /api/logs/cleanup`（admin）→ `{"ok":true,"removed_serve":N,"removed_audit":N}`；按 `app.log_retention_days` 删除过期的 `logs.txt.N` / `audit.log.N`。注意：`GET /api/audit` 只读取当前 `<data_dir>/audit.log`，不读轮转归档 `audit.log.N`；离线 `admin-backup` / `admin-restore` 只处理 bbolt，不覆盖 JSON fallback 存储（`web2api.json`）。
+
+### 6.14 会话、审计和备份
+
+管理角色按 `viewer < operator < admin` 继承权限。读取统计和调试收录通常需要 viewer，密钥写操作、引擎冷却操作和黑名单管理需要 operator，用户管理、撤销指定会话、备份和日志清理需要 admin。角色不足返回 `403`，其中 `error=forbidden`、`code=insufficient_role`。
+
+| 端点（公共前缀 `/web-tool`） | 最低角色 | 参数和响应 |
+| --- | --- | --- |
+| `POST /api/auth/refresh` | viewer | 无请求体。返回新 `token` 和 `expires_in`，更新会话 Cookie |
+| `POST /api/auth/logout` | viewer | 无请求体。撤销当前会话并清除 Cookie，返回 `{"ok":true}` |
+| `GET /api/sessions` | viewer | `items` 为活跃会话，包含当前会话标记 |
+| `DELETE /api/sessions/:id` | admin | 撤销指定会话，返回 `{"ok":true}`。找不到时返回 404 |
+| `GET /api/runtime` | viewer | `go_version`、`goroutines`、`memory_mb`、`uptime_seconds` 和可选 `version` |
+| `GET /api/audit` | viewer | `limit` 默认 20、最大 200，`offset` 默认 0。返回 `total` 和 `items` |
+| `GET /api/usage/export` | viewer | `format=csv\|json`，默认 CSV。支持 `key_id`、`from`、`to`，返回附件 |
+| `GET /api/reconcile` | viewer | 用 `date=YYYY-MM-DD` 对账，返回扣费记录和核对差异 |
+| `GET /api/admin/backup` | admin | 返回 `application/octet-stream` 附件，使用当前存储后端对应的 `.db` 或 `.json` |
+
+完整请求和响应定义见[管理 OpenAPI](internal/openapi-admin.yaml)。
+
 ---
 
 ## 7. 错误码总表
@@ -845,13 +1046,18 @@ curl -X POST {BASE}/api/playground/check \
 | --- | --- | --- | --- |
 | 400 | `bad_request` | `reason` ∈ `EMPTY_QUERY`（urls 为空）/ `TOO_MANY_URLS`（>20 条）/ `INVALID_PARAM`（未知引擎、空名、负配额、短密码等） | 无 |
 | 401 | `unauthorized` | key 缺失/未知/禁用；JWT 缺失/过期/密码修改后失效 | 无 |
+| 403 | `forbidden` | 来源 IP 不符合密钥访问限制 | 无 |
+| 403 | `forbidden` + `"code":"insufficient_role"` | 角色低于端点最小角色（§6） | 无 |
+| 403 | `forbidden` + `"reason":"blacklisted"` | 客户端 IP 命中 IP/CIDR 黑名单（§6.12） | 无 |
 | 404 | `not_found` | 资源（key、引擎名）不存在 | 无 |
 | 429 | `quota_exceeded` | 当日配额用尽（预检拒绝，不扣费） | 有 |
 | 429 | `too_many_attempts` | 登录连续失败锁定（默认 5 次失败锁 15 分钟，体内含 `retry_after_seconds`） | 有 |
-| 429 | `rate_limited` | 管理端点超过 60 req/min（默认值） | 有 |
-| 500 | `server_error` | 存储等内部错误，`message` 附原因 | 无 |
+| 429 | `rate_limited` | API Key、匿名鉴权失败或管理端点触发访问限速 | 有 |
+| 500 | `server_error` | 存储等内部错误，`{"error":"server_error","request_id":"<X-Request-ID>"}`；原始错误只写服务端日志 | 无 |
 
-### 7.2 核心信封错误（`/{engine}/search` 与 `/web-tool/v1/index/check` 的引擎级单元；`code` 为整型 HTTP 状态码）
+### 7.2 核心错误和引擎单元错误
+
+表中 HTTP 列适用于整请求错误。批量查询的单元失败放在 `results[].engines.<engine>.error`，其中 `code` 是字符串错误码，整批仍可返回 HTTP 200。
 
 | `error` | HTTP | 场景 |
 | --- | --- | --- |
@@ -902,8 +1108,9 @@ curl -X POST {BASE}/api/playground/check \
 | --- | --- | --- |
 | `quota_exceeded` | 429 | 距当日配额重置（本地日界）的秒数 |
 | 登录锁定 `too_many_attempts` | 429 | 距锁定解除的秒数（默认 ≤ 900） |
-| 管理 API 限速 | 429 | 距限速窗口重置的秒数 |
+| 接口访问限速 `rate_limited` | 429 | 服务建议的等待秒数 |
 | 引擎冷却 `engine_cooldown` | 503 | 距冷却解除的秒数（与 `retry_after_seconds` 字段同值） |
+| `job_queue_full` / `server_draining` | 503 | 再次提交异步任务前的建议等待秒数 |
 
 ### 8.1 引擎冷却状态机（每引擎独立）
 
@@ -911,7 +1118,8 @@ curl -X POST {BASE}/api/playground/check \
 - **连续升级**：连续第 1 次触发冷却 **10 分钟**，第 2 次 **30 分钟**，第 3 次及以上 **120 分钟**（`stability.engine_cooldown.steps_minutes: [10,30,120]`）。
 - **按引擎覆盖**：`stability.engine_cooldown.per_engine.<engine>.steps_minutes` 可单独给某个引擎换档位。本仓库给百度配的是 **[2, 10, 30]**（实测单次验证码停 ~2 分钟即可恢复，10 分钟首档会明显拖低吞吐）。
 - **计数归零**：连续无拦截达 **240 分钟**（`stability.engine_cooldown.reset_after_minutes`）后，连续计数归零重新从第 1 档起算。
-- **冷却期内**：该引擎所有 search/check 快速失败（503 冷却信封），**不消耗真实引擎请求、不消耗代理与浏览器资源**。
+- **正常批次结束后**：无额外批间冷却，可提交下一批，百度仍按同一个引擎限流器排队。最后一条如果已经用完令牌，下一条须等限流器的下一次放行。
+- **冷却期内**：单引擎搜索和所选引擎全部已冷却的同步收录请求返回 503。同步批次中的冷却单元按 §2.1 返回，异步任务可等待恢复（§2.2b）。被冷却门控拦下的单元不会访问引擎。
 - **到期探测**：冷却到期后放行一个探测请求——成功即恢复 `ok`；失败则进入下一档冷却。
 - **行为级提示**：浏览器验证码页（无论人工还是自动触发）都会被判定为拦截并启动首档冷却（默认 10 分钟；百度 2 分钟，见 §8.1）。这是以牺牲短时可用性换取单出口 IP 存活率的刻意设计；高频使用方应配置代理池（[CONFIGURATION.md](CONFIGURATION.md) `proxies` 节）。
 - 运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset`（强制恢复）、`POST /web-tool/api/engines/{name}/cooldown/force {"minutes":N}`（强制冷却），见 §6.8；控制台「引擎状态」页（`#/engines`）提供同能力。
@@ -922,9 +1130,12 @@ curl -X POST {BASE}/api/playground/check \
 
 ## 9. 计费口径
 
-- 口径：**1 URL × 1 引擎 = 1 unit**。`/web-tool/v1/index/check` 计 `len(urls) × len(engines)` units（>20 条转异步任务时，按提交条数在 202 当次计费）；MCP `web_search` 每次调用计 1 unit；MCP `check_indexed` 计 `len(urls) × len(engines)` units。`/web-tool/v1/quota`、`/web-tool/v1/engines`、任务进度/结果下载（`GET /v1/index/check/jobs…`）、MCP `get_index_job`/`cancel_index_job`/`get_quota`/`list_engines`、管理 API、`/web-tool/api/playground/check` 不计费。
-- **扣费时点**：请求以 **HTTP 200 完成**即扣费，但按响应信封**逐引擎核对，仅成功单元计费**——200 信封内引擎级失败的单元（`results[].engines.<engine>.error`，含 `engine_cooldown` 冷却、`circuit_open` 熔断等）**不计费**。响应信封无法解析时按请求单元全额计费（兜底口径）。**202 入队的批量按提交单元全额计费**（服务端确实会执行这么多次引擎调用；单条失败由任务重试机制消化，不退回）。4xx（401/400）与配额预检 429、冷却 503 **不扣费**。MCP 平面与 `/v1` 同口径：`check_indexed` 的工具结果（`result.content[].text`）携带逐引擎明细时按成功单元计费；明细不可解析（`web_search` 结果、工具级错误信封、**入队回执**）时按请求单元全额计费。
-- **用量日志如实化（B-01）**：被拒绝的请求（400 参数错误、401/403、429 配额与限速、503 冷却/熔断快速失败）同样写入用量日志，但 `status` 记录真实终态码、`units=0`（计 0 unit），并携带 `outcome` 字段：`billed`（200 完成）/ `engine_failed`（5xx 引擎失败）/ `rejected`（未进入业务逻辑）。MCP 计费记录的 `outcome` 与 `/v1` 同规则落账。S4 之前的存量记录无 `outcome` 字段，按 reached 计。
+- **提交时预检**：按提交的 URL 条数 × 计费引擎数计算，重复 URL 也计入。省略引擎时，配额预检按四个默认引擎估算。超过可用额度时返回 `429 quota_exceeded`。
+- **同步返回 200**：按响应中成功完成的 URL × 引擎单元计费。`indexed: false` 也属于成功完成，带 `error` 的单元不计费。`meta.units` 是实际参与查询的单元总数。服务端若无法解析单元明细，按请求单元数记账。
+- **异步返回 202**：按提交的请求单元数一次性扣费，任务中的去重、失败或取消不调整该笔用量。提交返回 4xx 或 503 时，REST 不扣费。
+- API Key 调用 MCP `web_search` 计 1 个单元。`check_indexed` 有逐引擎明细时按成功单元扣费，其他成功 HTTP 响应（包括入队回执）按估算单元记账。工具级错误可能封装在 HTTP 200 中，应检查工具结果。
+- 查询配额、引擎状态、任务进度或结果、取消任务、管理 API 和在线调试不扣查询额度。
+- **用量日志**：REST 收录请求通过密钥、限速及配额预检后，处理器返回的参数错误和冷却拒绝会写入真实 HTTP 状态，扣费单元为 `0`。密钥鉴权、接口限速或配额预检直接拒绝的 REST 请求不进入该用量日志。记录的 `outcome` 区分 `billed`、`engine_failed` 和 `rejected`。S4 之前的存量记录没有 `outcome` 字段。
 - **管理统计口径（P-01）**：`GET /api/stats/overview` 的 `today_calls`/`total_calls`/`success_rate_24h` 统计**有效调用**（到达业务逻辑的 billed+engine_failed），参数错误、配额与限速拒绝、冷却拒绝不计入；`today_calls_all`（今日全部请求）与 `rejected_today_24h`（24h 内拒绝数）为 additive 字段。口径变化在发布说明中说明,历史记录无法回填。
 - 对账：`GET /api/reconcile` 按日核对「落账次数」与「逐引擎成功单元数」；携带逐引擎明细的记录逐条核对，无明细的记录（MCP `web_search`、信封解析失败的存量数据）按落账口径计入、不判 mismatch。
 - 对计费敏感的批量任务建议：先小批量探测引擎健康度（`GET /web-tool/v1/engines` / `list_engines`），避开冷却与熔断中的引擎，再放大批量——冷却/熔断单元虽不计费，但整请求会因此缩水。
@@ -980,6 +1191,18 @@ Agent 平面
   GET    /web-tool/api/audit?limit=&offset=                            安全审计轨迹（S4）
   GET    /web-tool/api/admin/backup                                    下载数据一致性快照（S4）
   POST   /web-tool/api/playground/check                                控制台在线调试（不计费；仍是 1–20 条同步，不走任务队列）
+  GET    /web-tool/api/users                                          用户列表（admin）
+  POST   /web-tool/api/users                                          新建用户 {"username","password","role"}（admin）
+  PATCH  /web-tool/api/users/:id                                     改角色/状态（admin）
+  DELETE /web-tool/api/users/:id                                     删除用户（admin）
+  POST   /web-tool/api/users/:id/password                            重置用户密码（admin）
+  GET    /web-tool/api/blacklist                                     黑名单列表（operator+）
+  POST   /web-tool/api/blacklist                                     新增 IP/CIDR 规则（operator+）
+  PATCH  /web-tool/api/blacklist/:id                                 改备注/过期时间（operator+）
+  DELETE /web-tool/api/blacklist/:id                                 删除规则（operator+）
+  GET    /web-tool/api/logs?level=&q=&since=&limit=&offset=           服务日志查询（viewer+，limit≤200）
+  GET    /web-tool/api/logs/config                                    日志轮转/保留配置（viewer+）
+  POST   /web-tool/api/logs/cleanup                                   手动清理过期滚动日志（admin）
 
 健康与观测
   GET  /web-tool/health  /web-tool/ready  /web-tool/stats
@@ -990,5 +1213,6 @@ CLI（停服态, S4）
   web2api admin-backup   --full --out <bundle.tar.gz>   备份完整恢复点
   web2api admin-restore  --in <bundle.tar.gz> [--preserve-in <外部目录>]
                                                          校验并恢复；挂载卷根目录使用原地模式
-  web2api admin-reset                     停服重置管理员密码
+  web2api admin-reset  --data-dir <dir> --username admin --password <新密码>
+                                                          停服重置；同时更新用户库与 token_version
 ```

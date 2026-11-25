@@ -86,10 +86,13 @@ type AppConfig struct {
 	SaveLog        bool   `mapstructure:"save_log"`
 	// LogMaxMB / LogBackups bound the serve-mode ./logs.txt with size-triggered
 	// rolling (S4-GAP 日志轮转). 0 disables rotation (legacy infinite append).
-	LogMaxMB     int           `mapstructure:"log_max_mb"`
-	LogBackups   int           `mapstructure:"log_backups"`
-	MaxProcesses int           `mapstructure:"max_processes"`
-	IdleTTL      time.Duration `mapstructure:"idle_ttl"`
+	LogMaxMB   int `mapstructure:"log_max_mb"`
+	LogBackups int `mapstructure:"log_backups"`
+	// LogRetentionDays deletes rotated log files older than this many days
+	// (serve log + audit log). 0 = keep every rotation, only the backup cap applies.
+	LogRetentionDays int           `mapstructure:"log_retention_days"`
+	MaxProcesses     int           `mapstructure:"max_processes"`
+	IdleTTL          time.Duration `mapstructure:"idle_ttl"`
 	// MaxConcurrentRequests caps in-flight search/index requests (0 = unlimited).
 	MaxConcurrentRequests int `mapstructure:"max_concurrent_requests"`
 }
@@ -218,7 +221,7 @@ var RootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		core.InitLogger(config.Server.IsVerbose, config.Server.IsDebug, quiet, config.App.SaveLog, config.App.LogFormat, config.App.LogMaxMB, config.App.LogBackups)
+		core.InitLoggerWithRetention(config.Server.IsVerbose, config.Server.IsDebug, quiet, config.App.SaveLog, config.App.LogFormat, config.App.LogMaxMB, config.App.LogBackups, config.App.LogRetentionDays)
 		if override {
 			logrus.SetLevel(level)
 		}
@@ -249,20 +252,23 @@ func sanitizedConfigForLog(cfg Config) map[string]interface{} {
 	return map[string]interface{}{
 		"server": cfg.Server,
 		"app": map[string]interface{}{
-			"timeout":         cfg.App.Timeout,
-			"browser_path":    cfg.App.BrowserPath != "",
-			"profiles":        cfg.App.ProfilesJSON != "",
-			"head":            cfg.App.IsBrowserHead,
-			"leave_head":      cfg.App.IsLeaveHead,
-			"leakless":        cfg.App.IsLeakless,
-			"block_resources": cfg.App.BlockResources,
-			"block_trackers":  cfg.App.BlockTrackers,
-			"debug_endpoints": cfg.App.DebugEndpoints,
-			"log_format":      cfg.App.LogFormat,
-			"log_level":       cfg.App.LogLevel,
-			"save_log":        cfg.App.SaveLog,
-			"max_processes":   cfg.App.MaxProcesses,
-			"idle_ttl":        cfg.App.IdleTTL.String(),
+			"timeout":            cfg.App.Timeout,
+			"browser_path":       cfg.App.BrowserPath != "",
+			"profiles":           cfg.App.ProfilesJSON != "",
+			"head":               cfg.App.IsBrowserHead,
+			"leave_head":         cfg.App.IsLeaveHead,
+			"leakless":           cfg.App.IsLeakless,
+			"block_resources":    cfg.App.BlockResources,
+			"block_trackers":     cfg.App.BlockTrackers,
+			"debug_endpoints":    cfg.App.DebugEndpoints,
+			"log_format":         cfg.App.LogFormat,
+			"log_level":          cfg.App.LogLevel,
+			"save_log":           cfg.App.SaveLog,
+			"log_max_mb":         cfg.App.LogMaxMB,
+			"log_backups":        cfg.App.LogBackups,
+			"log_retention_days": cfg.App.LogRetentionDays,
+			"max_processes":      cfg.App.MaxProcesses,
+			"idle_ttl":           cfg.App.IdleTTL.String(),
 		},
 		"proxies": map[string]interface{}{
 			"global":                  maskedProxyForLog(cfg.Proxies.Global),
@@ -469,7 +475,8 @@ var knownConfigKeys = map[string]bool{
 	"app.block_resources": true, "app.block_resorces": true, "app.block_trackers": true,
 	"app.debug_endpoints": true, "app.log_format": true, "app.log_level": true,
 	"app.save_log": true, "app.log_max_mb": true, "app.log_backups": true,
-	"app.max_processes": true, "app.idle_ttl": true,
+	"app.log_retention_days": true,
+	"app.max_processes":      true, "app.idle_ttl": true,
 	"app.max_concurrent_requests": true,
 
 	"proxies.global": true, "proxies.entries": true,
@@ -510,6 +517,7 @@ var knownConfigKeys = map[string]bool{
 	"security.mcp_allowed_origins": true, "security.metrics_token": true,
 	"security.login_lockout.fails": true, "security.login_lockout.minutes": true,
 	"security.password_policy.min_length": true, "security.password_policy.min_classes": true,
+	"security.blacklist": true,
 
 	"bing.search_box": true,
 }
@@ -600,6 +608,7 @@ func setConfigDefaults(v *viper.Viper) {
 	// S4-GAP 日志轮转: serve-mode ./logs.txt size rolling (0 = off).
 	v.SetDefault("app.log_max_mb", 10)
 	v.SetDefault("app.log_backups", 5)
+	v.SetDefault("app.log_retention_days", 30)
 
 	v.SetDefault("app.timeout", 30)
 	v.SetDefault("app.browser_path", "")
@@ -684,6 +693,7 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("security.login_lockout.minutes", 15)
 	v.SetDefault("security.password_policy.min_length", 8)
 	v.SetDefault("security.password_policy.min_classes", 0)
+	v.SetDefault("security.blacklist", []string{})
 	for _, s := range engineSpecs() {
 		// A default makes WEB2API_<ENGINE>_DISABLED bindable without a config entry.
 		v.SetDefault(s.name+".disabled", false)

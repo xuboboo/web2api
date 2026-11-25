@@ -151,7 +151,9 @@ RunIndexCheckUnits：每个引擎一个协程串行推进（同引擎同时只�
 
 ## 配置
 
-优先级：CLI > `WEB2API_*` 环境变量 > `config.yaml` > 默认值。逐项说明见 [CONFIGURATION.md](CONFIGURATION.md)。
+优先级：CLI > `WEB2API_*` 环境变量 > `config.yaml` > 默认值。逐项说明见 [CONFIGURATION.md](CONFIGURATION.md)。新增键：`app.log_retention_days=30`（按 mtime 清理滚动日志；`app.log_max_mb=0` 只关闭大小轮转，按天清理仍生效）、`security.blacklist=[]`（首启种子，一次性标记落 settings 桶）。
+
+安全模型：三级角色按用户库逐请求复核；旧 JWT（无 uid）按 sub 查库校验，仅用户库为空才回退 bootstrap admin；离线 `admin-reset` 同时更新 settings/users 桶并递增 token_version；全站黑名单守卫命中返回 `403 reason=blacklisted`。
 
 ## 平台与装配（cmd/serve.go）
 
@@ -163,6 +165,11 @@ RunIndexCheckUnits：每个引擎一个协程串行推进（同引擎同时只�
   管理控制台 `web/admin` 挂在 BasePath+`/console`（`GET <BasePath>/console` 301 到 `/console/`；
   API 路由先注册，优先于静态通配）。
 - `platform.enabled=false` 只卸下 `/api/*` 与 `/v1/*`，官网与控制台静态页与健康端点保留。
+- 控制平面在 JWT 校验后按持久化用户记录解析角色（`admin > operator > viewer`），每个 `/api/*` 路由带最小角色守卫；用户表在 `users` 桶，黑名单在 `blacklist` 桶，两种 Store 后端（bbolt / JSON fallback）等价实现。
+- IP 黑名单守卫作为 `ServerOptions.ExtraMiddleware` 在 core 注册健康/统计/搜索路由之前安装，覆盖全站；过期规则匹配时忽略，命中写审计并累加计数。
+- 日志写入器同时支持按大小轮转与按 mtime 保留天数清理；`logs.txt.N` / `audit.log.N` 在启动、轮转后和每 12 小时被剪枝，`/api/logs*` 提供查询与手动清理。
+- 控制平面端点（括号内为最小角色）：`auth/login|logout|refresh|password`(viewer)、`me`(viewer，含 role/user_id)、`runtime`(viewer)、`keys`(GET viewer / 写 operator，含 rotate)、`stats/*` 与 `usage|usage/export|reconcile`(viewer)、`engines`(viewer)、`engines/{name}/cooldown/reset|force`(operator)、`sessions`(GET viewer / DELETE admin)、`audit`(viewer)、`admin/backup`(admin)、`playground/check`(viewer)、`users*`(admin)、`blacklist*`(operator)、`logs|logs/config`(viewer)、`logs/cleanup`(admin)。
+- 权限不足统一返回 `403 {"error":"forbidden","code":"insufficient_role"}`；MCP 的 JWT 通道要求 `sid` 且持久化角色为 admin，operator/viewer JWT 同样返回 403。
 - 引擎清单/熔断状态的可复用数据源是 `Server.EngineStatusSnapshot()`，同时供给
   `/web-tool/v1/engines` 与 `/web-tool/api/engines`。
 - 优雅关闭：`listenWithGracefulShutdown` 的 onClose 依次关闭浏览器池与 platform 存储。

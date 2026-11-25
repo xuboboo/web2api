@@ -301,7 +301,7 @@ Vulnerability #1: GO-2026-4950
 **修掉的实质问题（非风格）**：
 
 1. **`platform/sessions.go` `sessionCache.mu` 未使用**——最危险的一条。结构体里声明了互斥锁却从不加锁，实际保护来自 `Platform.sessionMu`。这种"看起来自保护"的结构是**漏加锁的温床**：下一个人新增一个缓存访问路径时很可能不想加锁。已核对 `known`/`revoked` 的 11 处访问**全部**在 `p.sessionMu` 之下，删掉冗余字段并写明"由 Platform.sessionMu 保护"。
-   > 在本机无法跑 `-race` 的前提下，这类问题只能靠静态分析发现。
+   > 当时的记录：本机无本地 C 编译器；后续已用 Docker Linux 镜像完成全量 `-race`（见 docs/TESTING.md 与 qa/features-audit/race-final.log），此处结论未被推翻。
 2. **`core/index_check.go` 探针错误死赋值**：`probeErr` 先赋 `errProbeIncomplete`，随后无条件被真实 `err` 覆盖。行为正确（`FinishProbe(nil)` 表示引擎有应答），但死代码会让人误以为存在"提前返回时保留 incomplete"的保护。已简化为 `gate.FinishProbe(err)` 并注明 `server.go` 那份才需要防御性默认值（那里能提前返回）。
 3. **未使用常量 `indexCheckWorkerLimit`**：注释称"为按它计算批大小的调用方保留兼容"，但它是**未导出**常量，包外无法引用——兼容性说法不成立，删除。
 4. **测试桩未使用字段 `forceErrFor`**：会误导读者以为支持按引擎注入错误，删除。

@@ -92,7 +92,7 @@ func runAdminBackup(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}()
 
-	dst, err := os.Create(outPath)
+	dst, err := openPrivateOutput(outPath)
 	if err != nil {
 		return fmt.Errorf("创建备份文件失败: %w", err)
 	}
@@ -202,6 +202,18 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Fail closed if serve still holds the database: replacing the path would
+	// leave the running process writing to the old inode and lose those writes.
+	if _, err := os.Stat(dbPath); err == nil {
+		lockProbe, err := bolt.Open(dbPath, 0o600, &bolt.Options{Timeout: 100 * time.Millisecond})
+		if err != nil {
+			return fmt.Errorf("数据库被占用或不可写(%s),请先停服: %w", dbPath, err)
+		}
+		if err := lockProbe.Close(); err != nil {
+			return fmt.Errorf("关闭数据库锁探测失败: %w", err)
+		}
+	}
+
 	if _, err := os.Stat(dbPath); err == nil && adminRestoreKeepCurrentDB {
 		kept := fmt.Sprintf("%s.pre-restore-%s", dbPath, time.Now().Format("20060102-150405"))
 		if err := copyFile(dbPath, kept); err != nil {
@@ -226,13 +238,26 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func openPrivateOutput(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	// An existing file may have been created with a permissive umask.
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 func copyFile(src, dst string) (retErr error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, in.Close()) }()
-	out, err := os.Create(dst)
+	out, err := openPrivateOutput(dst)
 	if err != nil {
 		return err
 	}

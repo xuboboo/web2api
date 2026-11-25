@@ -15,12 +15,15 @@ const (
 	bucketSettings   = "settings"
 	bucketSessions   = "sessions"
 	bucketUsageDaily = "usage_daily"
+	bucketUsers      = "users"
+	bucketBlacklist  = "blacklist"
 
 	settingUsageSeq            = "usage_seq"
 	settingAdminHash           = "admin_password_hash"
 	settingAdminPasswordCustom = "admin_password_custom"
 	settingTokenVersion        = "admin_token_version"
 	settingFallbackNote        = "storage_fallback_note"
+	settingBlacklistSeeded     = "blacklist_seeded"
 )
 
 // UsagePageFilter selects one usage-journal page (newest first).
@@ -107,6 +110,19 @@ type Store interface {
 	DeleteSession(id string) (bool, error)
 	// DeleteAllSessions revokes every stored session except keepID ("" = all).
 	DeleteAllSessions(keepID string) (int, error)
+
+	// Console users and roles (bucket users; JSON fallback mirrors it).
+	ListUsers() ([]User, error)
+	GetUserByID(id string) (*User, error)
+	GetUserByUsername(username string) (*User, error)
+	PutUser(u *User) error
+	DeleteUser(id string) (bool, error)
+
+	// IP/CIDR blacklist (bucket blacklist; JSON fallback mirrors it).
+	ListBlacklist() ([]BlacklistEntry, error)
+	GetBlacklist(id string) (*BlacklistEntry, error)
+	PutBlacklist(e *BlacklistEntry) error
+	DeleteBlacklist(id string) (bool, error)
 
 	GetSetting(name string) ([]byte, error)
 	PutSetting(name string, value []byte) error

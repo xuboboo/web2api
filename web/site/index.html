@@ -4,28 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Web2API 网站收录查询开放平台</title>
-<meta name="description" content="Web2API 网站收录查询开放平台:一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;附四引擎原始搜索、MCP 与 OpenAPI 双入口 Agent 接入、风控冷却自愈;单二进制 + bbolt 自托管,MIT 开源。">
+<meta name="description" content="Web2API 网站收录查询开放平台:使用 Web2API 批量查询百度、搜狗、360 搜索和必应的收录情况，并通过 MCP 或 OpenAPI 接入。">
 <meta property="og:title" content="Web2API 网站收录查询开放平台">
-<meta property="og:description" content="一次调用判定 URL 是否被百度、搜狗、360 搜索、必应收录;自托管、Agent 双入口(MCP + OpenAPI)。">
+<meta property="og:description" content="自托管的批量收录查询服务，支持百度、搜狗、360 搜索、必应，以及 MCP 与 OpenAPI 接入。">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Web2API 网站收录查询开放平台">
-<!-- A-18:og:url 为 YOUR-DOMAIN 占位,上线时替换为实际域名(与 sitemap.xml 同批填写);
-     og:image 与 twitter:card 待 og.png 素材(1200×630)产出后再添加,避免指向 404 资源 -->
-<meta property="og:url" content="https://YOUR-DOMAIN/web-tool/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='27' cy='27' r='13.5' fill='%23FFFFFF'/%3E%3Cpath d='M20.5 27.5 25.5 32.5 34 22.5' fill='none' stroke='%23177E5B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M37 37 47 47' fill='none' stroke='%23FFFFFF' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
-<script>
-/* 规范 URL 兜底:裸目录路径(无结尾斜杠)会让页面内相对资源(assets/*)解析到站点根,
- * 导致 CSS/JS 404、页面裸奔。服务端已对 /web-tool 与 /web-tool/status 做 301,
- * 这里再兜一层,覆盖 CDN 缓存或用户已打开旧页面刷新的场景。固定前缀 /web-tool 无配置项。 */
-(function () {
-  var p = location.pathname;
-  if (p === '/web-tool' || p === '/web-tool/status') {
-    location.replace(p + '/' + location.search + location.hash);
-  }
-})();
-</script>
 <script src="/web-tool/assets/theme-boot.js?v=20261125"></script>
-<link rel="stylesheet" href="assets/style.css?v=20261118b">
+<link rel="stylesheet" href="assets/style.css?v=20261125g">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
 <body>
@@ -70,20 +56,20 @@
     <div class="container">
       <div class="hero-grid">
         <div>
-          <span class="pill pill-brand hero-pill reveal-hero">单二进制 · 四引擎 · MCP 就绪</span>
-          <h1 class="hero-title reveal-hero" style="--reveal-delay:240ms">一次 API 调用<br>判定四大引擎收录</h1>
-          <p class="hero-lead reveal-hero" style="--reveal-delay:480ms">提交一批 URL,一次调用判定是否被百度、搜狗、360 搜索、必应收录。以 URL 为查询词检索前 10 条结果,跳转还原 + 归一化匹配;单二进制自托管,密钥与用量数据全程本地存储。</p>
+          <span class="pill pill-brand hero-pill reveal-hero">开源 · 自托管</span>
+          <h1 class="hero-title reveal-hero" style="--reveal-delay:240ms">一次 API 调用<br><span>查询四大引擎收录</span></h1>
+          <p class="hero-lead reveal-hero" style="--reveal-delay:480ms">批量查询页面在百度、搜狗、360 搜索和必应中的收录情况。每个引擎分别返回匹配结果，方便核对网址和追踪未命中原因。</p>
           <div class="hero-ctas reveal-hero" style="--reveal-delay:720ms">
             <a class="btn btn-lg btn-primary" href="/web-tool/console/">进入控制台
               <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
             </a>
-            <a class="btn btn-lg btn-secondary" href="#quickstart">查看快速开始</a>
+            <a class="btn btn-lg btn-secondary" href="#quickstart"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 7 5 5-5 5m7 0h4"/></svg>快速开始</a>
           </div>
         </div>
         <div class="diagram dark-window reveal-hero" style="--reveal-delay:480ms" id="demoDiagram">
         <div class="diag-req">
           <div class="diag-tag"><span class="diag-dot"></span>请求</div>
-          <code>GET /web-tool/v1/index/check<br><span class="muted">?url=…&amp;engines=baidu,bing</span></code>
+          <code>GET /web-tool/v1/index/check<br><span class="muted">?url=https://example.com/post-1</span></code>
         </div>
         <div class="diag-stem" aria-hidden="true"></div>
         <div class="diag-hub" aria-hidden="true">
@@ -98,70 +84,11 @@
           <span class="stub s4"></span>
         </div>
         <div class="fan-grid">
-          <div class="exit-card" title="百度 — 批量收录判定">
-            <h3>百度 <span class="eng-en">BAIDU</span><span class="dot-ok" title="示例端点:收录判定" aria-label="示例端点:收录判定"></span></h3>
-            <code>/v1/index/check</code>
-          </div>
-          <div class="exit-card" title="搜狗 — 原始搜索端点">
-            <h3>搜狗 <span class="eng-en">SOGOU</span><span class="dot-ok dot-dim" title="示例端点:原始搜索" aria-label="示例端点:原始搜索"></span></h3>
-            <code>/{engine}/search</code>
-          </div>
-          <div class="exit-card" title="360 搜索 — 原始搜索端点">
-            <h3>360 搜索 <span class="eng-en">SO360</span><span class="dot-ok dot-dim" title="示例端点:原始搜索" aria-label="示例端点:原始搜索"></span></h3>
-            <code>/{engine}/search</code>
-          </div>
-          <div class="exit-card" title="必应 — 批量收录判定">
-            <h3>必应 <span class="eng-en">BING</span><span class="dot-ok" title="示例端点:收录判定" aria-label="示例端点:收录判定"></span></h3>
-            <code>/v1/index/check</code>
-          </div>
+          <div class="exit-card"><p>百度</p><code>baidu</code></div>
+          <div class="exit-card"><p>搜狗</p><code>sogou</code></div>
+          <div class="exit-card"><p>360 搜索</p><code>so360</code></div>
+          <div class="exit-card"><p>必应</p><code>bing</code></div>
         </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ======================== 数据源跑马灯 ======================== -->
-  <section class="marquee-band" aria-label="收录数据源">
-    <div class="container">
-      <span class="eyebrow">四大引擎收录数据,一处聚合</span>
-    </div>
-    <div class="marquee">
-      <div class="marquee-track">
-        <div class="marquee-group">
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-        </div>
-        <div class="marquee-group" aria-hidden="true">
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
-          <span class="mq-item"><b>百度</b><i>Baidu</i></span>
-          <span class="mq-item"><b>搜狗</b><i>Sogou</i></span>
-          <span class="mq-item"><b>360 搜索</b><i>So360</i></span>
-          <span class="mq-item"><b>必应</b><i>Bing</i></span>
         </div>
       </div>
     </div>
@@ -177,15 +104,15 @@
         </div>
         <div class="stat">
           <div class="stat-line"><span class="stat-num" data-count="1">1</span><span class="stat-unit">次调用</span></div>
-          <div class="stat-label">批量判定,一次提交上千条 URL 排队跑完</div>
+          <div class="stat-label">批量判定，可查询任务进度</div>
         </div>
         <div class="stat">
           <div class="stat-line"><span class="stat-num" data-count="3">3</span><span class="stat-unit">行 curl</span></div>
-          <div class="stat-label">复制即可发起首个收录判定</div>
+          <div class="stat-label">换入 API 密钥后即可查询</div>
         </div>
         <div class="stat">
-          <div class="stat-line"><span class="stat-num" data-count="0">0</span><span class="stat-unit">外部依赖</span></div>
-          <div class="stat-label">无数据库、无消息队列,bbolt 单文件即全部存储</div>
+          <div class="stat-line"><span class="stat-num" data-count="0">0</span><span class="stat-unit">外部存储服务</span></div>
+          <div class="stat-label">内置 bbolt，任务保存在本机</div>
         </div>
       </div>
     </div>
@@ -201,14 +128,14 @@
       <div class="card-grid cols-4">
         <div class="f-card reveal">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><polyline points="8.2 11.2 10.4 13.4 14.2 9"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></span><h3>一次调用,判定四引擎</h3></div>
-<p>POST /web-tool/v1/index/check 支持整表提交:≤20 条同步返回,更多条自动转服务端任务队列(202 + job_id,进度/结果/CSV 走 /v1/index/check/jobs/{id}),按引擎实测节奏排队跑完;逐引擎返回 indexed 与匹配详情;1 条 URL × 1 个引擎 = 1 次,计费口径清晰。</p>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><polyline points="8.2 11.2 10.4 13.4 14.2 9"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></span><h3>批量查询四个引擎</h3></div>
+<p>最多 20 条 URL 同步返回。提交更多网址会返回任务 ID，可查询进度、读取结果或下载 CSV。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:240ms">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/><path d="M9 12a3 3 0 0 1 5.4-1.8M15 12a3 3 0 0 1-5.4 1.8"/><path d="M14.6 9v1.6H13M9.4 15v-1.6H11"/></svg></span><h3>风控自动冷却,无需人工干预</h3></div>
-            <p>连续拦截按 10 / 30 / 120 分钟三档自动冷却,240 分钟无拦截计数归零;冷却期零真实请求,到期探测恢复。</p>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 7.6-7 9-4-1.4-7-4.4-7-9V6l7-3z"/><path d="M9 12a3 3 0 0 1 5.4-1.8M15 12a3 3 0 0 1-5.4 1.8"/><path d="M14.6 9v1.6H13M9.4 15v-1.6H11"/></svg></span><h3>遇到风控时自动冷却</h3></div>
+            <p>检测到拦截后暂缓向该引擎发起请求，到期后用一次请求探测是否恢复。冷却时长可按引擎配置。</p>
           </div>
         </div>
         <div class="f-card reveal" style="--reveal-delay:480ms">
@@ -219,7 +146,7 @@
         </div>
         <div class="f-card reveal" style="--reveal-delay:720ms">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><line x1="7" y1="7" x2="7" y2="7.01"/><line x1="7" y1="17" x2="7" y2="17.01"/><line x1="11" y1="7" x2="15" y2="7"/><line x1="11" y1="17" x2="15" y2="17"/></svg></span><h3>单二进制,可自托管</h3></div>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><line x1="7" y1="7" x2="7" y2="7.01"/><line x1="7" y1="17" x2="7" y2="17.01"/><line x1="11" y1="7" x2="15" y2="7"/><line x1="11" y1="17" x2="15" y2="17"/></svg></span><h3>单二进制自托管</h3></div>
             <p>纯 Go 单二进制 + bbolt 单文件存储,零外部数据库与服务依赖;四引擎搜索复用本机 Chrome,固定挂载 /web-tool 子路径部署。</p>
           </div>
         </div>
@@ -229,7 +156,7 @@
       <div class="split">
         <div class="reveal">
           <h3 class="split-title">一次判定的完整语义</h3>
-          <p class="split-lede">判定语义:以 URL 为查询词检索引擎前 10 条结果,跳转链接还原后归一化匹配;目标 URL 不在这 10 条结果中(如未上榜的深链接)会漏报为未收录,建议多引擎交叉验证。</p>
+          <p class="split-lede">服务在搜索结果中匹配目标网址。未命中可能与排名、跳转或结果窗口有关，建议用其他引擎交叉核对。</p>
           <div class="steps">
             <div class="step">
               <span class="step-num">1</span>
@@ -254,8 +181,8 @@
             <div class="step">
               <span class="step-num">3</span>
               <div>
-                <h4>读取 results[].engines[].indexed</h4>
-                <p>match="exact" 即已收录;match="none" 仅表示前 10 条结果中未命中,深链接建议多引擎交叉验证。</p>
+                <h4>读取各引擎的 indexed 字段</h4>
+                <p>match="exact" 表示命中目标网址，match="none" 表示此次查询未命中。</p>
               </div>
             </div>
           </div>
@@ -278,7 +205,7 @@
             </div>
             <button class="copy-btn" type="button" data-copy-panel aria-label="复制当前示例代码">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-              <span class="copy-label">复制</span>
+              <span class="copy-label" aria-live="polite">复制</span>
             </button>
           </div>
 
@@ -391,12 +318,12 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="container">
       <div class="sec-head center reveal">
         <span class="eyebrow">架构</span>
-        <h2>三个平面,一套部署</h2>
+        <h2>一套服务，三种接入方式</h2>
       </div>
       <div class="card-grid cols-3">
         <div class="f-card reveal">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5"/><polyline points="2 15.5 12 22 22 15.5"/></svg></span><h3>数据平面</h3></div>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 12 15 2 8.5"/><polyline points="2 15.5 12 22 22 15.5"/></svg></span><h3>查询 API</h3></div>
             <p>收录判定 + 四引擎原始搜索 + 配额查询,配额 / 限流 / 冷却内建。</p>
             <div class="route-list">
               <div class="route"><code>POST /web-tool/v1/index/check</code><span>批量收录判定(≤20 条同步;>20 条转异步任务)</span></div>
@@ -410,7 +337,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
         <div class="f-card reveal" style="--reveal-delay:240ms">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><h3>Agent 平面</h3></div>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><h3>Agent 接口</h3></div>
             <p>AI Agent 可直接接入:MCP Server 与 OpenAPI 规范双入口,自动可发现。</p>
             <div class="route-list">
               <div class="route"><code>POST /web-tool/mcp</code><span>MCP streamable HTTP,内置 6 个工具(含批量任务)</span></div>
@@ -422,7 +349,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
         <div class="f-card reveal" style="--reveal-delay:480ms">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg></span><h3>控制平面</h3></div>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg></span><h3>管理控制台</h3></div>
             <p>风控与用量治理台:密钥、配额、用量日志、引擎冷却看板、在线调试。</p>
             <div class="route-list">
               <div class="route"><code>/web-tool/api/*</code><span>管理 API:JWT 登录、密钥、配额、用量、冷却状态机</span></div>
@@ -440,18 +367,18 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="container">
       <div class="sec-head center reveal">
         <span class="eyebrow">Agent 接入</span>
-        <h2>为 Agent 而生的两条入口</h2>
+        <h2>通过 MCP 或 OpenAPI 接入</h2>
       </div>
       <div class="card-grid cols-2">
         <div class="dark-card reveal">
           <span class="dk-eyebrow">MCP · STREAMABLE HTTP</span>
-          <h3>一个 MCP Server,主流 Agent 通用</h3>
-          <p class="dk-desc">标准 MCP streamable HTTP(JSON-RPC 2.0),内置 <strong>web_search、check_indexed、get_index_job、cancel_index_job、get_quota、list_engines</strong> 六个工具(批量收录可一次提交整表再轮询进度)。Claude Code、Claude Desktop、ChatGPT、Codex、VS Code Copilot 等已支持远程 MCP 的客户端可直接接入;Cursor、Windsurf、Cline、Gemini CLI 等以各自文档的远程传输支持为准。<strong>必须携带 API Key</strong>,无鉴权请求一律 401。</p>
+          <h3>使用远程 MCP</h3>
+          <p class="dk-desc">支持远程 Streamable HTTP。客户端可查询收录、发起搜索、查询配额，并跟踪或取消批量任务。连接时请携带 API 密钥。</p>
           <div class="mini-term">
             <code id="mcpCmd">claude mcp add --transport http web2api {{ORIGIN}}/web-tool/mcp --header "X-API-Key: sk-w2a-你的密钥"</code>
             <button class="copy-btn" type="button" data-copy-target="#mcpCmd" aria-label="复制 MCP 接入命令">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-              <span class="copy-label">复制</span>
+              <span class="copy-label" aria-live="polite">复制</span>
             </button>
           </div>
           <p class="dk-desc" style="margin-top:12px;font-size:12.5px">其它客户端用等价配置(把 <code class="inline-code">{{ORIGIN}}</code> 换成你的服务地址):</p>
@@ -466,7 +393,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
         <div class="dark-card reveal" style="--reveal-delay:240ms">
           <span class="dk-eyebrow">OPENAPI · LLMS.TXT</span>
-          <h3>标准 OpenAPI,平台/框架直接导入</h3>
+          <h3>导入 OpenAPI 规范</h3>
           <ul class="platform-list">
             <li><b>Dify</b><span>「自定义工具 → 导入 OpenAPI」,鉴权选 API Key / Header <code class="inline-code">X-API-Key</code></span></li>
             <li><b>n8n</b><span>「HTTP Request 节点 → Import cURL」粘贴请求,选 Header Auth 填 X-API-Key</span></li>
@@ -492,27 +419,25 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="container">
       <div class="sec-head center reveal">
         <span class="eyebrow">服务状态</span>
-        <h2>四引擎实时状态</h2>
-        <p class="sec-link"><a href="./status/">查看完整状态页 ↗</a></p>
+        <h2>引擎运行状态</h2>
+        <p class="sec-link"><a href="./status/">打开状态页 →</a></p>
       </div>
       <div class="cooldown-grid">
         <div class="f-card reveal">
           <div class="f-body">
-            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 5 13 19 16 12 22 12"/></svg></span><h3>三档冷却,自动恢复</h3></div>
-            <p>连续拦截触发冷却:第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续 240 分钟无拦截自动归零。到期后放行一个探测请求:成功即恢复,再次被拦截进下一档,其他失败(如超时)按当前档顺延重试。</p>
-            <p class="cool-sub">冷却期内该引擎零接触:相关请求快速失败且不消耗配额,到期自动恢复,全程无需人工干预。客户端接入细节见 <a href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>。</p>
+            <div class="f-head"><span class="f-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 5 13 19 16 12 22 12"/></svg></span><h3>分档冷却与恢复探测</h3></div>
+            <p>引擎被拦截时进入冷却，连续被拦截时逐档延长。随附配置中，百度使用 2 / 10 / 30 分钟，其他引擎使用 10 / 30 / 120 分钟。</p>
+            <p class="cool-sub">冷却期间暂停向该引擎发起搜索请求。到期后先探测，成功后恢复。重试规则详见 <a href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>。</p>
           </div>
         </div>
         <div class="engine-panel reveal" style="--reveal-delay:240ms">
           <div class="engine-panel-head">
             <span class="live-dot" aria-hidden="true"></span>
-            <span class="live-label">实时同步 · 每 10 秒刷新</span>
+            <span class="live-label">当前状态 · 每 10 秒刷新</span>
           </div>
-          <div id="engineStatusBoard" aria-live="polite">
-            <div class="engine-row">
-              <div class="eng-top"><span class="eng-name">…</span><span class="st-pill st-ok">加载中</span></div>
-            </div>
-          </div>
+          <ul id="engineStatusBoard" class="status-list" data-engine-status aria-label="当前引擎状态">
+            <li class="state-message">正在获取引擎状态…</li>
+          </ul>
         </div>
       </div>
     </div>
@@ -523,7 +448,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
     <div class="container">
       <div class="sec-head center reveal">
         <span class="eyebrow">快速开始</span>
-        <h2>三步,跑通你的第一次收录判定</h2>
+        <h2>三步完成首次收录查询</h2>
       </div>
       <div class="qs-grid">
         <div class="cmd-card reveal">
@@ -536,7 +461,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             </a>
           </div>
           <pre id="cmdKey">登录控制台 → 「API 密钥」页 → 创建密钥
-密钥格式 sk-w2a-…,仅在创建时完整展示一次,请立即保存</pre>
+密钥格式 sk-w2a-…,仅在创建时展示完整密钥，请及时保存</pre>
         </div>
         <div class="cmd-card reveal" style="--reveal-delay:240ms">
           <div class="cmd-head">
@@ -544,7 +469,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             <span>发起收录判定</span>
             <button class="copy-btn" type="button" data-copy-target="#cmdCheck" aria-label="复制收录判定 curl 示例">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-              <span class="copy-label">复制</span>
+              <span class="copy-label" aria-live="polite">复制</span>
             </button>
           </div>
           <pre id="cmdCheck">curl -X POST {{ORIGIN}}/web-tool/v1/index/check \
@@ -557,7 +482,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             <span>读取判定结果</span>
             <button class="copy-btn" type="button" data-copy-target="#cmdResult" aria-label="复制响应示例">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-              <span class="copy-label">复制</span>
+              <span class="copy-label" aria-live="polite">复制</span>
             </button>
           </div>
           <pre id="cmdResult">{
@@ -573,7 +498,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         </div>
       </div>
       <div class="qs-notes reveal" style="--reveal-delay:480ms">
-<p class="qs-note">结果字段:<span class="inline-code">indexed</span> 是否收录 · <span class="inline-code">match</span> 匹配精度(exact / none) · <span class="inline-code">meta.units</span> 本次计费次数,字段 units(1 条 URL × 1 个引擎 = 1 次;按成功单元计费,失败单元不计费)。引擎级失败不拖垮整体,对应项返回 error。</p>
+<p class="qs-note"><code class="inline-code">indexed</code> 表示本次搜索是否命中，<code class="inline-code">match</code> 表示匹配方式。<code class="inline-code">meta.units</code> 是请求单元总数；同步查询按成功单元计费，单个引擎失败会在对应结果中返回 <code class="inline-code">error</code>。</p>
         <p class="qs-note">更多端点:GET 单 URL 判定、GET <span class="inline-code">/web-tool/v1/quota</span> 配额查询、GET <span class="inline-code">/{engine}/search</span> 四引擎搜索 —— 全部见 <a href="/web-tool/openapi.yaml">API 文档(OpenAPI 3.1)</a>。</p>
         <p class="qs-note">AI Agent 接入:MCP Server 一条命令即用,见上方 <a href="#agents">Agent 接入区</a>。</p>
       </div>
@@ -588,7 +513,6 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         <h2>接入 Web2API</h2>
         <div class="eco-sub">
           <p>一次调用判定收录,四引擎原始搜索,MCP 与 OpenAPI 双入口。</p>
-          <p>控制台创建密钥即可开始,步骤见上方「快速开始」。</p>
         </div>
         <div class="eco-btns">
           <a class="pill-white" href="/web-tool/console/">进入控制台
@@ -628,6 +552,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
   </div>
 </footer>
 
-<script src="assets/app.js?v=20261118b" defer></script>
+<script src="assets/engine-status.js?v=20261125g" defer></script>
+<script src="assets/app.js?v=20261125f" defer></script>
 </body>
 </html>

@@ -72,7 +72,7 @@ before: 772 MB   after: 2 MB   saved: 770 MB
 go vet ./...                                 无输出（通过）
 go test -p 1 -count=1 ./...                  全部 ok（baidu/bing/cmd/core/core/*/mcp/platform/so360/sogou）
 go build -trimpath -ldflags="-s -w" (linux/amd64, CGO_ENABLED=0)  → 22.3 MB 静态二进制
-go test -race ./...                          本机不可执行：无 gcc/clang（CI 的 ubuntu job 覆盖）
+go test -race ./...                          当时本机无 gcc/clang；后续已通过 Docker Linux 镜像完成全量竞态检测（见 docs/TESTING.md 与 qa/features-audit/race-final.log）
 ```
 
 并行跑全量测试时出现过一次 `VirtualAlloc failed errno=1455`（Windows 提交内存耗尽：27.2/30.3 GB，本机另有 67 个 Chrome 进程），改为 `-p 1` 后连续两次全绿 —— 属本机资源限制，非代码缺陷。

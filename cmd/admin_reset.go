@@ -12,15 +12,18 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/xuboboo/web2api/platform"
 	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -91,10 +94,46 @@ func runAdminReset(cmd *cobra.Command, args []string) error {
 		if settings == nil {
 			return fmt.Errorf("settings bucket 不存在,该文件不是本平台的数据库")
 		}
-		if err := settings.Put([]byte("admin_password_hash"), hash); err != nil {
+		// The global settings credential belongs to the configured bootstrap admin
+		// only. Resetting another account must not silently change admin password.
+		wanted := strings.ToLower(strings.TrimSpace(username))
+		if wanted == strings.ToLower(strings.TrimSpace(config.Platform.AdminUsername)) {
+			if err := settings.Put([]byte("admin_password_hash"), hash); err != nil {
+				return err
+			}
+			if err := settings.Put([]byte("admin_password_custom"), []byte("1")); err != nil {
+				return err
+			}
+		}
+		// Invalidate every previously issued JWT after an offline reset.
+		version, _ := strconv.Atoi(string(settings.Get([]byte("admin_token_version"))))
+		if version < 0 || version >= 1<<30 {
+			version = 0
+		}
+		if err := settings.Put([]byte("admin_token_version"), []byte(strconv.Itoa(version+1))); err != nil {
 			return err
 		}
-		return settings.Put([]byte("admin_password_custom"), []byte("1"))
+		// The users bucket is now the credential source at login time; update
+		// the matching account in the same transaction.
+		users := tx.Bucket([]byte("users"))
+		if users == nil {
+			return nil
+		}
+		return users.ForEach(func(k, v []byte) error {
+			var rec platform.User
+			if err := json.Unmarshal(v, &rec); err != nil {
+				return nil
+			}
+			if strings.ToLower(strings.TrimSpace(rec.Username)) != wanted {
+				return nil
+			}
+			rec.PasswordHash = hash
+			raw, err := json.Marshal(&rec)
+			if err != nil {
+				return err
+			}
+			return users.Put(k, raw)
+		})
 	})
 	closeErr := db.Close()
 	if err != nil {

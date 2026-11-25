@@ -438,11 +438,24 @@ func (p *Platform) jwtGuard() fiber.Handler {
 		if !ok {
 			return errUnauthorized(c)
 		}
+		// Resolve the persisted user on every request: a role change or a
+		// disabled account must take effect without waiting for JWT expiry.
+		// Legacy tokens (no UID) keep working as the bootstrap admin.
+		u, ok := p.resolveRequestUser(claims.Sub, claims.UID)
+		if !ok {
+			return errUnauthorized(c)
+		}
 		c.Locals(localAdminSessionID, claims.SID)
-		c.Locals(localAdminUsername, claims.Sub)
+		c.Locals(localAdminUsername, u.Username)
 		c.Locals(localAdminTokenVersion, claims.TV)
-		if _, err := p.touchSession(claims.SID, false); err != nil {
+		c.Locals(localAdminUserID, u.ID)
+		c.Locals(localAdminRole, u.Role)
+		active, err := p.touchSession(claims.SID, false)
+		if err != nil {
 			logrus.WithError(err).Warn("platform: 更新会话活跃时间失败")
+		}
+		if claims.SID != "" && !active {
+			return errUnauthorized(c)
 		}
 		return c.Next()
 	}

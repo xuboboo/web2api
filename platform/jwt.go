@@ -35,6 +35,10 @@ type jwtClaims struct {
 	SID string `json:"sid,omitempty"`
 	// JTI is the per-token id (fresh on every issuance incl. refresh).
 	JTI string `json:"jti,omitempty"`
+	// UID/Role identify the console user and role. Empty on pre-role tokens,
+	// which are treated as the bootstrap admin for backward compatibility.
+	UID  string `json:"uid,omitempty"`
+	Role string `json:"role,omitempty"`
 }
 
 func base64URLJSON(v any) (string, error) {
@@ -54,13 +58,18 @@ func signJWT(secret []byte, sub string, exp time.Time, tokenVersion int) (string
 // signJWTSession issues an HS256 token bound to the given token_version,
 // session id and per-token id (S4-GAP 会话系统).
 func signJWTSession(secret []byte, sub string, exp time.Time, tokenVersion int, sid, jti string) (string, error) {
+	return signJWTSessionWithUser(secret, sub, "", "", exp, tokenVersion, sid, jti)
+}
+
+// signJWTSessionWithUser adds the user id and role claims to a session token.
+func signJWTSessionWithUser(secret []byte, sub, uid, role string, exp time.Time, tokenVersion int, sid, jti string) (string, error) {
 	header, err := base64URLJSON(map[string]string{"alg": "HS256", "typ": "JWT"})
 	if err != nil {
 		return "", err
 	}
 	claims, err := base64URLJSON(jwtClaims{
 		Sub: sub, IAT: time.Now().Unix(), EXP: exp.Unix(),
-		TV: tokenVersion, SID: sid, JTI: jti,
+		TV: tokenVersion, SID: sid, JTI: jti, UID: uid, Role: role,
 	})
 	if err != nil {
 		return "", err

@@ -43,9 +43,12 @@
     '#/playground': { title: '在线调试', desc: '在面板内发起一次真实收录查询,结果与 POST /v1/index/check 完全一致。' },
     '#/agents': { title: 'Agent 集成', desc: 'MCP 端点与 Claude / Dify / n8n / LangChain 的接入配置。' },
     '#/docs': { title: 'API 文档', desc: '全部 REST 端点、MCP 工具与错误码的完整说明。' },
-    '#/settings': { title: '系统设置', desc: '管理员密码修改与平台安全机制说明。' }
+    '#/settings': { title: '系统设置', desc: '管理员密码修改与平台安全机制说明。' },
+    '#/users': { title: '用户管理', desc: '管理员与运维账号的角色、启停、密码重置与删除。' },
+    '#/logs': { title: '系统日志', desc: '服务与审计日志检索、日志配置查看及过期日志清理。' },
+    '#/blacklist': { title: '黑名单', desc: '按 IP / CIDR 屏蔽来源,支持到期时间与命中统计。' }
   };
-  var ROUTE_RE = /^#\/(overview|engines|keys|usage|playground|agents|docs|settings)$/;
+  var ROUTE_RE = /^#\/(overview|engines|keys|usage|playground|agents|docs|settings|users|logs|blacklist)$/;
 
   var ENGINE_LABEL = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
   var ENGINE_ORDER = ['baidu', 'sogou', 'so360', 'bing'];
@@ -71,6 +74,9 @@
 
   var state = {
     username: '',
+    /* 角色来自 /api/me;旧后端不返回 role 时按 admin 处理(向后兼容) */
+    role: 'viewer',
+    userId: '',
     keysCache: [],
     usage: { limit: 50, offset: 0, keyId: '' }
   };
@@ -579,6 +585,20 @@
       localStorage.removeItem(LS_USERNAME);
     } catch (e) { /* 忽略 */ }
     state.username = '';
+    state.role = 'viewer'; // 未取得权威角色前按最小权限渲染，下次 /api/me 会重新拉取
+    state.userId = '';
+  }
+
+  /* 把 /api/me(或登录响应中的 user)的角色落到全局;缺失/未知 role 兼容为 admin */
+  function applyMe(me) {
+    me = me || {};
+    if (me.username) {
+      state.username = me.username;
+      try { localStorage.setItem(LS_USERNAME, me.username); } catch (e) { /* 忽略 */ }
+    }
+    var r = me.role;
+    state.role = (r === 'admin' || r === 'operator' || r === 'viewer') ? r : 'viewer'; // 未知角色一律最小权限
+    state.userId = (me.user_id === undefined || me.user_id === null) ? '' : me.user_id;
   }
 
   /* 一次性迁移: 老登录态的 token 只进内存,localStorage 立即清空。 */
@@ -608,7 +628,13 @@
     if (data && typeof data === 'object') {
       if (typeof data.error === 'string' && data.error) {
         if (data.error === 'unauthorized') return '未授权或登录已过期';
-        if (data.error === 'forbidden') return '该请求被拒绝访问';
+        if (data.error === 'forbidden') {
+          if (data.reason === 'blacklisted') return '访问被拒绝:当前 IP 或网段已被列入黑名单';
+          if (data.code === 'insufficient_role') return '权限不足:当前角色无权执行该操作';
+          return '该请求被拒绝访问';
+        }
+        if (data.reason === 'blacklisted') return '访问被拒绝:当前 IP 或网段已被列入黑名单';
+        if (data.code === 'insufficient_role' || data.reason === 'insufficient_role') return '权限不足:当前角色无权执行该操作';
         if (data.error === 'quota_exceeded') return '调用配额已用尽';
         if (data.error === 'rate_limited') return '请求过于频繁,请稍后再试';
         if (data.error === 'method_not_allowed') return '该接口不支持此 HTTP 方法';
@@ -889,6 +915,9 @@
     else if (hash === '#/engines') pageEngines(root, actions);
     else if (hash === '#/keys') pageKeys(root, actions);
     else if (hash === '#/usage') pageUsage(root, actions);
+    else if (hash === '#/users') pageUsers(root, actions);
+    else if (hash === '#/logs') pageLogs(root, actions);
+    else if (hash === '#/blacklist') pageBlacklist(root, actions);
     else if (hash === '#/playground') pagePlayground(root);
     else if (hash === '#/agents') pageAgents(root);
     else if (hash === '#/settings') pageSettings(root);
@@ -3320,15 +3349,16 @@ async def run():
 
     /* 两栏:左目录(激活=--fg + --accent 底)+ 右 prose;目录锚点滚动 + scrollspy */
     var NAVS = [
-      ['docs-overview', '概述'],
+      ['docs-overview', '第一次调用'],
       ['docs-auth', '鉴权'],
       ['docs-index-post', 'POST /v1/index/check'],
       ['docs-index-get', 'GET /v1/index/check'],
-      ['docs-index-jobs', 'GET /v1/index/check/jobs/{id}'],
+      ['docs-index-jobs', '异步任务与 CSV'],
       ['docs-quota', 'GET /v1/quota'],
       ['docs-engines', 'GET /v1/engines'],
       ['docs-mcp', 'MCP /web-tool/mcp'],
-      ['docs-admin', '管理 API 一览'],
+      ['docs-admin', '管理 API 与权限'],
+      ['docs-health', '健康与引擎状态'],
       ['docs-ratelimit', '限流与冷却'],
       ['docs-errors', '错误码'],
       ['docs-assets', 'Agent 静态资源']
@@ -3376,14 +3406,18 @@ async def run():
     pageRoot.appendChild(el('div', { class: 'docs-layout' }, toc, main));
     var root = main; // 章节统一注入右栏
 
-    /* ---- 概述 ---- */
+    /* ---- 第一次调用 ---- */
     root.appendChild(docSection({
       id: 'docs-overview',
-      title: '概述',
+      title: '第一次调用',
       children: [
-        p('Web2API 是<strong>单二进制自托管的「网站收录查询开放平台」</strong>。提交文章或页面 URL 列表,即可查询百度(baidu)、搜狗(sogou)、360(so360)、必应(bing)四大引擎是否已收录对应页面。平台同时提供四引擎通用搜索与 MCP Agent 端点。'),
-        p('单个引擎失败(反爬拦截、验证码、熔断、冷却)不影响整体响应:该引擎项返回 error,HTTP 状态仍为 200。'),
-        p('Base URL:<code>' + BASE + '</code>(固定前缀,不可配置)。下文示例均使用该地址;若从其它机器访问,请把主机名替换为服务器实际地址,密钥换成自己的。全部端点清单见文末「Agent 静态资源」。')
+        p('服务地址为 <code>' + BASE + '</code>。从其他机器访问时，使用部署后的域名或 IP，并保留 <code>/web-tool</code> 前缀。'),
+        ulHtml([
+          '在「API 密钥」页创建并保存完整密钥。下方示例中的密钥需要替换。',
+          '调用 <code>GET /v1/quota</code> 验证密钥。这个请求不会访问搜索引擎。',
+          '用 <code>POST /v1/index/check</code> 提交 URL。只查百度时，传入 <code>"engines":["baidu"]</code>。'
+        ]),
+        p('1–20 条会在整批结束后返回 <code>200</code>。超过 20 条且任务队列开启时返回 <code>202</code>，可轮询任务并下载 CSV。')
       ]
     }));
 
@@ -3409,10 +3443,11 @@ async def run():
       title: '/v1/index/check',
       sub: '批量查询收录状态',
       children: [
-        p('提交 URL 列表查询各引擎收录情况:≤20 条同步返回结果;更多条(<code>index_jobs.max_urls</code>,默认 5000)自动转入服务端任务队列,返回 <code>202</code> + <code>job_id</code>,之后用 <code>GET /v1/index/check/jobs/{id}</code> 查进度、<code>/results</code> 取结果(可 <code>?format=csv</code>)。计费按次:1 条 URL × 1 个引擎 = 1 次。'),
+        p('提交 ≤20 条 URL 时，同一引擎按顺序逐条查，不同引擎可以并行。接口等整批结束后一次性返回 JSON。百度默认每分钟放行 5 次、突发额度为 1，20 条约需 4 分钟。'),
+        p('超过 20 条且已开启任务队列时，返回 <code>202</code> 和任务 ID。同步按成功单元扣费，未命中也计费。异步按提交的 URL 条数 × 引擎数扣费，重复 URL 也计入。提交前可自行去重。'),
         paramTable([
           ['urls', 'array[string]', '是', '待查询 URL 列表,1..<code>index_jobs.max_urls</code>(默认 5000);&gt;20 条转异步任务'],
-          ['engines', 'array[string]', '否', '引擎列表,默认 <code>["baidu","sogou","so360","bing"]</code>;接受别名 <code>"360"</code>(等同 so360)']
+          ['engines', 'array[string]', '否', '省略时使用全部可用引擎。只查百度填 <code>["baidu"]</code>。<code>"360"</code> 是 <code>"so360"</code> 的别名。']
         ]),
         codeBlock('cURL',
           'curl -X POST "' + BASE + '/v1/index/check" \\\n' +
@@ -3420,10 +3455,9 @@ async def run():
           '  -H "Content-Type: application/json" \\\n' +
           "  -d '{\n" +
           '    "urls": [\n' +
-          '      "https://example.com/blog/post-1",\n' +
-          '      "https://example.com/blog/post-2"\n' +
+          '      "https://www.onlinedown.net/article/10049071.htm"\n' +
           '    ],\n' +
-          '    "engines": ["baidu", "sogou", "so360", "bing"]\n' +
+          '    "engines": ["baidu"]\n' +
           "  }'"),
         codeBlock('JavaScript · fetch',
           'const resp = await fetch("' + BASE + '/v1/index/check", {\n' +
@@ -3433,40 +3467,36 @@ async def run():
           '    "Content-Type": "application/json"\n' +
           '  },\n' +
           '  body: JSON.stringify({\n' +
-          '    urls: ["https://example.com/blog/post-1"],\n' +
-          '    engines: ["baidu", "bing"] // 可选,默认四引擎\n' +
+          '    urls: ["https://www.onlinedown.net/article/10049071.htm"],\n' +
+          '    engines: ["baidu"]\n' +
           '  })\n' +
           '});\n' +
           'const data = await resp.json();\n' +
-          'console.log(data.results[0].engines.baidu.indexed); // true / false'),
-        p('<strong>响应示例</strong>'),
+          'if (resp.status !== 200) throw new Error("HTTP " + resp.status + ": " + data.error);\n' +
+          'const baidu = data.results[0].engines.baidu;\n' +
+          'console.log(baidu.error ? baidu.error.code : baidu.indexed);'),
+        p('先判断 HTTP 状态。收到 <code>200</code> 后逐条查看对应引擎结果。含 <code>error</code> 表示查询失败，<code>indexed: false</code> 表示本次查询完成但未命中。'),
         codeBlock('JSON · 200', '{\n' +
           '  "id": "b7e2f9a0-3c4d-4e5f-8a1b-2c3d4e5f6a7b",\n' +
-          '  "created_at": "2026-11-15T10:30:03+08:00",\n' +
+          '  "created_at": "2026-11-25T07:05:39Z",\n' +
           '  "results": [\n' +
           '    {\n' +
-          '      "url": "https://example.com/blog/post-1",\n' +
+          '      "url": "https://www.onlinedown.net/article/10049071.htm",\n' +
           '      "engines": {\n' +
           '        "baidu": {\n' +
           '          "indexed": true,\n' +
           '          "match": "exact",\n' +
-          '          "matched_result_url": "https://example.com/blog/post-1",\n' +
-          '          "total_results": 10,\n' +
+          '          "matched_result_url": "http://www.onlinedown.net/article/10049071.htm",\n' +
+          '          "total_results": 8,\n' +
           '          "took_ms": 1820\n' +
-          '        },\n' +
-          '        "bing": {\n' +
-          '          "error": { "code": "blocked", "message": "search engine blocked the request" }\n' +
           '        }\n' +
           '      }\n' +
           '    }\n' +
           '  ],\n' +
           '  "meta": {\n' +
-          '    "request_id": "9f8b3c2a-1d4e-4f6a-b7c8-9d0e1f2a3b4c",\n' +
-          '    "took_ms": 3421,\n' +
-          '    "units": 8,\n' +
-          '    "engines_cooldown": [\n' +
-          '      { "engine": "sogou", "until": "2026-11-15T10:40:00+08:00", "reason": "COOLDOWN" }\n' +
-          '    ]\n' +
+          '    "request_id": "b7e2f9a0-3c4d-4e5f-8a1b-2c3d4e5f6a7b",\n' +
+          '    "took_ms": 1830,\n' +
+          '    "units": 1\n' +
           '  }\n' +
           '}'),
         fieldTable([
@@ -3479,7 +3509,7 @@ async def run():
           ['results[].engines.&lt;engine&gt;.total_results', 'SERP 返回的结果总数'],
           ['results[].engines.&lt;engine&gt;.took_ms', '该引擎耗时(毫秒)'],
           ['results[].engines.&lt;engine&gt;.error', '引擎级失败信息,如 <code>{"code":"blocked","message":"…"}</code>;不影响整体,HTTP 仍为 200'],
-          ['meta.request_id / meta.took_ms / meta.units', '请求 ID(UUID)/ 总耗时(ms)/ 计费次数(URL 数 × 引擎数)'],
+          ['meta.request_id / meta.took_ms / meta.units', '请求 ID / 总耗时（毫秒）/ 请求单元数（URL 数 × 引擎数）'],
           ['meta.engines_cooldown', '处于冷却期的引擎列表:<code>engine / until(恢复时间)/ reason</code>;冷却引擎的单元快速失败并返回 <code>engine_cooldown</code>']
         ])
       ]
@@ -3521,7 +3551,8 @@ async def run():
       title: '/v1/index/check/jobs/{id}',
       sub: '批量任务进度 / 结果 / 取消(不计费)',
       children: [
-        p('超过 20 条的提交会返回 <code>202</code> + <code>job_id</code>;服务端按引擎实测节奏串行执行(百度默认 12 秒/条),遇到验证码冷却会等冷却结束再继续(<code>status:"waiting"</code> + <code>wait_seconds</code>),被挡住的单条自动重排。任务状态落盘,进程重启后自动续跑,已完成的 URL 不重复查询。'),
+        p('收到 <code>202</code> 后保存 <code>job_id</code>。使用提交时的密钥请求 <code>poll_url</code>，任务进入 <code>done</code> 后用 <code>results_url</code> 获取 JSON，或用 <code>csv_url</code> 下载 CSV。链接已含 <code>/web-tool</code>。'),
+        p('所选引擎全部冷却时，任务进入 <code>waiting</code>，可按 <code>wait_seconds</code> 延长轮询间隔。<code>cancelled</code> 和 <code>failed</code> 也是终态，可读取已完成的结果。若提交时连接中断，先查最近任务，重复提交可能再次扣费。'),
         paramTable([
           ['GET …/jobs', '—', '否', '最近任务列表,<code>?limit=</code>(默认 50,最大 500)'],
           ['GET …/jobs/{id}', '—', '—', '进度:<code>status</code>、<code>progress</code>、<code>indexed/not_indexed/failed/retrying</code>、<code>eta_seconds</code>、<code>interval_ms</code>'],
@@ -3608,7 +3639,7 @@ async def run():
         p('服务端通过 <code>Mcp-Session-Id</code> 响应头下发会话 ID,后续请求需原样带回。'),
         paramTable([
           ['web_search', 'object', 'query 必填', '按关键词搜索,返回 rank、title、url、snippet。engine 可选 baidu|sogou|so360|bing,默认 baidu;limit 默认 10'],
-          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态,1–5000 条 URL;≤20 条同步返回,>20 条转异步任务并返回 job_id;计费按 URL 数 × 引擎数计次'],
+          ['check_indexed', 'object', 'urls 必填', '批量查询收录状态。≤20 条同步返回，>20 条转异步任务并返回 job_id。同步按成功单元计费，异步按提交单元计费。'],
 ['get_index_job', 'object', 'job_id 必填', '查询异步收录任务进度(status/progress/eta_seconds);include_results=true 时附带结果行,不计费'],
 ['cancel_index_job', 'object', 'job_id 必填', '取消排队中/运行中的收录任务,不计费'],
           ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
@@ -3625,16 +3656,17 @@ async def run():
     /* ---- 管理 API 一览 ---- */
     root.appendChild(docSection({
       id: 'docs-admin',
-      title: '管理 API 一览(JWT Bearer)',
+      title: '管理 API 与权限',
       children: [
-        p('除 <code>POST /api/auth/login</code> 外均需 <code>Authorization: Bearer &lt;JWT&gt;</code>(面板登录获得)。管理 API 全局限速默认 60 次/分钟,超限返回 429 与 <code>Retry-After</code>。'),
+        p('登录后，程序可使用 <code>Authorization: Bearer &lt;JWT&gt;</code>，浏览器控制台使用会话 Cookie。角色权限依次为 viewer、operator、admin。角色不足返回 <code>403 insufficient_role</code>。'),
+        p('读取状态、统计、审计、用量及在线调试需要 viewer。密钥写操作、引擎冷却操作和黑名单管理需要 operator。用户管理、撤销指定会话、下载备份和日志清理需要 admin。'),
         paramTable([
           ['POST /api/auth/login', '—', '—', '管理员登录,返回 token、expires_in 与 user。同一用户名连续 5 次失败将锁定 15 分钟(换 IP 不重置),期间返回 429 too_many_attempts'],
-          ['POST /api/auth/password', 'JSON', '—', '修改管理员密码。请求体为 old_password 与 new_password(至少 8 位);成功后全部旧 token 立即失效'],
+          ['POST /api/auth/password', 'JSON', '—', '用 old_password 与 new_password 修改当前账号密码。新密码按服务配置校验。配置中的初始管理员改密会使全局旧 JWT 失效，其他账号改密撤销本人会话。'],
           ['GET /api/me', '—', '—', '当前管理员与调用概况'],
-          ['POST /api/keys', 'JSON', '—', '创建 API 密钥。请求体为 name 与可选的 daily_quota;完整密钥仅返回一次'],
+          ['POST /api/keys', 'JSON', '—', '创建密钥。name 必填，可传 daily_quota、expires_at 和 allowed_ips。完整密钥仅在创建或轮换时返回。'],
           ['GET /api/keys', '—', '—', '密钥列表(新→旧)'],
-          ['PATCH /api/keys/{id}', 'JSON', '—', '更新名称 / 状态 / 日配额'],
+          ['PATCH /api/keys/{id}', 'JSON', '—', '更新名称、状态、日配额、过期时间或允许访问的 IP / CIDR。'],
           ['DELETE /api/keys/{id}', '—', '—', '删除密钥'],
           ['GET /api/stats/overview', '—', '—', '总览统计(今日 / 累计 / 24h 成功率)'],
           ['GET /api/stats/timeseries', 'Query', '—', '按日时间序列 ?days=1..90,默认 14'],
@@ -3651,12 +3683,35 @@ async def run():
           ['GET /api/audit', 'Query', '—', '安全审计轨迹 ?limit&offset,分页返回总条数与 items 数组(动作 / 对象 / 时间 / IP)'],
           ['GET /api/usage/export', 'Query', '—', '用量导出 ?format=csv|json&key_id&from&to'],
           ['GET /api/reconcile', 'Query', '—', '记账对账 ?date=YYYY-MM-DD,返回扣费与流水差异数'],
-          ['GET /api/admin/backup', '—', '—', '下载 bbolt 一致性快照(attachment)'],
-          ['GET /api/runtime', '—', '—', '运行时指标(内存 / goroutine / Go 版本)']
-        ].map(function (r) {
-          // 管理端点表复用参数表的 4 列结构:端点/类型/必填→—/说明
-          return r;
-        }))
+          ['GET /api/admin/backup', '—', '—', '下载当前存储的 .db 或 .json 快照。'],
+          ['GET /api/runtime', '—', '—', '查看内存、goroutine 数量、Go 版本及运行时长。'],
+          ['GET /api/users', '—', '—', '查看用户、角色和状态。'],
+          ['POST /api/users', 'JSON', '—', '提交 username、password 和 role 创建用户。'],
+          ['PATCH /api/users/{id}', 'JSON', '—', '更新角色或状态。'],
+          ['DELETE /api/users/{id}', '—', '—', '删除用户。'],
+          ['POST /api/users/{id}/password', 'JSON', '—', '提交 new_password 重置用户密码。'],
+          ['GET /api/blacklist', '—', '—', '查看 IP 和 CIDR 规则。'],
+          ['POST /api/blacklist', 'JSON', '—', '提交 value 创建规则，可设置备注和过期时间。'],
+          ['PATCH /api/blacklist/{id}', 'JSON', '—', '修改备注或过期时间。'],
+          ['DELETE /api/blacklist/{id}', '—', '—', '删除规则。'],
+          ['GET /api/logs', 'Query', '—', '使用 level、q、since、limit 和 offset 查询服务日志。'],
+          ['GET /api/logs/config', '—', '—', '查看日志轮转和保留设置。'],
+          ['POST /api/logs/cleanup', '—', '—', '按当前保留策略清理过期归档日志。']
+        ])
+      ]
+    }));
+
+    root.appendChild(docSection({
+      id: 'docs-health',
+      title: '健康与引擎状态',
+      children: [
+        fieldTable([
+          ['GET /health', '公开。整体健康或部分引擎可用时返回 200，全部不可用时返回 503。'],
+          ['GET /ready', '公开。返回 ready，服务停机排水时返回 503 和 draining。'],
+          ['GET /engines/status', '公开。返回冷却与熔断状态，冷却时可读取 <code>until</code>。该请求不会访问搜索引擎。'],
+          ['GET /stats、/stats/cache、/stats/proxy、/stats/cb', '配置模板默认需要 API Key，由 <code>security.data_plane_auth</code> 控制。'],
+          ['GET /metrics', '配置了指标专用 token 时使用 Bearer 鉴权，否则只允许回环来源。']
+        ])
       ]
     }));
 
@@ -3667,9 +3722,9 @@ async def run():
       children: [
         ulHtml([
           '<strong>管理 API 限速</strong>:默认 60 次/分钟。超限返回 429,响应携带 <code>Retry-After</code>。',
-          '<strong>登录防爆破</strong>:同一用户名连续 5 次密码失败即锁定 15 分钟(按用户名跨 IP 聚合,换 IP 不会重置)。期间登录返回 <code>429 {"error":"too_many_attempts"}</code> 与 <code>Retry-After</code>。',
-          '<strong>引擎冷却</strong>(每引擎独立):引擎返回 blocked(403)、429 或 captcha 时触发。第 1 次冷却 10 分钟,第 2 次 30 分钟,第 3 次及以上 120 分钟;连续 240 分钟无拦截则计数归零。',
-          '<strong>冷却期内</strong>:该引擎的请求立即返回 <code>503 engine_cooldown</code>(携带 <code>Retry-After</code>),不发真实请求。<code>meta.engines_cooldown</code> 会列出冷却中的引擎。',
+          '<strong>登录防爆破</strong>:登录失败按用户名在不同来源间累计。达到实例配置的阈值后，登录返回 <code>429 {"error":"too_many_attempts"}</code> 与 <code>Retry-After</code>。',
+          '<strong>引擎冷却</strong>由拦截（403）、429 或验证码触发。默认三档为 10、30、120 分钟，随仓库提供的配置将百度覆盖为 2、10、30 分钟。正常查完一批没有额外冷却，仍按引擎限流。',
+          '同步收录请求开始时，若所选引擎全部已冷却，返回 <code>503 engine_cooldown</code> 和 <code>Retry-After</code>。若部分已冷却或批内触发冷却，被跳过的单元在 200 响应内给出 <code>engine_cooldown</code> 和剩余秒数。异步任务可以等待冷却结束。',
           '<strong>到期恢复</strong>:冷却到期后放行一个探测请求,成功即恢复,再次被拦截进下一档,其他失败(如超时)按当前档顺延重试。管理员可在「引擎状态」页强制恢复或强制冷却。'
         ])
       ]
@@ -3692,7 +3747,8 @@ async def run():
           ['429', 'rate_limited', '请求过于频繁(公网或管理面限速);带 <code>Retry-After</code>'],
           ['429', 'too_many_attempts', '登录失败次数过多,已锁定;带 <code>Retry-After</code>'],
           ['429', 'captcha_detected', '引擎返回验证码(引擎级 429 不影响批量其它引擎)'],
-          ['503', 'engine_cooldown', '引擎冷却中:<code>{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}</code>;带 <code>Retry-After</code>'],
+          ['503', 'engine_cooldown', '同步查询开始时所选引擎全部冷却。按 <code>Retry-After</code> 或 <code>retry_after_seconds</code> 等待。'],
+          ['503', 'job_queue_full / server_draining', '异步提交未入队也未扣费。按 <code>Retry-After</code> 等待后再提交。'],
           ['503', 'circuit_open / proxy_*', '熔断开启或代理类失败(auth / connect / timeout / unavailable)'],
           ['504', 'search_timeout / request_timeout / engine_queue_exceeded', '引擎搜索超时 / 整体请求超时 / 批量限流排队超出请求预算'],
           ['501', 'not_implemented', '该引擎未实现所请求的能力'],
@@ -3724,7 +3780,7 @@ async def run():
       children: [
         p('面向 Agent / 客户端的全量机器可读描述,随服务自动提供:'),
         ulHtml([
-          '<a href="' + BASE + '/openapi.yaml" target="_blank" rel="noopener noreferrer">openapi.yaml</a> — OpenAPI 3.1 全端点描述(可直接导入 Dify / Apifox 等)',
+          '<a href="' + BASE + '/openapi.yaml" target="_blank" rel="noopener noreferrer">openapi.yaml</a> — 公开 API 的 OpenAPI 3.1 规范，导入工具时可加 <code>?raw=1</code> 获取 YAML',
           '<a href="' + BASE + '/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a> — 平台简介 + 端点清单(Agent 友好格式)',
           'MCP 接入配置示例见「<a href="#/agents">Agent 集成</a>」页(Claude / Dify / n8n / LangChain)。'
         ])
@@ -3871,16 +3927,16 @@ async def run():
           confirmPwd),
         err,
         submitBtn,
-        el('div', { class: 'form-hint', style: 'margin-top:12px;', text: '修改成功后需重新登录。' }))); // P-12:脚注缩短,完整表述仅保留在「安全机制」卡
+        el('div', { class: 'form-hint', style: 'margin-top:12px;', text: '修改成功后当前会话自动使用新 token；其它会话与旧 token 立即失效。' }))); // P-12:脚注缩短,完整表述仅保留在「安全机制」卡
 
     /* ---- 安全机制说明 ---- */
     var infoCard = el('div', { class: 'card', id: 'st-security' },
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '安全机制' })),
       el('div', { class: 'card-body' },
         el('ul', { class: 'info-list' },
-          el('li', null, el('b', { text: '登录锁定:' }), '同一用户名连续 5 次密码错误即锁定 15 分钟(按用户名统计,换 IP 不重置)。期间登录返回 429 too_many_attempts,响应携带 Retry-After。'),
+          el('li', null, el('b', { text: '登录锁定:' }), '登录失败按用户名累计。达到配置的阈值后返回 429，响应中的 Retry-After 表示可重试时间。'),
           el('li', null, el('b', { text: '管理 API 限速:' }), '管理 API(/api/*)默认限速 60 次/分钟,超限返回 429,响应携带 Retry-After。'),
-          el('li', null, el('b', { text: '会话失效:' }), '密码以 bcrypt 哈希存储。修改密码后,全部已登录 token(含当前浏览器)立即失效,需重新登录。'),
+          el('li', null, el('b', { text: '会话失效:' }), '密码以 bcrypt 哈希存储。修改后当前浏览器自动换用新 token；配置管理员改密会使全部旧 token 与其它会话立即失效，其它账号只撤销本人会话。'),
           el('li', null, el('b', { text: '公网鉴权:' }), '公网 API 与 MCP 均使用 X-API-Key。密钥以哈希存储,面板中仅可见前缀。'))));
 
     /* ---- 会话管理(UI 壳:GET /api/sessions 随服务端新版本提供) ---- */
@@ -4102,6 +4158,690 @@ async def run():
     loadAudit();
   }
 
+  /* ================= 8b. 页面:用户管理 / 系统日志 / 黑名单 =================
+   * 角色规则:admin 全部可写;operator 可管理黑名单与清理日志,用户列表只读;
+   * viewer 三组页面均只读(隐藏写按钮 + 就地提示,不强制登出)。
+   * 403 的 insufficient_role / blacklisted 由 extractErrMsg 转成中文提示。 */
+
+  var ROLE_LABEL = { admin: '管理员', operator: '运维员', viewer: '只读用户' };
+
+  function currentRole() { return state.role || 'viewer'; }
+  function canWriteUsers() { return currentRole() === 'admin'; }
+  function canWriteBlacklist() { return currentRole() !== 'viewer'; }
+  function canCleanupLogs() { return currentRole() === 'admin'; }
+
+  /* 只读提示:留在页面内,不弹窗、不跳转 */
+  function roleHintNode(text) {
+    return el('div', { class: 'role-hint', text: text });
+  }
+
+  /* 通用分页:不依赖 state.usage,供本组页面复用 */
+  function buildAdminPagination(total, offset, limit, onChange) {
+    total = Number(total) || 0;
+    var from = total ? offset + 1 : offset;
+    var to = Math.min(total, offset + limit);
+    var prevBtn = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '上一页' });
+    prevBtn.disabled = offset <= 0;
+    prevBtn.addEventListener('click', function () { onChange(Math.max(0, offset - limit)); });
+    var nextBtn = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '下一页' });
+    nextBtn.disabled = to >= total;
+    nextBtn.addEventListener('click', function () { onChange(offset + limit); });
+    return el('div', { class: 'pagination' },
+      el('span', { class: 'page-info', text: '第 ' + from + ' – ' + to + ' 条,共 ' + fmtNumber(total) + ' 条' }),
+      prevBtn, nextBtn);
+  }
+
+  function rolePill(role) {
+    var r = String(role || '');
+    var cls = r === 'admin' ? 'pill-indigo' : (r === 'operator' ? 'pill-amber' : 'pill-gray');
+    return el('span', { class: 'pill ' + cls, text: ROLE_LABEL[r] || (r || '未知') });
+  }
+
+  function userStatusPill(status) {
+    var s = String(status || '').toLowerCase();
+    var active = (s === 'active' || s === 'enabled' || s === '正常' || s === '1');
+    return el('span', { class: 'pill ' + (active ? 'pill-green' : 'pill-gray'), text: active ? '启用' : '停用' });
+  }
+
+  function logLevelPill(level) {
+    var lv = String(level || '').toLowerCase();
+    var cls = 'pill-gray';
+    if (lv === 'error' || lv === 'fatal') cls = 'pill-red';
+    else if (lv === 'warn' || lv === 'warning') cls = 'pill-amber';
+    else if (lv === 'info') cls = 'pill-indigo';
+    return el('span', { class: 'pill ' + cls, text: lv ? lv.toUpperCase() : '未知' });
+  }
+
+  function buildRoleSelect(current) {
+    var sel = el('select', { class: 'inline-select', 'aria-label': '角色' });
+    [['admin', '管理员'], ['operator', '运维员'], ['viewer', '只读用户']].forEach(function (p) {
+      sel.appendChild(el('option', { value: p[0], text: p[1] }));
+    });
+    sel.value = (current === 'admin' || current === 'operator' || current === 'viewer') ? current : 'viewer';
+    return sel;
+  }
+
+  function buildUserStatusSelect(current) {
+    var sel = el('select', { class: 'inline-select', 'aria-label': '状态' });
+    sel.appendChild(el('option', { value: 'active', text: '启用' }));
+    sel.appendChild(el('option', { value: 'disabled', text: '停用' }));
+    sel.value = (current === 'active' || current === 'enabled') ? 'active' : 'disabled';
+    return sel;
+  }
+
+  /* ---------- 用户管理 ---------- */
+
+  function pageUsers(root, actions) {
+    var st = { offset: 0, limit: 20 };
+    var all = [];
+    var first = true;
+    var seq = 0;
+
+    actions.appendChild(el('button', {
+      class: 'btn btn-secondary btn-sm', type: 'button',
+      html: ICONS.refresh + '<span>刷新</span>',
+      onclick: function () { loadAll(); }
+    }));
+    if (canWriteUsers()) {
+      actions.appendChild(el('button', {
+        class: 'btn btn-primary btn-sm', type: 'button',
+        html: ICONS.plus + '<span>新建用户</span>',
+        onclick: function () { openCreateUserModal(loadAll); }
+      }));
+    } else {
+      root.appendChild(roleHintNode('当前角色无权查看用户列表;请使用管理员账号登录。'));
+    }
+
+    var card = el('div', { class: 'card' });
+    root.appendChild(card);
+
+    function loadAll() {
+      if (first) {
+        first = false;
+        card.innerHTML = '';
+        card.appendChild(skeletonBlock([{ w: 'w30' }, { w: 'w80' }, { w: 'w60' }]));
+      } else {
+        card.classList.add('is-busy');
+      }
+      var cur = ++seq;
+      api('GET', '/api/users').then(function (data) {
+        if (cur !== seq) return;
+        card.classList.remove('is-busy');
+        data = data || {};
+        all = Array.isArray(data.items) ? data.items : [];
+        renderTable();
+      }).catch(function (e) {
+        if (cur !== seq) return;
+        card.classList.remove('is-busy');
+        card.innerHTML = '';
+        card.appendChild(errorNode(e, loadAll));
+      });
+    }
+
+    function renderTable() {
+      card.classList.remove('is-busy');
+      card.innerHTML = '';
+      if (!all.length) {
+        card.appendChild(emptyNode('暂无用户', '还没有用户记录,可由管理员创建管理员 / 运维 / 只读账号。'));
+        return;
+      }
+      var page = all.slice(st.offset, st.offset + st.limit);
+      if (!page.length && st.offset > 0) {
+        st.offset = Math.max(0, Math.floor((all.length - 1) / st.limit) * st.limit);
+        page = all.slice(st.offset, st.offset + st.limit);
+      }
+      card.appendChild(buildUsersTable(page, loadAll));
+      card.appendChild(buildAdminPagination(all.length, st.offset, st.limit, function (next) {
+        st.offset = next;
+        renderTable();
+      }));
+    }
+    loadAll();
+  }
+
+  function buildUsersTable(items, reload) {
+    var thead = el('thead', null, el('tr', null,
+      el('th', { text: '用户名' }),
+      el('th', { text: '角色' }),
+      el('th', { text: '状态' }),
+      el('th', { text: '最后登录' }),
+      el('th', { text: '创建时间' }),
+      el('th', { text: '操作' })));
+    var tbody = el('tbody');
+
+    items.forEach(function (u) {
+      u = u || {};
+      var uid = encodeURIComponent(String(u.id));
+      var uname = u.username || '—';
+      var acts = [];
+      if (canWriteUsers()) {
+        acts.push(el('button', {
+          class: 'btn btn-ghost btn-sm', type: 'button', text: '编辑',
+          onclick: function () { openEditUserModal(u, reload); }
+        }));
+        acts.push(el('button', {
+          class: 'btn btn-ghost btn-sm', type: 'button', text: '重置密码',
+          onclick: function () { openResetUserPasswordModal(u, reload); }
+        }));
+        var delBtn = el('button', { class: 'btn btn-text-danger', type: 'button', text: '删除' });
+        delBtn.addEventListener('click', function () {
+          confirmDialog({
+            title: '删除用户',
+            message: '确定删除用户「' + uname + '」吗?该用户将无法再登录,操作不可恢复。',
+            confirmText: '删除'
+          }).then(function (yes) {
+            if (!yes) return;
+            setBtnLoading(delBtn, true);
+            api('DELETE', '/api/users/' + uid)
+              .then(function () { toast('用户已删除', 'success'); reload(); })
+              .catch(function (e) { toast(e.message, 'error'); setBtnLoading(delBtn, false); });
+          });
+        });
+        acts.push(delBtn);
+      }
+      tbody.appendChild(el('tr', null,
+        el('td', { class: 'td-strong', text: uname }),
+        el('td', null, rolePill(u.role)),
+        el('td', null, userStatusPill(u.status)),
+        el('td', { class: 'td-mono', text: u.last_login_at ? fmtDateTime(u.last_login_at) : '从未登录' }),
+        el('td', { class: 'td-mono', text: fmtDateTime(u.created_at) }),
+        el('td', null, acts.length ? el('div', { class: 'row-actions' }, acts) : el('span', { class: 'muted', text: '—' }))));
+    });
+    return el('div', { class: 'table-scroll' }, el('table', { class: 'table' }, thead, tbody));
+  }
+
+  function openCreateUserModal(onDone) {
+    var nameInput = el('input', { class: 'input', type: 'text', maxlength: '64', autocomplete: 'off', placeholder: '请输入用户名' });
+    var pwdInput = el('input', { class: 'input', type: 'password', maxlength: '128', autocomplete: 'new-password', placeholder: '至少 8 位' });
+    var roleSelect = buildRoleSelect('viewer');
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
+    var body = el('div', { class: 'modal-body' },
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '用户名' }), nameInput),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '密码' }), pwdInput,
+        el('div', { class: 'form-hint', text: '至少 8 位,建议混合字母 / 数字 / 符号。' })),
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '角色' }), roleSelect),
+      err);
+    var submitBtn = el('button', { class: 'btn btn-primary', type: 'button', text: '创建' });
+    var cancelBtn = el('button', { class: 'btn btn-secondary', type: 'button', text: '取消', onclick: function () { handle.close(); } });
+    var foot = el('div', { class: 'modal-foot' }, cancelBtn, submitBtn);
+    var handle = openModal({ title: '新建用户', body: body, footer: foot, dismissable: false });
+
+    function showErr(msg) { err.textContent = msg; err.classList.remove('hidden'); }
+    [nameInput, pwdInput, roleSelect].forEach(function (inp) {
+      inp.addEventListener('input', function () { err.classList.add('hidden'); });
+      inp.addEventListener('change', function () { err.classList.add('hidden'); });
+    });
+    submitBtn.addEventListener('click', function () {
+      var name = nameInput.value.trim();
+      if (!name) { showErr('请输入用户名'); return; }
+      if (pwdInput.value.length < 8) { showErr('密码至少 8 位'); return; }
+      err.classList.add('hidden');
+      setBtnLoading(submitBtn, true, '创建中…');
+      cancelBtn.disabled = true;
+      api('POST', '/api/users', { username: name, password: pwdInput.value, role: roleSelect.value })
+        .then(function () { handle.close(); toast('用户已创建', 'success'); if (onDone) onDone(); })
+        .catch(function (e) { showErr(e.message); })
+        .then(function () { setBtnLoading(submitBtn, false); cancelBtn.disabled = false; });
+    });
+    nameInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submitBtn.click(); }
+    });
+    setTimeout(function () { nameInput.focus(); }, 0);
+  }
+
+  function openEditUserModal(u, onDone) {
+    u = u || {};
+    var roleSelect = buildRoleSelect(u.role);
+    var statusSelect = buildUserStatusSelect(u.status);
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
+    var body = el('div', { class: 'modal-body' },
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '角色' }), roleSelect),
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '状态' }), statusSelect),
+      err);
+    var submitBtn = el('button', { class: 'btn btn-primary', type: 'button', text: '保存' });
+    var cancelBtn = el('button', { class: 'btn btn-secondary', type: 'button', text: '取消', onclick: function () { handle.close(); } });
+    var foot = el('div', { class: 'modal-foot' }, cancelBtn, submitBtn);
+    var handle = openModal({ title: '编辑用户「' + (u.username || '—') + '」', body: body, footer: foot, dismissable: false });
+
+    [roleSelect, statusSelect].forEach(function (inp) {
+      inp.addEventListener('change', function () { err.classList.add('hidden'); });
+    });
+    submitBtn.addEventListener('click', function () {
+      err.classList.add('hidden');
+      setBtnLoading(submitBtn, true, '保存中…');
+      cancelBtn.disabled = true;
+      api('PATCH', '/api/users/' + encodeURIComponent(String(u.id)), {
+        role: roleSelect.value, status: statusSelect.value
+      })
+        .then(function () { handle.close(); toast('用户已更新', 'success'); if (onDone) onDone(); })
+        .catch(function (e) {
+          err.textContent = e.message;
+          err.classList.remove('hidden');
+        })
+        .then(function () { setBtnLoading(submitBtn, false); cancelBtn.disabled = false; });
+    });
+    setTimeout(function () { roleSelect.focus(); }, 0);
+  }
+
+  function openResetUserPasswordModal(u, onDone) {
+    u = u || {};
+    var pwdInput = el('input', { class: 'input', type: 'password', maxlength: '128', autocomplete: 'new-password', placeholder: '新密码至少 8 位' });
+    var confirmInput = el('input', { class: 'input', type: 'password', maxlength: '128', autocomplete: 'new-password', placeholder: '再次输入新密码' });
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
+    var body = el('div', { class: 'modal-body' },
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '新密码' }), pwdInput,
+        el('div', { class: 'form-hint', text: '重置后该用户旧密码立即失效,请线下告知本人。' })),
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '确认新密码' }), confirmInput),
+      err);
+    var submitBtn = el('button', { class: 'btn btn-primary', type: 'button', text: '重置' });
+    var cancelBtn = el('button', { class: 'btn btn-secondary', type: 'button', text: '取消', onclick: function () { handle.close(); } });
+    var foot = el('div', { class: 'modal-foot' }, cancelBtn, submitBtn);
+    var handle = openModal({ title: '重置「' + (u.username || '—') + '」的密码', body: body, footer: foot, dismissable: false });
+
+    function showErr(msg) { err.textContent = msg; err.classList.remove('hidden'); }
+    [pwdInput, confirmInput].forEach(function (inp) {
+      inp.addEventListener('input', function () { err.classList.add('hidden'); });
+    });
+    submitBtn.addEventListener('click', function () {
+      if (pwdInput.value.length < 8) { showErr('新密码至少 8 位'); return; }
+      if (pwdInput.value !== confirmInput.value) { showErr('两次输入的新密码不一致'); return; }
+      err.classList.add('hidden');
+      setBtnLoading(submitBtn, true, '重置中…');
+      cancelBtn.disabled = true;
+      api('POST', '/api/users/' + encodeURIComponent(String(u.id)) + '/password', { new_password: pwdInput.value })
+        .then(function () { handle.close(); toast('密码已重置', 'success'); if (onDone) onDone(); })
+        .catch(function (e) { showErr(e.message); })
+        .then(function () { setBtnLoading(submitBtn, false); cancelBtn.disabled = false; });
+    });
+    setTimeout(function () { pwdInput.focus(); }, 0);
+  }
+
+  /* ---------- 系统日志 ---------- */
+
+  function pageLogs(root, actions) {
+    var st = { offset: 0, limit: 50 };
+    var first = true;
+    var seq = 0;
+
+    actions.appendChild(el('button', {
+      class: 'btn btn-secondary btn-sm', type: 'button',
+      html: ICONS.refresh + '<span>刷新</span>',
+      onclick: function () { loadList(); }
+    }));
+    var cleanupBtn = null;
+    if (canCleanupLogs()) {
+      cleanupBtn = el('button', {
+        class: 'btn btn-ghost btn-sm', type: 'button', text: '清理日志',
+        onclick: cleanupLogs
+      });
+      actions.appendChild(cleanupBtn);
+    } else {
+      root.appendChild(roleHintNode('当前为只读角色,仅可检索日志;过期日志清理操作已隐藏。'));
+    }
+
+    var levelSelect = el('select', { class: 'inline-select', 'aria-label': '日志级别' });
+    [['', '全部级别'], ['debug', 'DEBUG'], ['info', 'INFO'], ['warn', 'WARN'], ['error', 'ERROR']].forEach(function (p) {
+      levelSelect.appendChild(el('option', { value: p[0], text: p[1] }));
+    });
+    var qInput = el('input', { class: 'input', type: 'search', placeholder: '搜索日志内容…', 'aria-label': '搜索日志内容' });
+    var sinceInput = el('input', { class: 'input', type: 'datetime-local', 'aria-label': '起始时间' });
+    var applyBtn = el('button', {
+      class: 'btn btn-primary btn-sm', type: 'button', text: '查询',
+      onclick: function () { st.offset = 0; loadList(); }
+    });
+    var resetBtn = el('button', {
+      class: 'btn btn-secondary btn-sm', type: 'button', text: '重置',
+      onclick: function () {
+        levelSelect.value = '';
+        qInput.value = '';
+        sinceInput.value = '';
+        st.offset = 0;
+        loadList();
+      }
+    });
+    root.appendChild(el('div', { class: 'page-toolbar' },
+      el('div', { class: 'toolbar-actions' },
+        el('span', { class: 'muted', text: '级别' }), levelSelect,
+        el('span', { class: 'muted', text: '关键词' }), qInput,
+        el('span', { class: 'muted', text: '起始时间' }), sinceInput),
+      el('div', { class: 'toolbar-actions' }, applyBtn, resetBtn)));
+    root.appendChild(el('p', { class: 'page-note', text: '筛选条件在服务端生效;起始时间按本地时区换算后提交。' }));
+
+    var card = el('div', { class: 'card' });
+    root.appendChild(card);
+    var configBody = el('div', { class: 'card-body' });
+    var configCard = el('div', { class: 'card' },
+      el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '日志配置' })),
+      configBody);
+    root.appendChild(configCard);
+
+    function currentUrl() {
+      var q = '?limit=' + st.limit + '&offset=' + st.offset;
+      if (levelSelect.value) q += '&level=' + encodeURIComponent(levelSelect.value);
+      var kw = qInput.value.trim();
+      if (kw) q += '&q=' + encodeURIComponent(kw);
+      if (sinceInput.value) {
+        var iso = fromLocalInputValue(sinceInput.value);
+        if (iso === undefined) { toast('起始时间无效', 'error'); return null; }
+        if (iso) q += '&since=' + encodeURIComponent(iso);
+      }
+      return '/api/logs' + q;
+    }
+
+    function loadList() {
+      var url = currentUrl();
+      if (!url) return;
+      if (first) {
+        first = false;
+        card.innerHTML = '';
+        card.appendChild(skeletonBlock([{ w: 'w40' }, { w: 'w80' }, { w: 'w80' }]));
+      } else {
+        card.classList.add('is-busy');
+      }
+      var cur = ++seq;
+      api('GET', url).then(function (data) {
+        if (cur !== seq) return;
+        card.classList.remove('is-busy');
+        card.innerHTML = '';
+        data = data || {};
+        var items = Array.isArray(data.items) ? data.items : [];
+        var total = Number(data.total) || 0;
+        if (!items.length && st.offset > 0 && total > 0) {
+          st.offset = Math.max(0, Math.floor((total - 1) / st.limit) * st.limit);
+          loadList();
+          return;
+        }
+        if (!items.length) {
+          card.appendChild(emptyNode('暂无日志记录', '当前筛选条件下没有日志;可调整级别、关键词或起始时间后重试。'));
+          return;
+        }
+        card.appendChild(buildLogsTable(items));
+        card.appendChild(buildAdminPagination(total, st.offset, st.limit, function (next) {
+          st.offset = next;
+          loadList();
+        }));
+      }).catch(function (e) {
+        if (cur !== seq) return;
+        card.classList.remove('is-busy');
+        card.innerHTML = '';
+        card.appendChild(errorNode(e, loadList));
+      });
+    }
+
+    function loadConfig() {
+      api('GET', '/api/logs/config').then(function (cfg) {
+        cfg = cfg || {};
+        configBody.innerHTML = '';
+        configBody.appendChild(el('ul', { class: 'info-list' },
+          el('li', null, el('b', { text: '单文件大小上限:' }), cfgVal(cfg.max_mb, ' MB')),
+          el('li', null, el('b', { text: '保留备份数:' }), cfgVal(cfg.backups, ' 份')),
+          el('li', null, el('b', { text: '保留天数:' }), cfgVal(cfg.retention_days, ' 天')),
+          el('li', null, el('b', { text: '日志格式:' }), cfgVal(cfg.format))));
+      }).catch(function (e) {
+        configBody.innerHTML = '';
+        configBody.appendChild(el('div', { class: 'muted', text: '日志配置加载失败:' + e.message }));
+      });
+    }
+    function cfgVal(v, unit) {
+      if (v === null || v === undefined || v === '') return '—';
+      return String(v) + (unit || '');
+    }
+
+    function cleanupLogs() {
+      confirmDialog({
+        title: '清理日志',
+        message: '确定清理过期的服务日志与审计日志吗?被清理的文件不可恢复。',
+        confirmText: '清理'
+      }).then(function (yes) {
+        if (!yes) return;
+        setBtnLoading(cleanupBtn, true, '清理中…');
+        api('POST', '/api/logs/cleanup').then(function (res) {
+          res = res || {};
+          toast('已清理 ' + fmtNumber(res.removed_serve) + ' 个服务日志、' + fmtNumber(res.removed_audit) + ' 个审计日志', 'success');
+          loadList();
+        }).catch(function (e) {
+          toast(e.message, 'error');
+        }).then(function () { setBtnLoading(cleanupBtn, false); });
+      });
+    }
+
+    loadList();
+    loadConfig();
+  }
+
+  function buildLogsTable(items) {
+    var thead = el('thead', null, el('tr', null,
+      el('th', { text: '时间' }),
+      el('th', { text: '级别' }),
+      el('th', { text: '来源' }),
+      el('th', { text: '内容' })));
+    var tbody = el('tbody');
+    items.forEach(function (it) {
+      it = it || {};
+      tbody.appendChild(el('tr', null,
+        el('td', { class: 'td-mono', text: fmtDateTime(it.time) }),
+        el('td', null, logLevelPill(it.level)),
+        el('td', { class: 'td-mono', text: it.source || '—' }),
+        el('td', { class: 'log-msg', text: String(it.message || '') })));
+    });
+    return el('div', { class: 'table-scroll' }, el('table', { class: 'table' }, thead, tbody));
+  }
+
+  /* ---------- 黑名单 ---------- */
+
+  function pageBlacklist(root, actions) {
+    var st = { offset: 0, limit: 20 };
+    var all = [];
+    var first = true;
+    var seq = 0;
+    var writable = canWriteBlacklist();
+
+    actions.appendChild(el('button', {
+      class: 'btn btn-secondary btn-sm', type: 'button',
+      html: ICONS.refresh + '<span>刷新</span>',
+      onclick: function () { loadAll(); }
+    }));
+    if (writable) {
+      actions.appendChild(el('button', {
+        class: 'btn btn-primary btn-sm', type: 'button',
+        html: ICONS.plus + '<span>加入黑名单</span>',
+        onclick: function () { openBlacklistModal(null, loadAll); }
+      }));
+    } else {
+      root.appendChild(roleHintNode('当前为只读角色,仅可查看黑名单;新增、编辑与删除操作已隐藏。'));
+    }
+
+    var card = el('div', { class: 'card' });
+    root.appendChild(card);
+
+    function loadAll() {
+      if (first) {
+        first = false;
+        card.innerHTML = '';
+        card.appendChild(skeletonBlock([{ w: 'w30' }, { w: 'w80' }, { w: 'w60' }]));
+      } else {
+        card.classList.add('is-busy');
+      }
+      var cur = ++seq;
+      api('GET', '/api/blacklist').then(function (data) {
+        if (cur !== seq) return;
+        card.classList.remove('is-busy');
+        data = data || {};
+        all = Array.isArray(data.items) ? data.items : [];
+        renderTable();
+      }).catch(function (e) {
+        if (cur !== seq) return;
+        card.classList.remove('is-busy');
+        card.innerHTML = '';
+        card.appendChild(errorNode(e, loadAll));
+      });
+    }
+
+    function renderTable() {
+      card.classList.remove('is-busy');
+      card.innerHTML = '';
+      if (!all.length) {
+        card.appendChild(emptyNode('黑名单为空', '还没有被屏蔽的 IP / CIDR。',
+          writable ? el('button', {
+            class: 'btn btn-primary btn-sm', type: 'button', text: '加入黑名单',
+            onclick: function () { openBlacklistModal(null, loadAll); }
+          }) : null));
+        return;
+      }
+      var page = all.slice(st.offset, st.offset + st.limit);
+      if (!page.length && st.offset > 0) {
+        st.offset = Math.max(0, Math.floor((all.length - 1) / st.limit) * st.limit);
+        page = all.slice(st.offset, st.offset + st.limit);
+      }
+      card.appendChild(buildBlacklistTable(page, loadAll, writable));
+      card.appendChild(buildAdminPagination(all.length, st.offset, st.limit, function (next) {
+        st.offset = next;
+        renderTable();
+      }));
+    }
+    loadAll();
+  }
+
+  function buildBlacklistTable(items, reload, writable) {
+    var thead = el('thead', null, el('tr', null,
+      el('th', { text: '值' }),
+      el('th', { text: '类型' }),
+      el('th', { text: '原因' }),
+      el('th', { text: '过期时间' }),
+      el('th', { class: 'td-num-h', text: '命中' }),
+      el('th', { text: '创建人' }),
+      el('th', { text: '操作' })));
+    var tbody = el('tbody');
+
+    items.forEach(function (it) {
+      it = it || {};
+      var bid = encodeURIComponent(String(it.id));
+      var expCell;
+      if (it.expired) {
+        expCell = el('td', null, el('span', {
+          class: 'pill pill-gray', text: '已过期',
+          title: '过期时间:' + fmtDateTime(it.expires_at)
+        }));
+      } else if (it.expires_at) {
+        expCell = el('td', { class: 'td-mono', text: fmtDateTime(it.expires_at) });
+      } else {
+        expCell = el('td', null, el('span', { class: 'pill pill-green', text: '永久' }));
+      }
+      var acts = [];
+      if (writable) {
+        acts.push(el('button', {
+          class: 'btn btn-ghost btn-sm', type: 'button', text: '编辑',
+          onclick: function () { openBlacklistModal(it, reload); }
+        }));
+        var delBtn = el('button', { class: 'btn btn-text-danger', type: 'button', text: '删除' });
+        delBtn.addEventListener('click', function () {
+          confirmDialog({
+            title: '移出黑名单',
+            message: '确定将「' + (it.value || '—') + '」移出黑名单吗?该来源将立即恢复访问。',
+            confirmText: '删除'
+          }).then(function (yes) {
+            if (!yes) return;
+            setBtnLoading(delBtn, true);
+            api('DELETE', '/api/blacklist/' + bid)
+              .then(function () { toast('已移出黑名单', 'success'); reload(); })
+              .catch(function (e) { toast(e.message, 'error'); setBtnLoading(delBtn, false); });
+          });
+        });
+        acts.push(delBtn);
+      }
+      tbody.appendChild(el('tr', null,
+        el('td', { class: 'td-strong td-mono', text: it.value || '—' }),
+        el('td', null, el('span', { class: 'chip', text: it.kind === 'cidr' ? 'IP 网段' : 'IP 地址' })),
+        el('td', { text: it.reason || '—' }),
+        expCell,
+        el('td', { class: 'td-num', text: fmtNumber(it.hits) }),
+        el('td', { text: it.created_by || '—' }),
+        el('td', null, acts.length ? el('div', { class: 'row-actions' }, acts) : el('span', { class: 'muted', text: '—' }))));
+    });
+    return el('div', { class: 'table-scroll' }, el('table', { class: 'table' }, thead, tbody));
+  }
+
+  function openBlacklistModal(entry, onDone) {
+    entry = entry || {};
+    var isEdit = !!entry.id;
+    var kindSelect = el('select', { class: 'inline-select', 'aria-label': '类型' });
+    kindSelect.appendChild(el('option', { value: 'ip', text: 'IP 地址' }));
+    kindSelect.appendChild(el('option', { value: 'cidr', text: 'IP 网段(CIDR)' }));
+    kindSelect.value = entry.kind === 'cidr' ? 'cidr' : 'ip';
+    var valueInput = el('input', {
+      class: 'input', type: 'text', maxlength: '128',
+      placeholder: '例如 192.0.2.10 或 192.0.2.0/24',
+      value: String(entry.value || '')
+    });
+    var reasonInput = el('input', {
+      class: 'input', type: 'text', maxlength: '256',
+      placeholder: '可选,记录加入原因', value: String(entry.reason || '')
+    });
+    var expiryInput = el('input', {
+      class: 'input', type: 'datetime-local', value: toLocalInputValue(entry.expires_at)
+    });
+    if (isEdit) {
+      kindSelect.disabled = true;
+      valueInput.readOnly = true;
+    }
+    var err = el('div', { class: 'form-err hidden', role: 'alert' });
+    var body = el('div', { class: 'modal-body' },
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '类型' }), kindSelect),
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '值' }), valueInput),
+      el('div', { class: 'field' }, el('label', { class: 'field-label', text: '原因(可选)' }), reasonInput),
+      el('div', { class: 'field' },
+        el('label', { class: 'field-label', text: '过期时间(可选)' }), expiryInput,
+        el('div', { class: 'form-hint', text: isEdit
+          ? '类型与值创建后不可修改;清空过期时间表示永久有效。'
+          : '留空表示永久屏蔽;到期后自动失效。' })),
+      err);
+    var submitBtn = el('button', { class: 'btn btn-primary', type: 'button', text: isEdit ? '保存' : '加入' });
+    var cancelBtn = el('button', { class: 'btn btn-secondary', type: 'button', text: '取消', onclick: function () { handle.close(); } });
+    var foot = el('div', { class: 'modal-foot' }, cancelBtn, submitBtn);
+    var handle = openModal({
+      title: isEdit ? '编辑黑名单「' + (entry.value || '—') + '」' : '加入黑名单',
+      body: body, footer: foot, dismissable: false
+    });
+
+    function showErr(msg) { err.textContent = msg; err.classList.remove('hidden'); }
+    [kindSelect, valueInput, reasonInput, expiryInput].forEach(function (inp) {
+      inp.addEventListener('input', function () { err.classList.add('hidden'); });
+      inp.addEventListener('change', function () { err.classList.add('hidden'); });
+    });
+    submitBtn.addEventListener('click', function () {
+      var value = valueInput.value.trim();
+      if (!isEdit && !value) { showErr('请输入 IP 或 CIDR 值'); return; }
+      var iso = fromLocalInputValue(expiryInput.value);
+      if (iso === undefined) { showErr('过期时间无效'); return; }
+      var payload = { reason: reasonInput.value.trim() };
+      if (isEdit) {
+        payload.expires_at = iso === null ? '' : iso; // 空串表示取消过期(永久)
+      } else {
+        payload.kind = kindSelect.value;
+        payload.value = value;
+        if (iso) payload.expires_at = iso;
+      }
+      err.classList.add('hidden');
+      setBtnLoading(submitBtn, true, isEdit ? '保存中…' : '提交中…');
+      cancelBtn.disabled = true;
+      api(isEdit ? 'PATCH' : 'POST',
+        isEdit ? '/api/blacklist/' + encodeURIComponent(String(entry.id)) : '/api/blacklist', payload)
+        .then(function () {
+          handle.close();
+          toast(isEdit ? '黑名单已更新' : '已加入黑名单', 'success');
+          if (onDone) onDone();
+        })
+        .catch(function (e) { showErr(e.message); })
+        .then(function () { setBtnLoading(submitBtn, false); cancelBtn.disabled = false; });
+    });
+    valueInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submitBtn.click(); }
+    });
+    setTimeout(function () { (isEdit ? reasonInput : valueInput).focus(); }, 0);
+  }
+
   /* ================= 9. 启动 ================= */
 
   function setLoginMsg(msg, warn) {
@@ -4118,6 +4858,16 @@ async def run():
     var pwdInput = $('#login-password');
     var errBox = $('#login-error');
     var submitBtn = $('#login-submit');
+    var pwdToggle = $('#login-password-toggle');
+    function setPasswordVisible(visible) {
+      pwdInput.type = visible ? 'text' : 'password';
+      if (pwdToggle) pwdToggle.setAttribute('aria-pressed', String(visible));
+    }
+    if (pwdToggle) {
+      pwdToggle.addEventListener('click', function () {
+        setPasswordVisible(pwdInput.type === 'password');
+      });
+    }
 
     /* 错误态输入框:aria-invalid=true 命中样式表 .input[aria-invalid="true"] 的 destructive 边框;
      * 用户重新输入或重新提交时清除。 */
@@ -4153,30 +4903,38 @@ async def run():
         showErr('请输入用户名和密码');
         return;
       }
-      setBtnLoading(submitBtn, true, '登录中…');
+      setPasswordVisible(false);
+      setBtnLoading(submitBtn, true, '正在登录…');
       api('POST', '/api/auth/login', { username: u, password: pwd }, { skipAuthRedirect: true })
         .then(function (data) {
           data = data || {};
           var uname = (data.user && data.user.username) ? data.user.username : u;
           setAuth(data.token, data.expires_in, uname);
-          toast('登录成功,欢迎回来', 'success');
-          var target = pendingHash || '#/overview';
-          pendingHash = null;
-          if (location.hash === target) renderRoute();
-          else location.hash = target;
+          if (data.user) applyMe(data.user); // 登录响应已带角色时立即可用
+          pwdInput.value = '';
+          toast('登录成功', 'success');
+          /* 角色以 /api/me 为准:拉取完成后再渲染,避免只读/运维角色短暂看到写按钮 */
+          return api('GET', '/api/me', null, { skipAuthRedirect: true })
+            .then(function (me) { applyMe(me); })
+            .catch(function () { /* 旧后端无 role 字段或接口异常:沿用默认 admin */ })
+            .then(function () {
+              var target = pendingHash || '#/overview';
+              pendingHash = null;
+              if (location.hash === target) renderRoute();
+              else location.hash = target;
+            });
         })
         .catch(function (e) {
           if (e.status === 401) {
             /* 凭据错误:用户名与密码成对校验,两个输入框都标记错误态(destructive 边框) */
             setFieldInvalid(userInput, true);
             setFieldInvalid(pwdInput, true);
-            showErr('用户名或密码错误(同一用户名+IP 连续 5 次失败将锁定 15 分钟)');
+            showErr('用户名或密码错误，请核对后重试。');
           } else if (e.status === 429 && e.data && e.data.error === 'too_many_attempts') {
-            showErr('尝试次数过多,登录已被临时锁定' +
-              (e.retryAfter ? ',约 ' + e.retryAfter + ' 秒后可重试' : '(15 分钟)') + '。');
+            showErr(e.retryAfter ? '尝试次数过多，请在 ' + e.retryAfter + ' 秒后重试。' : '尝试次数过多，请稍后重试。');
           } else if (e.status === 404) {
             // 平台停用:/api/* 未挂载,静态面板仍可访问
-            showErr('平台 API 未在配置中启用,请启用平台后重启服务。');
+            showErr('管理 API 未启用。请启用平台功能并重启服务。');
           } else {
             showErr(e.message);
           }
@@ -4190,17 +4948,25 @@ async def run():
   function bindLogout() {
     var btn = $('#btn-logout');
     if (!btn) return;
+    function showSignedOut() {
+      clearAuth();
+      toast('已退出登录', 'info');
+      if (location.hash === '#/login') showLogin();
+      else location.hash = '#/login';
+    }
     btn.addEventListener('click', function () {
-      /* S4 会话: 先撤销服务端会话并清除 httpOnly cookie(旧实例无此端点时
-       * 静默降级为纯前端登出),再清本地状态。 */
+      setBtnLoading(btn, true, '退出中…');
       api('POST', '/api/auth/logout', null, { skipAuthRedirect: true })
-        .catch(function () { /* 旧实例无 /api/auth/logout — 纯前端登出 */ })
-        .then(function () {
-          clearAuth();
-          toast('已退出登录', 'info');
-          if (location.hash === '#/login') showLogin();
-          else location.hash = '#/login';
-        });
+        .then(showSignedOut)
+        .catch(function (e) {
+          if (e.status === 401) {
+            showSignedOut();
+            return;
+          }
+          var retryHint = e.retryAfter ? '请在 ' + e.retryAfter + ' 秒后重试。' : '请稍后重试。';
+          toast('退出未完成。' + retryHint, 'error');
+        })
+        .finally(function () { setBtnLoading(btn, false); });
     });
   }
 
@@ -4232,17 +4998,24 @@ async def run():
     api('GET', '/api/me', null, { skipAuthRedirect: true })
       .then(function (me) {
         meVerified = true; // 服务端确认会话有效:F5 后由此恢复登录态
-        if (me && me.username) {
-          state.username = me.username;
-          try { localStorage.setItem(LS_USERNAME, me.username); } catch (e) { /* 忽略 */ }
-        }
+        applyMe(me); // 角色 / user_id 落全局;旧后端不返回 role 时按 admin 兼容
         if (bootRendered) {
           showApp(); // 顶栏用户名/头像用 /api/me 的权威值刷新,页面数据已在首轮加载
+          /* 首屏先渲染的历史行为保留;若本次 /api/me 带来受限角色,
+           * 重新渲染当前管理页以移除写操作(admin 不重复拉取数据)。 */
+          var h = location.hash || '';
+          if (state.role !== 'admin' &&
+              (h === '#/users' || h === '#/logs' || h === '#/blacklist')) {
+            renderRoute();
+          }
           return;
         }
         renderRoute();
       })
       .catch(function (e) {
+        /* 首屏 /api/me 可能在用户输入凭据期间才返回 401(请求早于登录发出);
+         * 此时会话已建立,不能让过期响应把用户踢回登录页。 */
+        if (isLoggedIn()) return;
         if (e.status === 401) {
           // 首次访问(无 cookie/无内存 token)静默回登录页,不误报「登录已过期」。
           clearAuth();
@@ -4251,7 +5024,7 @@ async def run():
         }
         showLogin();
         if (e.status === 404) {
-          setLoginMsg('平台 API 未在配置中启用,请启用平台后重启服务。', true);
+          setLoginMsg('管理 API 未启用。请启用平台功能并重启服务。', true);
         } else {
           toast('无法连接服务:' + e.message, 'error');
         }

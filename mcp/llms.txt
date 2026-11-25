@@ -16,7 +16,7 @@
 - 握手:`initialize`(protocolVersion 默认 `2025-06-18`,serverInfo.name=`web2api`)→ 响应头取 `Mcp-Session-Id` → 发 `notifications/initialized`(HTTP 204)→ `tools/list` / `tools/call`。
 - 工具(6 个):
   - `web_search{query, engine?, limit?}` → `{results:[{rank,title,url,snippet}]}`;每次调用计 1 次。engine ∈ baidu|sogou|so360|bing,默认 baidu;limit 默认 10。
-  - `check_indexed{urls[1..5000], engines?}` → ≤20 条同步返回与 GET /v1/index/check 相同的 results 结构;>20 条自动转异步任务,立即返回 `{job_id,status,total,...}`;计费 = 条数×引擎数次。
+  - `check_indexed{urls[1..5000], engines?}` → ≤20 条同步返回与 GET /v1/index/check 相同的 results 结构，按成功单元扣费。>20 条且任务队列开启时，返回 `{job_id,status,total,...}`，按提交单元扣费。
   - `get_index_job{job_id, include_results?, offset?, limit?}` → 任务进度(status/progress/eta_seconds/各计数);`include_results=true` 附带已完成的结果行(与 check_indexed 同结构,可分页);不计费。
   - `cancel_index_job{job_id}` → 取消排队中/运行中的任务;不计费。
   - `get_quota{}` → 当前调用方配额对象(管理员不计费)。
@@ -40,7 +40,7 @@
 
 ### 数据平面(鉴权:X-API-Key,计费)
 
-- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定,`{"urls":[...],"engines":[...]}`:≤20 个 URL 同步返回;>20 个返回 202 + `job_id`(异步任务,上限见 `index_jobs.max_urls`);计费 = 条数×引擎数次。
+- [POST /v1/index/check](/web-tool/v1/index/check) — 批量收录判定，`{"urls":[...],"engines":[...]}`。≤20 个 URL 同步执行，同一引擎逐条查、不同引擎可并行，整批完成后一次返回 JSON。百度默认 5 次/分钟、突发 1。>20 个 URL 且已开启任务队列时，返回 202 + `job_id`，上限见 `index_jobs.max_urls`。同步仅扣成功单元，异步按提交单元扣费，重复 URL 也计入。
 - [GET /v1/index/check/jobs/{id}](/web-tool/v1/index/check/jobs/{id}) — 异步任务进度(status/progress/eta_seconds/各计数)。
 - [GET /v1/index/check/jobs/{id}/results](/web-tool/v1/index/check/jobs/{id}/results) — 任务结果 JSON(?offset=&limit=)或 `?format=csv` 下载表格。
 - [DELETE /v1/index/check/jobs/{id}](/web-tool/v1/index/check/jobs/{id}) — 取消任务。
@@ -61,22 +61,25 @@
 
 ### 运维
 
-- GET /health、GET /ready、GET /stats — 健康/就绪/运行统计。
+- GET /health、GET /ready、GET /engines/status — 公开探针和引擎状态，不发起搜索。
+- GET /stats 及其子路径 — 运行统计，配置模板默认需要 API Key。
+- GET /metrics — OpenMetrics。配置专用 Bearer token 时凭该 token 访问，否则仅允许回环来源。
 
 ## 错误信封与限速
 
 - 平台信封(`/v1/*`、`/mcp`):`{"error":"unauthorized|quota_exceeded|..."}`;数据面信封(search):`{"error","code","request_id","message","reason","meta"}`;/mcp 用 JSON-RPC 信封。
-- 所有 429/503 响应带 `Retry-After` 头(秒)。管理 API 默认限速 60 req/min。
+- 429 和冷却、任务队列已满、服务停止期间拒绝提交的 503 响应携带 `Retry-After`（秒）。访问超限返回 `rate_limited`。API Key 默认每分钟 120 个请求，管理 API 默认每分钟 60 个请求。
 - 配额超限:`429 {"error":"quota_exceeded"}`;未授权:`401 {"error":"unauthorized"}`。
 
 ## 引擎冷却(IP 风控)
 
-引擎返回 blocked(403)/429/captcha 会进入冷却:第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟;连续无拦截 240 分钟后计数归零(`stability.engine_cooldown` 可调)。冷却期内该引擎 search/check 快速失败:`503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}` + `Retry-After`。`/v1` 与 `/{engine}/search` 响应 `meta.engines_cooldown:[{engine,until,reason}]` 可预判冷却。Agent 应优先调用 `list_engines` 工具或在收到 engine_cooldown 后切换引擎。
+引擎返回 blocked(403)、429 或验证码时进入冷却。默认三档为 10、30、120 分钟，随仓库提供的配置将百度覆盖为 2、10、30 分钟。连续无拦截 240 分钟后计数归零（`stability.engine_cooldown` 可调）。正常批次结束后无额外冷却，仍受引擎限流。
+同步收录请求开始时若全部所选引擎在冷却，则返回 `503 engine_cooldown`、`Retry-After` 和 `retry_after_seconds`。若部分引擎已冷却，或执行中触发冷却，则同步结果仍返回 200，被跳过的单元含 `error.code=engine_cooldown` 和 `error.retry_after_seconds`。异步任务可以等待冷却恢复。可读取 `meta.engines_cooldown` 或调用 `list_engines` 查看引擎状态。
 
 ## 示例
 
 ```bash
-# 批量收录判定(X-API-Key,计费 = 2 条 URL × 2 个引擎 = 4 次)
+# 批量收录判定（2 条 URL × 2 个引擎 = 4 个请求单元）
 curl -X POST https://your-host/web-tool/v1/index/check \
   -H "X-API-Key: sk-w2a-你的密钥" -H "Content-Type: application/json" \
   -d '{"urls":["https://example.com/a","https://example.com/b"],"engines":["baidu","bing"]}'

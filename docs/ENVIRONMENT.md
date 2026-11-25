@@ -1,6 +1,6 @@
 # 环境变量与配置项（ENVIRONMENT）
 
-> 本文依据 `cmd/root.go` 中 76 个 `v.SetDefault(...)` 调用整理（含 1 个多行 map）；引擎通用 schema 另列于文末表格，只有代码明确设置默认值的项目才保证可通过对应环境变量覆盖。
+> 本文依据 `cmd/root.go` 中 80 个 `v.SetDefault(...)` 调用整理（含 1 个多行 map）；引擎通用 schema 另列于文末表格，只有代码明确设置默认值的项目才保证可通过对应环境变量覆盖。
 > 命名规则：`WEB2API_` + 键名大写、`.` 换 `_`（例：`platform.admin_password` → `WEB2API_PLATFORM_ADMIN_PASSWORD`）。
 > 优先级：命令行参数 > 环境变量 > 配置文件 > 内置默认值。
 
@@ -52,6 +52,7 @@ environment:
 | `app.save_log` | `WEB2API_APP_SAVE_LOG` | true | 否 | 是否落盘 |
 | `app.log_max_mb` | `WEB2API_APP_LOG_MAX_MB` | 10 | 否 | 单个日志文件上限（MB） |
 | `app.log_backups` | `WEB2API_APP_LOG_BACKUPS` | 5 | 否 | 保留的历史日志个数 |
+| `app.log_retention_days` | `WEB2API_APP_LOG_RETENTION_DAYS` | 30 | 否 | 按 mtime 删除超过 N 天的 `logs.txt.N`/`audit.log.N`；0=不按天删除 |
 | `app.timeout` | `WEB2API_APP_TIMEOUT` | 30 | 是 | 单次引擎请求超时（秒），决定单条查询的失败边界 |
 | `app.browser_path` | `WEB2API_APP_BROWSER_PATH` | "" | 条件 | Chrome/Chromium 可执行文件。容器内由 Dockerfile 固定为 headless-shell |
 | `app.profiles` | `WEB2API_APP_PROFILES` | "" | 否 | 浏览器指纹 profile 目录/集合 |
@@ -171,12 +172,22 @@ environment:
 | `security.login_lockout.minutes` | `WEB2API_SECURITY_LOGIN_LOCKOUT_MINUTES` | 15 | 是 | 锁定时长（分钟） |
 | `security.password_policy.min_length` | `WEB2API_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | 8 | 否 | 改密最小长度 |
 | `security.password_policy.min_classes` | `WEB2API_SECURITY_PASSWORD_POLICY_MIN_CLASSES` | 0 | 否 | 见 docs/CONFIGURATION.md |
+| `security.blacklist` | `WEB2API_SECURITY_BLACKLIST` | `[]` | 否 | 首启种子 IP/CIDR 黑名单（一次性标记落 settings 桶），之后以 API/控制台为准 |
 
 ### 引擎：必应（`bing.*`）
 
 | 配置项 | 环境变量 | 默认值 | 必需 | 用途 |
 | --- | --- | --- | --- | --- |
 | `bing.search_box` | `WEB2API_BING_SEARCH_BOX` | true | 否 | 见 docs/CONFIGURATION.md |
+
+### 其它运行时环境变量（非 SetDefault 键）
+
+| 变量 | 说明 |
+| --- | --- |
+| `WEB2API_SERVER_CONFIG_PATH` | 显式指定配置文件路径（等价 `--config`） |
+| `WEB2API_STRICT_CONFIG=1` | 未知配置键由启动告警升级为启动失败 |
+| `WEB2API_ENRICHMENT_DOMAINS_FILE` | 覆盖域名分类数据文件 |
+| `WEB2API_2CAPTCHA_APIKEY` | 仅当 config.yaml 存在 `2captcha:` 节时绑定；推荐密钥不落盘 |
 
 ## 引擎级配置（按引擎重复）
 

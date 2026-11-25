@@ -79,6 +79,10 @@ type SecurityConfig struct {
 	LoginLockout LoginLockoutConfig `mapstructure:"login_lockout"`
 	// PasswordPolicy (S4-B-11) governs the admin password change.
 	PasswordPolicy PasswordPolicyConfig `mapstructure:"password_policy"`
+	// Blacklist is the optional static IP/CIDR deny list seeded on first start.
+	// Entries added here are inserted once; day-to-day management stays in the
+	// console so config and store never fight over the same record.
+	Blacklist []string `mapstructure:"blacklist"`
 }
 
 // LoginLockoutConfig maps security.login_lockout.
@@ -146,6 +150,13 @@ func (c SecurityConfig) normalized() SecurityConfig {
 	if c.PasswordPolicy.MinClasses > 4 {
 		c.PasswordPolicy.MinClasses = 4
 	}
+	cleaned := make([]string, 0, len(c.Blacklist))
+	for _, entry := range c.Blacklist {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			cleaned = append(cleaned, entry)
+		}
+	}
+	c.Blacklist = cleaned
 	return c
 }
 
@@ -377,9 +388,24 @@ func (p *Platform) AuthAny() fiber.Handler {
 		//    API-key branch so a client sending both headers keeps working.
 		if token := bearerToken(c.Get(fiber.HeaderAuthorization)); token != "" {
 			if claims, ok := p.verifyAdminToken(token); ok {
-				c.Locals(localAuthType, "jwt")
-				c.Locals(localUsername, claims.Sub)
-				return c.Next()
+				if claims.SID == "" {
+					return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+						"error": "forbidden", "code": "insufficient_role",
+					})
+				}
+				// The MCP plane bills API keys but treats admin JWTs as an
+				// unlimited management identity. Re-read the persisted user so
+				// disabled/demoted accounts cannot keep using it, and require
+				// a bound session so logout/revocation is effective.
+				u, userOK := p.resolveRequestUser(claims.Sub, claims.UID)
+				if userOK && u.Role == RoleAdmin {
+					c.Locals(localAuthType, "jwt")
+					c.Locals(localUsername, u.Username)
+					return c.Next()
+				}
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+					"error": "forbidden", "code": "insufficient_role",
+				})
 			}
 		}
 

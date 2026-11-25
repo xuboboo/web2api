@@ -78,7 +78,7 @@ main.go → cmd (cobra)
 
 ## 4. 数据模型（bbolt）
 
-`<platform.data_dir>/web2api.db`，5 个 bucket（`platform/store.go:13-17`）：
+`<platform.data_dir>/web2api.db`，7 个 bucket（`keys`/`usage`/`usage_daily`/`sessions`/`settings`/`users`/`blacklist`，见 `platform/store.go`）：
 
 | bucket | 内容 | 关键点 |
 | --- | --- | --- |

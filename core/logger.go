@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -261,18 +263,29 @@ var logFile io.WriteCloser
 // Standard library only — no third-party dependency (单二进制约束). gzip 压缩
 // 归档为可选项,当前实现只做 rename 滚动,保持归档可用 gzip -d 直接读取。
 type rotatingFileWriter struct {
-	mu       sync.Mutex
-	path     string
-	file     *os.File
-	size     int64
-	maxBytes int64
-	backups  int
+	mu            sync.Mutex
+	path          string
+	file          *os.File
+	size          int64
+	maxBytes      int64
+	backups       int
+	retentionDays int
+	stopCh        chan struct{}
+	stopOnce      sync.Once
 }
 
 // newRotatingFileWriter opens path for appending with size-based rotation.
 // maxBytes <= 0 disables rotation (legacy infinite-append behavior); backups
 // bounds how many rolled files are kept (default 5).
 func newRotatingFileWriter(path string, maxBytes int64, backups int) (*rotatingFileWriter, error) {
+	return newRotatingFileWriterWithRetention(path, maxBytes, backups, 0)
+}
+
+// newRotatingFileWriterWithRetention adds a time-based retention window on top
+// of size rotation: rotated files older than retentionDays are removed on
+// startup, after each rotation and every 12 hours thereafter. retentionDays<=0
+// keeps the legacy behavior (only the backup count bounds the archive).
+func newRotatingFileWriterWithRetention(path string, maxBytes int64, backups, retentionDays int) (*rotatingFileWriter, error) {
 	if backups <= 0 {
 		backups = 5
 	}
@@ -284,7 +297,77 @@ func newRotatingFileWriter(path string, maxBytes int64, backups int) (*rotatingF
 	if info, statErr := f.Stat(); statErr == nil {
 		size = info.Size()
 	}
-	return &rotatingFileWriter{path: path, file: f, size: size, maxBytes: maxBytes, backups: backups}, nil
+	w := &rotatingFileWriter{
+		path: path, file: f, size: size, maxBytes: maxBytes,
+		backups: backups, retentionDays: retentionDays, stopCh: make(chan struct{}),
+	}
+	if retentionDays > 0 {
+		// A restart may follow a long downtime, so prune before the loop starts.
+		w.mu.Lock()
+		w.pruneLocked()
+		w.mu.Unlock()
+		go w.cleanupLoop()
+	}
+	return w, nil
+}
+
+// cleanupLoop prunes expired rotations periodically. It never touches the live
+// log file, only numeric .N rotations.
+func (w *rotatingFileWriter) cleanupLoop() {
+	ticker := time.NewTicker(12 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-w.stopCh:
+			return
+		case <-ticker.C:
+			w.mu.Lock()
+			w.pruneLocked()
+			w.mu.Unlock()
+		}
+	}
+}
+
+// pruneLocked removes rotated files whose mtime predates the retention window.
+// Caller holds the mutex; failures go to stderr (logging through the writer
+// would recurse into the same lock). Returns the number of removed files.
+func (w *rotatingFileWriter) pruneLocked() int {
+	if w.retentionDays <= 0 {
+		return 0
+	}
+	cutoff := time.Now().AddDate(0, 0, -w.retentionDays)
+	matches, err := filepath.Glob(w.path + ".*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "log retention glob failed for %s: %v\n", w.path, err)
+		return 0
+	}
+	removed := 0
+	base := filepath.Base(w.path)
+	for _, name := range matches {
+		// Glob normalization can drop a "./" prefix; compare basenames.
+		suffix := strings.TrimPrefix(filepath.Base(name), base+".")
+		n, err := strconv.Atoi(suffix)
+		if err != nil || n < 1 {
+			continue // only positive numeric rotations are managed here
+		}
+		info, err := os.Stat(name)
+		if err != nil || info.IsDir() || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if err := os.Remove(name); err != nil {
+			fmt.Fprintf(os.Stderr, "log retention remove failed for %s: %v\n", name, err)
+			continue
+		}
+		removed++
+	}
+	return removed
+}
+
+// PruneExpired removes expired rotated files on demand (admin cleanup API).
+func (w *rotatingFileWriter) PruneExpired() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.pruneLocked()
 }
 
 func (w *rotatingFileWriter) Write(p []byte) (int, error) {
@@ -295,6 +378,14 @@ func (w *rotatingFileWriter) Write(p []byte) (int, error) {
 			// Rotation failure must not lose the log line: fall through and
 			// keep appending to the current file.
 			fmt.Fprintf(os.Stderr, "log rotation failed for %s: %v\n", w.path, err)
+		} else {
+			w.pruneLocked()
+		}
+	}
+	if w.file == nil {
+		w.restoreAppendLocked()
+		if w.file == nil {
+			return 0, fmt.Errorf("log writer unavailable: %s", w.path)
 		}
 	}
 	n, err := w.file.Write(p)
@@ -305,29 +396,62 @@ func (w *rotatingFileWriter) Write(p []byte) (int, error) {
 // rotateLocked shifts <path>.i → <path>.i+1 (dropping the oldest), then starts
 // a fresh file. Caller holds the mutex.
 func (w *rotatingFileWriter) rotateLocked() error {
+	if w.file == nil {
+		w.restoreAppendLocked()
+		if w.file == nil {
+			return fmt.Errorf("log writer has no open file")
+		}
+	}
+	// Windows cannot rename an open file, so the live fd must be closed before
+	// shifting the chain. Any failure restores an append handle instead of
+	// leaving w.file nil (which previously silently dropped every later line).
 	if err := w.file.Close(); err != nil {
+		w.file = nil
 		return err
 	}
 	w.file = nil
-	// Shift existing rolls: drop the oldest, move the rest up by one.
 	oldest := fmt.Sprintf("%s.%d", w.path, w.backups)
 	_ = os.Remove(oldest)
 	for i := w.backups - 1; i >= 1; i-- {
-		_ = os.Rename(fmt.Sprintf("%s.%d", w.path, i), fmt.Sprintf("%s.%d", w.path, i+1))
+		if err := os.Rename(fmt.Sprintf("%s.%d", w.path, i), fmt.Sprintf("%s.%d", w.path, i+1)); err != nil && !os.IsNotExist(err) {
+			w.restoreAppendLocked()
+			return err
+		}
 	}
 	if err := os.Rename(w.path, w.path+".1"); err != nil && !os.IsNotExist(err) {
+		w.restoreAppendLocked()
 		return err
 	}
 	f, err := os.OpenFile(w.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
+		w.restoreAppendLocked()
 		return err
 	}
 	w.file = f
 	w.size = 0
+	// Refresh the archive mtime: retention is measured from rotation time,
+	// not from the last write to the now-archived file.
+	now := time.Now()
+	_ = os.Chtimes(w.path+".1", now, now)
 	return nil
 }
 
+// restoreAppendLocked reopens the live path in append mode after a failed
+// rotation so subsequent writes keep working. Caller holds the mutex.
+func (w *rotatingFileWriter) restoreAppendLocked() {
+	f, err := os.OpenFile(w.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	w.file = f
+	w.size = 0
+	if info, err := f.Stat(); err == nil {
+		w.size = info.Size()
+	}
+}
+
 func (w *rotatingFileWriter) Close() error {
+	w.stopOnce.Do(func() { close(w.stopCh) })
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.file == nil {
@@ -343,6 +467,14 @@ func (w *rotatingFileWriter) Close() error {
 // (app.log_max_mb / app.log_backups, S4-GAP 日志轮转); 0 keeps the legacy
 // infinite-append file.
 func InitLogger(isVerbose, isDebug, isQuiet, saveLog bool, format string, logMaxMB, logBackups int) {
+	InitLoggerWithRetention(isVerbose, isDebug, isQuiet, saveLog, format, logMaxMB, logBackups, 0)
+}
+
+// InitLoggerWithRetention is InitLogger plus a retention window for rotated
+// files (app.log_retention_days). The legacy signature above stays intact for
+// existing callers and tests.
+func InitLoggerWithRetention(isVerbose, isDebug, isQuiet, saveLog bool, format string, logMaxMB, logBackups, retentionDays int) {
+	SetLogConfig(LogConfig{MaxMB: logMaxMB, Backups: logBackups, RetentionDays: retentionDays, Format: format, FileLoggingEnabled: saveLog && !isQuiet && !isDebug})
 	switch format {
 	case LogFormatText:
 		logrus.SetFormatter(&bracketFormatter{TimestampFormat: "2006-01-02 15:04:05"})
@@ -362,24 +494,19 @@ func InitLogger(isVerbose, isDebug, isQuiet, saveLog bool, format string, logMax
 		logrus.SetOutput(os.Stderr)
 		logrus.SetReportCaller(false)
 	default:
+		// Always use the rotating writer: maxBytes=0 only disables size
+		// triggering, time-based retention stays active and is independent.
+		maxBytes := int64(0)
 		if logMaxMB > 0 {
-			w, err := newRotatingFileWriter("./logs.txt", int64(logMaxMB)*1024*1024, logBackups)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to open logs file ./logs.txt: %v\n", err)
-				logrus.SetOutput(io.MultiWriter(os.Stderr))
-			} else {
-				logFile = w
-				logrus.SetOutput(io.MultiWriter(w, os.Stderr))
-			}
+			maxBytes = int64(logMaxMB) * 1024 * 1024
+		}
+		w, err := newRotatingFileWriterWithRetention("./logs.txt", maxBytes, logBackups, retentionDays)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to open logs file ./logs.txt: %v\n", err)
+			logrus.SetOutput(io.MultiWriter(os.Stderr))
 		} else {
-			f, err := os.OpenFile("./logs.txt", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to open logs file ./logs.txt: %v\n", err)
-				logrus.SetOutput(io.MultiWriter(os.Stderr))
-			} else {
-				logFile = f
-				logrus.SetOutput(io.MultiWriter(f, os.Stderr))
-			}
+			logFile = w
+			logrus.SetOutput(io.MultiWriter(w, os.Stderr))
 		}
 		logrus.SetReportCaller(false)
 	}

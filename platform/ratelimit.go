@@ -88,8 +88,8 @@ func retryAfterSecondsForRate(perMinute int) int {
 // platformRateLimiters bundles the three S4 tables (nil-safe: created with the
 // Platform, never nil).
 type platformRateLimiters struct {
-	keyLimiters    *limiterTable // per API key (billed planes)
-	unauthLimiters *limiterTable // per IP without valid credentials (/v1, MCP)
+	keyLimiters     *limiterTable // per API key (billed planes)
+	unauthLimiters  *limiterTable // per IP without valid credentials (/v1, MCP)
 	adminIPLimiters *limiterTable // per IP for /api/* (B-05)
 }
 
