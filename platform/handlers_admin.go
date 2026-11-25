@@ -101,30 +101,43 @@ func (p *Platform) RegisterAdmin(app fiber.Router, indexCheck fiber.Handler, eng
 	limiter := p.adminRateGuard()
 
 	app.Post("/api/auth/login", limiter, p.handleLogin)
-	app.Post("/api/auth/password", limiter, p.jwtGuard(), p.handlePasswordChange)
-	app.Post("/api/auth/logout", limiter, p.jwtGuard(), p.handleLogout)
-	app.Post("/api/auth/refresh", limiter, p.jwtGuard(), p.handleAuthRefresh)
-	app.Get("/api/me", limiter, p.jwtGuard(), p.handleMe)
-	app.Get("/api/runtime", limiter, p.jwtGuard(), p.handleRuntime)
-	app.Post("/api/keys", limiter, p.jwtGuard(), p.handleCreateKey)
-	app.Get("/api/keys", limiter, p.jwtGuard(), p.handleListKeys)
-	app.Patch("/api/keys/:id", limiter, p.jwtGuard(), p.handleUpdateKey)
-	app.Post("/api/keys/:id/rotate", limiter, p.jwtGuard(), p.handleRotateKey)
-	app.Delete("/api/keys/:id", limiter, p.jwtGuard(), p.handleDeleteKey)
-	app.Get("/api/stats/overview", limiter, p.jwtGuard(), p.handleStatsOverview)
-	app.Get("/api/stats/timeseries", limiter, p.jwtGuard(), p.handleStatsTimeseries)
-	app.Get("/api/usage", limiter, p.jwtGuard(), p.handleUsage)
-	app.Get("/api/usage/export", limiter, p.jwtGuard(), p.handleUsageExport)
-	app.Get("/api/reconcile", limiter, p.jwtGuard(), p.handleReconcile)
-	app.Get("/api/engines", limiter, p.jwtGuard(), p.handleAdminEngines)
-	app.Post("/api/engines/:name/cooldown/reset", limiter, p.jwtGuard(), p.handleCooldownReset)
-	app.Post("/api/engines/:name/cooldown/force", limiter, p.jwtGuard(), p.handleCooldownForce)
-	app.Get("/api/sessions", limiter, p.jwtGuard(), p.handleListSessions)
-	app.Delete("/api/sessions/:id", limiter, p.jwtGuard(), p.handleRevokeSession)
-	app.Get("/api/audit", limiter, p.jwtGuard(), p.handleAudit)
-	app.Get("/api/admin/backup", limiter, p.jwtGuard(), p.handleBackupDownload)
+	app.Post("/api/auth/password", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handlePasswordChange)
+	app.Post("/api/auth/logout", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleLogout)
+	app.Post("/api/auth/refresh", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleAuthRefresh)
+	app.Get("/api/me", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleMe)
+	app.Get("/api/runtime", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleRuntime)
+	app.Post("/api/keys", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleCreateKey)
+	app.Get("/api/keys", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleListKeys)
+	app.Patch("/api/keys/:id", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleUpdateKey)
+	app.Post("/api/keys/:id/rotate", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleRotateKey)
+	app.Delete("/api/keys/:id", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleDeleteKey)
+	app.Get("/api/stats/overview", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleStatsOverview)
+	app.Get("/api/stats/timeseries", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleStatsTimeseries)
+	app.Get("/api/usage", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleUsage)
+	app.Get("/api/usage/export", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleUsageExport)
+	app.Get("/api/reconcile", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleReconcile)
+	app.Get("/api/engines", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleAdminEngines)
+	app.Post("/api/engines/:name/cooldown/reset", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleCooldownReset)
+	app.Post("/api/engines/:name/cooldown/force", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleCooldownForce)
+	app.Get("/api/sessions", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleListSessions)
+	app.Delete("/api/sessions/:id", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleRevokeSession)
+	app.Get("/api/audit", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleAudit)
+	app.Get("/api/admin/backup", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleBackupDownload)
+	// 新增: 用户与角色 / 黑名单 / 日志。
+	app.Get("/api/users", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleListUsers)
+	app.Post("/api/users", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleCreateUser)
+	app.Patch("/api/users/:id", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleUpdateUser)
+	app.Delete("/api/users/:id", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleDeleteUser)
+	app.Post("/api/users/:id/password", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleResetUserPassword)
+	app.Get("/api/blacklist", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleListBlacklist)
+	app.Post("/api/blacklist", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleCreateBlacklist)
+	app.Patch("/api/blacklist/:id", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleUpdateBlacklist)
+	app.Delete("/api/blacklist/:id", limiter, p.jwtGuard(), p.requireRole(RoleOperator), p.handleDeleteBlacklist)
+	app.Get("/api/logs", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleLogs)
+	app.Get("/api/logs/config", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleLogsConfig)
+	app.Post("/api/logs/cleanup", limiter, p.jwtGuard(), p.requireRole(RoleAdmin), p.handleLogsCleanup)
 	if indexCheck != nil {
-		app.Post("/api/playground/check", limiter, p.jwtGuard(), indexCheck)
+		app.Post("/api/playground/check", limiter, p.jwtGuard(), p.requireRole(RoleViewer), indexCheck)
 	}
 }
 
@@ -149,13 +162,21 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
-	usernameOK := req.Username == p.cfg.AdminUsername
+	u, err := p.store.GetUserByUsername(req.Username)
+	if err != nil {
+		return errInternal(c, err)
+	}
+	if u == nil {
+		u = p.legacyAdminUser(req.Username)
+	}
+	usernameOK := u != nil && u.Status == UserStatusActive
 	if usernameOK {
 		p.adminAuthMu.Lock()
 		defer p.adminAuthMu.Unlock()
 	}
+	loginName := normalizeUsername(req.Username)
 	now := time.Now()
-	if lockedUntil, locked := p.loginLockedAt(req.Username, now); locked {
+	if lockedUntil, locked := p.loginLockedAt(loginName, now); locked {
 		remaining := int((lockedUntil.Sub(now) + time.Second - time.Nanosecond) / time.Second)
 		logrus.WithFields(logrus.Fields{
 			"username": req.Username, "ip": c.IP(),
@@ -168,22 +189,22 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 		// S4-B-04: equalize the timing by running the same bcrypt work.
 		_ = bcrypt.CompareHashAndPassword(dummyAdminHash, []byte(req.Password))
 	}
-	if !usernameOK || bcrypt.CompareHashAndPassword(p.adminHash(), []byte(req.Password)) != nil {
-		p.recordLoginFailure(req.Username, c.IP(), now)
+	if !verifyUserPassword(u, req.Password) || !usernameOK {
+		p.recordLoginFailure(loginName, c.IP(), now)
 		core.Metrics().IncLoginFailure()
 		p.auditFrom(c, req.Username, AuditActionLoginFailed, req.Username, "401")
 		return errUnauthorized(c)
 	}
-	p.clearLoginFailures(req.Username)
+	p.clearLoginFailures(loginName)
 	version, err := p.tokenVersion()
 	if err != nil {
 		return errInternal(c, err)
 	}
-	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
+	session, err := p.createUserSession(u, c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
 	if err != nil {
 		return errInternal(c, err)
 	}
-	token, err := p.issueSessionToken(req.Username, session.ID, version)
+	token, err := p.issueUserToken(u, session.ID, version)
 	if err != nil {
 		return errUnauthorized(c)
 	}
@@ -194,7 +215,7 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"token":      token,
 		"expires_in": int64(p.jwtTTL() / time.Second),
-		"user":       fiber.Map{"username": req.Username},
+		"user":       fiber.Map{"username": u.Username, "role": u.Role, "user_id": u.ID},
 	})
 }
 
@@ -248,7 +269,11 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if !ok || authorizedVersion != version {
 		return errUnauthorized(c)
 	}
-	if bcrypt.CompareHashAndPassword(p.adminHash(), []byte(req.OldPassword)) != nil {
+	u, ok := p.currentRequestUser(c)
+	if !ok {
+		return errUnauthorized(c)
+	}
+	if !verifyUserPassword(u, req.OldPassword) {
 		core.Metrics().IncLoginFailure()
 		return errUnauthorized(c)
 	}
@@ -260,35 +285,53 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if err != nil {
 		return errInternal(c, err)
 	}
-	if version >= 1<<30 {
-		return errInternal(c, fmt.Errorf("admin token version limit reached"))
+	// Non-admin accounts change only their own user record; the global admin
+	// credential/token_version stays untouched. Admin changes keep the original
+	// contract: settings hash override + global invalidation.
+	// Only the configured bootstrap admin owns the global credential settings.
+	// Other admins change just their own user record and sessions.
+	isAdmin := u.Role == RoleAdmin && u.Username == normalizeUsername(p.cfg.AdminUsername)
+	revoked := 0
+	if isAdmin {
+		if version >= 1<<30 {
+			return errInternal(c, fmt.Errorf("admin token version limit reached"))
+		}
+		version++
+		if err := p.store.PutSettings(map[string][]byte{
+			settingAdminHash:           hash,
+			settingAdminPasswordCustom: []byte("1"),
+			settingTokenVersion:        []byte(strconv.Itoa(version)),
+		}); err != nil {
+			return errInternal(c, err)
+		}
+		p.setAdminHash(hash)
+		revoked, err = p.revokeAllSessions()
+	} else {
+		revoked, err = p.revokeUserSessions(u.ID)
 	}
-	version++
-	if err := p.store.PutSettings(map[string][]byte{
-		settingAdminHash:           hash,
-		settingAdminPasswordCustom: []byte("1"),
-		settingTokenVersion:        []byte(strconv.Itoa(version)),
-	}); err != nil {
+	if err != nil {
+		logrus.WithError(err).Warn("platform: could not mark old sessions revoked after password change")
+	}
+	u.PasswordHash = hash
+	if err := p.store.PutUser(u); err != nil {
 		return errInternal(c, err)
 	}
-	p.setAdminHash(hash)
-	// S4-GAP 会话: 全部旧会话(含当前)随 token_version 一并失效,再发新会话。
-	revoked, err := p.revokeAllSessions()
-	if err != nil {
-		logrus.WithError(err).Warn("platform: could not mark every old session revoked after password change")
-	}
-	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
+	session, err := p.createUserSession(u, c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
 	if err != nil {
 		return errInternal(c, err)
 	}
-	token, err := p.issueSessionToken(p.cfg.AdminUsername, session.ID, version)
+	token, err := p.issueUserToken(u, session.ID, version)
 	if err != nil {
 		return errInternal(c, err)
 	}
 	p.setSessionCookie(c, token, p.jwtTTL())
-	p.auditFrom(c, p.cfg.AdminUsername, AuditActionPasswordChange, p.cfg.AdminUsername,
+	p.auditFrom(c, u.Username, AuditActionPasswordChange, u.Username,
 		fmt.Sprintf("ok,revoked_sessions=%d", revoked))
-	logrus.Info("platform: 管理员密码已修改,全部旧 token 与会话已失效")
+	if isAdmin {
+		logrus.Info("platform: 管理员密码已修改,全部旧 token 与会话已失效")
+	} else {
+		logrus.WithField("username", u.Username).Info("platform: 用户密码已修改,该用户会话已失效")
+	}
 	return c.JSON(fiber.Map{
 		"ok":            true,
 		"token":         token,
@@ -354,8 +397,16 @@ func (p *Platform) handleMe(c *fiber.Ctx) error {
 	if err != nil {
 		return errInternal(c, err)
 	}
+	role, _ := c.Locals(localAdminRole).(string)
+	uid, _ := c.Locals(localAdminUserID).(string)
+	username, _ := c.Locals(localAdminUsername).(string)
+	if username == "" {
+		username = p.cfg.AdminUsername
+	}
 	resp := fiber.Map{
-		"username":    p.cfg.AdminUsername,
+		"username":    username,
+		"role":        role,
+		"user_id":     uid,
 		"keys_count":  len(keys),
 		"today_calls": agg.TodayCalls,
 		"total_calls": agg.TotalCalls,

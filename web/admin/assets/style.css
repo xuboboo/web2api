@@ -21,7 +21,7 @@
   /* 底色 / 文字(暖纸白系,V4 §3.1) */
   --bg: #faf9f5;
   --fg: #141413;
-  --card: #faf9f5;
+  --card: #fffefb;
   --popover: #faf9f5;
   --muted: #efeee8;
   --muted-fg: #5e5d59;
@@ -1108,38 +1108,39 @@ th.td-num-h { text-align: right; }
   line-height: 1.1;
   color: #f3f1eb;
 }
-.login-brand-rule {
-  width: 56px;
-  height: 1px;
-  background: rgba(243, 241, 235, .24);
-  margin: 40px 0;
-}
-.login-stats { display: flex; flex-direction: column; gap: 20px; }
-.login-stat { display: flex; flex-direction: column; gap: 2px; }
-.login-stat b {
-  font-family: var(--font-mono);
-  font-size: 24px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #f3f1eb;
-  letter-spacing: -0.02em;
-}
-.login-stat span { font-size: 12.5px; color: rgba(243, 241, 235, .55); }
-.login-stat .ls-accent { color: #3ecf8e; }
+.login-brand-intro { margin: 14px 0 0; font-size: 18px; color: #cedcd3; }
+.login-stats { display: grid; gap: 16px; list-style: none; padding: 0; margin: 36px 0 0; color: #deebe2; font-size: 15px; }
+.login-stats li { display: flex; align-items: center; gap: 12px; }
+.login-stats li::before { content: ""; flex: none; width: 6px; height: 6px; border: 1px solid #62d5a2; border-radius: 50%; }
 
 .login-panel {
   flex: 1;
   position: relative;
   background: var(--bg);
-  background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
-  background-size: 16px 16px;
+  background-image: radial-gradient(ellipse at 60% 20%, color-mix(in srgb, var(--brand) 11%, transparent), transparent 65%);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 48px 24px;
 }
 .login-theme-btn { position: absolute; top: 16px; right: 16px; }
-.login-box { width: 100%; max-width: 384px; }
+.login-box {
+  width: 100%;
+  max-width: 420px;
+  padding: clamp(24px, 5vw, 36px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 12px 36px rgba(23, 46, 36, 0.08);
+}
+.login-home-link { display: inline-block; margin-top: 22px; color: var(--brand); font-size: 13px; text-decoration: none; }
+.login-home-link:hover { text-decoration: underline; }
+.password-field { position: relative; }
+.password-field .input { padding-inline-end: 48px; }
+.password-toggle { position: absolute; inset: 4px 4px auto auto; }
+.password-toggle .password-hide, .password-toggle[aria-pressed="true"] .password-show { display: none; }
+.password-toggle[aria-pressed="true"] .password-hide { display: block; }
+.login-submit-icon { width: 17px; height: 17px; }
 .login-mark {
   width: 40px;
   height: 40px;
@@ -1161,8 +1162,8 @@ th.td-num-h { text-align: right; }
   color: var(--muted-fg);
 }
 .login-panel .field-label { color: var(--muted-fg); }
-/* 反色主按钮 h36 r10(V4 §10.1) */
-#login-submit { height: 36px; font-size: 14px; margin-top: 4px; }
+.login-panel .input, #login-submit { min-height: 44px; }
+#login-submit { font-size: 14px; margin-top: 6px; border-radius: 10px; gap: 8px; }
 .login-error {
   margin: 4px 0 14px;
   padding: 8px 12px;
@@ -2219,7 +2220,8 @@ html.dark .toast { background: #000; border-color: hsl(0 0% 20%); }
   .stat-band { grid-template-columns: repeat(2, 1fr); }
   .login { flex-direction: column-reverse; }
   .login-brand { flex: none; padding: 40px 24px; }
-  .login-brand-rule { margin: 24px 0; }
+  .login-brand-intro { margin-top: 8px; }
+  .login-stats { margin-top: 22px; gap: 9px; }
   /* P-15:移动端统计改两列网格(修复换行节奏断裂) */
   .login-stats {
     display: grid;
@@ -2230,6 +2232,9 @@ html.dark .toast { background: #000; border-color: hsl(0 0% 20%); }
 }
 
 @media (max-width: 640px) {
+  .login-brand { display: none; }
+  .login-panel { padding: 52px 14px 24px; }
+  .login-theme-btn { top: 9px; right: 14px; }
   /* P-15:窄屏(≤640)统计单列堆叠,长标签不挤压 */
   .login-stats { grid-template-columns: 1fr; }
   .stat-band { grid-template-columns: 1fr; }
@@ -2239,6 +2244,30 @@ html.dark .toast { background: #000; border-color: hsl(0 0% 20%); }
   .topbar-user span#topbar-username { display: none; }
   .search-box .input { width: 100%; }
   .search-box { width: 100%; }
+}
+
+/* ==================== 22b. 管理页(用户 / 日志 / 黑名单) ==================== */
+
+/* 只读角色就地提示:与 .page-note 同族,松柏绿细线强调,复用主题变量 */
+.role-hint {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--brand);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--brand) 6%, transparent);
+  color: var(--muted-fg);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* 日志正文:长消息在单元格内换行,不撑破表格 */
+.log-msg {
+  min-width: 260px;
+  max-width: 640px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
 /* ==================== 23. 动效偏好:减少动画(V4 §8 统一约束) ==================== */

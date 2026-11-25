@@ -10,9 +10,9 @@ import (
 func TestValidateIndexCheckURLsCollapsesDuplicates(t *testing.T) {
 	urls, apiErr := validateIndexCheckURLs([]string{
 		"https://example.test/a",
-		" https://example.test/a ",     // trims to the same URL
-		"HTTPS://Example.Test/a",       // scheme/host case folded by the key
-		"https://example.test/a/",      // trailing slash ignored by the key
+		" https://example.test/a ", // trims to the same URL
+		"HTTPS://Example.Test/a",   // scheme/host case folded by the key
+		"https://example.test/a/",  // trailing slash ignored by the key
 		"https://example.test/b",
 	})
 	if apiErr != nil {
@@ -68,9 +68,9 @@ func TestValidateIndexCheckURLsRejectsUnsupportedSchemes(t *testing.T) {
 	good := []string{
 		"https://example.test/x",
 		"http://example.test/x",
-		"example.test",              // bare host → http
-		"example.test:8080/x",       // host:port is not a scheme
-		"www.example.test/a?b=1",    // bare host with query
+		"example.test",           // bare host → http
+		"example.test:8080/x",    // host:port is not a scheme
+		"www.example.test/a?b=1", // bare host with query
 	}
 	for _, raw := range good {
 		if _, apiErr := validateIndexCheckURLs([]string{raw}); apiErr != nil {

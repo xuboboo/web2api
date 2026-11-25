@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -22,6 +23,10 @@ func boltBucketName(name string) []byte {
 	return []byte(name)
 }
 
+// ErrBoltContentCorrupt marks a database that opened but contains unusable records;
+// unlike an environmental open failure it must never be masked by the JSON fallback.
+var ErrBoltContentCorrupt = errors.New("bbolt content corrupt")
+
 // newBoltStore opens (and creates buckets in) the bbolt database file.
 func newBoltStore(path string) (*boltStore, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 3 * time.Second})
@@ -29,7 +34,7 @@ func newBoltStore(path string) (*boltStore, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, name := range []string{bucketKeys, bucketUsage, bucketSettings, bucketSessions, bucketUsageDaily} {
+		for _, name := range []string{bucketKeys, bucketUsage, bucketSettings, bucketSessions, bucketUsageDaily, bucketUsers, bucketBlacklist} {
 			if _, err := tx.CreateBucketIfNotExists(boltBucketName(name)); err != nil {
 				return fmt.Errorf("create bucket %s: %w", name, err)
 			}
@@ -46,7 +51,7 @@ func newBoltStore(path string) (*boltStore, error) {
 	// instead of full-table scans.
 	if err := s.rebuildUsageIndex(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("rebuild usage index: %w", err)
+		return nil, fmt.Errorf("%w: rebuild usage index: %v", ErrBoltContentCorrupt, err)
 	}
 	return s, nil
 }

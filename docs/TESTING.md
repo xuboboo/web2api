@@ -17,7 +17,20 @@ golangci-lint run --config .golangci.yml   # v2.13.2，配置 schema v2
 govulncheck ./...
 ```
 
-> Windows 本机默认无 C 编译器，`-race` 会报 `requires cgo`；这是环境限制，不是测试被跳过。CI 固定 Go 1.26，与 `go.mod` 对齐。
+> Windows 本机默认无 C 编译器，直接跑 -race 会报 requires cgo；可用下方 Docker/Linux 路径完成竞态检测。CI 固定 Go 1.26，与 go.mod 对齐。
+
+### 在 Windows 上用 Docker 跑 -race（本机已验证全绿）
+
+无本地 mingw 时，用带 gcc 的 Linux Go 镜像即可；浏览器用例需要 Chromium 运行库，镜像需预装：
+
+~~~powershell
+docker run -d --name w2a-race-deps golang:1.26.11-bookworm sleep infinity
+docker exec w2a-race-deps bash -lc 'apt-get update -qq && apt-get install -y -qq libglib2.0-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 libxss1 libxtst6 fonts-liberation'
+docker commit w2a-race-deps w2a-race:1.26.11
+docker run --rm -v '<仓库路径>:/src' -v "$env:USERPROFILE\go\pkg\mod:/go/pkg/mod:ro" -w /src -e GOENV=off -e CGO_ENABLED=1 w2a-race:1.26.11 go test -race -count=1 -p 4 ./...
+~~~
+
+宿主机 Go 模块缓存以只读方式挂入，避免重复下载；-p 4 控制链接并发。实测 11 个测试包全部通过、无 DATA RACE，原始日志见 qa/features-audit/race-final.log。
 
 ### 在 Windows 上跑 `-race`（已验证可行）
 

@@ -48,7 +48,7 @@ curl -X POST {BASE}/api/auth/login \
 {
   "token": "<JWT字符串，约 200 字符>",
   "expires_in": 86400,
-  "user": { "username": "admin" }
+  "user": { "username": "admin", "role": "admin", "user_id": "<用户 ID>" }
 }
 ```
 
@@ -305,7 +305,7 @@ console.log("计费 units =", data.meta.units);
 
 ### Agent / MCP 客户端
 
-MCP 入口是 `{BASE}/mcp`，**必须携带 API Key**，否则 401。以 Claude Code 为例：
+MCP 入口是 `{BASE}/mcp`，接受 **API Key（计费）或带有效会话的管理员 JWT（必须含 sid，不计费）**；operator/viewer 的 JWT 返回 403 `insufficient_role`，无鉴权返回 401。以 Claude Code 为例：
 
 ```bash
 claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: $W2A_KEY"

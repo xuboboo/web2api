@@ -24,21 +24,25 @@ type jsonStore struct {
 }
 
 type jsonStoreData struct {
-	Keys     map[string]*APIKey       `json:"keys"`
-	Usage    []UsageRecord            `json:"usage"`
-	Settings map[string]string        `json:"settings"` // base64-encoded values
-	Seq      uint64                   `json:"usage_seq"`
-	Sessions map[string]*AdminSession `json:"sessions,omitempty"` // S4-GAP 会话系统
+	Keys      map[string]*APIKey         `json:"keys"`
+	Usage     []UsageRecord              `json:"usage"`
+	Settings  map[string]string          `json:"settings"` // base64-encoded values
+	Seq       uint64                     `json:"usage_seq"`
+	Sessions  map[string]*AdminSession   `json:"sessions,omitempty"`  // S4-GAP 会话系统
+	Users     map[string]*User           `json:"users,omitempty"`     // 控制台用户与角色
+	Blacklist map[string]*BlacklistEntry `json:"blacklist,omitempty"` // IP/CIDR 黑名单
 }
 
 func newJSONStore(path string) (*jsonStore, error) {
 	s := &jsonStore{
 		path: path,
 		data: jsonStoreData{
-			Keys:     map[string]*APIKey{},
-			Usage:    []UsageRecord{},
-			Settings: map[string]string{},
-			Sessions: map[string]*AdminSession{},
+			Keys:      map[string]*APIKey{},
+			Usage:     []UsageRecord{},
+			Settings:  map[string]string{},
+			Sessions:  map[string]*AdminSession{},
+			Users:     map[string]*User{},
+			Blacklist: map[string]*BlacklistEntry{},
 		},
 	}
 	raw, err := os.ReadFile(path)
@@ -57,6 +61,12 @@ func newJSONStore(path string) (*jsonStore, error) {
 		}
 		if s.data.Sessions == nil {
 			s.data.Sessions = map[string]*AdminSession{}
+		}
+		if s.data.Users == nil {
+			s.data.Users = map[string]*User{}
+		}
+		if s.data.Blacklist == nil {
+			s.data.Blacklist = map[string]*BlacklistEntry{}
 		}
 		return s, nil
 	}
@@ -277,10 +287,12 @@ func (s *jsonStore) UsageTimeseries(days int) ([]UsageDayStat, error) {
 		if !ok {
 			continue
 		}
-		bucket.Calls++
-		bucket.Units += r.Units
-		if r.Status == fiber.StatusOK {
-			bucket.OK++
+		if recordReached(&r) {
+			bucket.Calls++
+			bucket.Units += r.Units
+			if r.Status == fiber.StatusOK {
+				bucket.OK++
+			}
 		}
 	}
 	out := make([]UsageDayStat, 0, len(dates))
@@ -395,7 +407,7 @@ func (s *jsonStore) DeleteAllSessions(keepID string) (int, error) {
 func (s *jsonStore) PruneUsageBefore(cutoff time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	kept := s.data.Usage[:0]
+	kept := make([]UsageRecord, 0, len(s.data.Usage))
 	var removed int64
 	for _, r := range s.data.Usage {
 		if r.Time.Before(cutoff) {
@@ -404,9 +416,11 @@ func (s *jsonStore) PruneUsageBefore(cutoff time.Time) (int64, error) {
 		}
 		kept = append(kept, r)
 	}
-	s.data.Usage = kept
 	if removed > 0 {
+		old := s.data.Usage
+		s.data.Usage = kept
 		if err := s.saveLocked(); err != nil {
+			s.data.Usage = old
 			return removed, err
 		}
 	}

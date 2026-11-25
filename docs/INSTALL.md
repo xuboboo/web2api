@@ -118,7 +118,7 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/console/
 
 ## 6. 数据库初始化与迁移
 
-- **初始化是自动的**：首次启动时 bbolt 会创建 `web2api.db` 与 5 个 bucket（`keys`/`usage`/`usage_daily`/`sessions`/`settings`），并生成 `secret.key`（0600）。
+- **初始化是自动的**：首次启动时 bbolt 会创建 `web2api.db` 与 7 个 bucket（`keys`/`usage`/`usage_daily`/`sessions`/`settings`/`users`/`blacklist`），其中 `users` 保存三级角色账号、`blacklist` 保存 IP/CIDR 规则，并生成 `secret.key`（0600）。
 - **没有 SQL 迁移脚本**：结构由代码内 bucket/key 约定决定，升级二进制后旧库可直接打开。
 - 升级前务必备份（见 `OPERATIONS.md`）：
   ```bash

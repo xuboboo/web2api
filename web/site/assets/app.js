@@ -223,16 +223,17 @@
   }
 
   /* ---------- 6) 复制按钮(clipboard API + execCommand 兜底,「已复制」1.5s) ---------- */
-  function flashCopied(btn) {
-    btn.classList.add('copied');
+  function flashCopyResult(btn, copied) {
+    btn.classList.toggle('copied', copied);
+    btn.classList.toggle('copy-failed', !copied);
     var label = btn.querySelector('.copy-label');
     if (label) {
       if (!btn.getAttribute('data-orig-label')) btn.setAttribute('data-orig-label', label.textContent);
-      label.textContent = '已复制';
+      label.textContent = copied ? '已复制' : '复制失败';
     }
     if (btn._copyTimer) window.clearTimeout(btn._copyTimer);
     btn._copyTimer = window.setTimeout(function () {
-      btn.classList.remove('copied');
+      btn.classList.remove('copied', 'copy-failed');
       if (label) label.textContent = btn.getAttribute('data-orig-label') || '复制';
     }, 1500);
   }
@@ -251,12 +252,11 @@
   }
 
   function copyText(text, btn) {
-    var done = function () { flashCopied(btn); };
+    var fallback = function () { flashCopyResult(btn, legacyCopy(text)); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done, function () { legacyCopy(text); done(); });
+      navigator.clipboard.writeText(text).then(function () { flashCopyResult(btn, true); }, fallback);
     } else {
-      legacyCopy(text);
-      done();
+      fallback();
     }
   }
 
@@ -292,100 +292,6 @@
     initTabs();
     initCopy();
     initOrigin();
-    initEngineStatus();
-
-    /* ---------- 9) 官网「服务器状态」看板:真实接口同步(10s 轮询) ---------- */
-    function initEngineStatus() {
-      var board = document.getElementById('engineStatusBoard');
-      if (!board) return;
-      var CN = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
-      /* A-15:全站引擎展示统一排序 百度/搜狗/360 搜索/必应(看板数据为 API 序,前端按此固定序重排) */
-      var ENGINE_ORDER = ['baidu', 'sogou', 'so360', 'bing'];
-      var SEGS = 12;
-
-      /* A-10:与 status 页同款 HTML 转义(纵深一致性;数据源为自有 API,无实际注入面) */
-      function esc(s) {
-        return String(s == null ? '' : s).replace(/[&<>"]/g, function (ch) {
-          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
-        });
-      }
-      function pill(state) {
-        if (state === 'cooldown') return '<span class="st-pill st-cool">冷却</span>';
-        if (state === 'circuit_open') return '<span class="st-pill st-cb">熔断</span>';
-        return '<span class="st-pill st-ok">正常</span>';
-      }
-      function remainingText(untilStr) {
-        if (!untilStr) return '';
-        var ms = new Date(untilStr).getTime() - Date.now();
-        if (ms <= 0) return '等待恢复探测';
-        var m = Math.floor(ms / 60000);
-        var s = Math.floor((ms % 60000) / 1000);
-        return '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-      }
-      function render(data) {
-        var engines = (data && data.engines) || [];
-        if (!engines.length) {
-          board.innerHTML = '<div class="engine-row"><div class="eng-top"><span class="eng-name">—</span><span class="st-pill st-ok">暂无数据</span></div></div>';
-          return;
-        }
-        engines = engines.slice().sort(function (a, b) {
-          var ia = ENGINE_ORDER.indexOf(a.engine); if (ia === -1) ia = 99;
-          var ib = ENGINE_ORDER.indexOf(b.engine); if (ib === -1) ib = 99;
-          return ia - ib;
-        });
-        var html = '';
-        engines.forEach(function (eng) {
-          var state = eng.state || 'ok';
-          var now = Date.now();
-          var remMin = Infinity;
-          if (state === 'cooldown' && eng.until) {
-            remMin = Math.max(0, (new Date(eng.until).getTime() - now) / 60000);
-          }
-          var filled = 0;
-          if (state === 'ok') filled = SEGS;
-          else if (state === 'cooldown' && isFinite(remMin)) filled = Math.max(1, Math.round(SEGS * Math.min(1, remMin / 120)));
-          var segs = '';
-          for (var i = 0; i < SEGS; i++) {
-            var cls = 'seg';
-            if (state === 'circuit_open') cls += ' on-err';
-            else if (i < filled) cls += state === 'cooldown' ? ' on-warn' : ' on-ok';
-            segs += '<span class="' + cls + '"></span>';
-          }
-          var extra = state === 'cooldown' && eng.until
-            ? '<span class="st-extra cd-remaining" data-until="' + esc(eng.until) + '">' + esc(remainingText(eng.until)) + '</span>'
-            : '';
-          html += '<div class="engine-row">'
-            + '<div class="eng-top"><span class="eng-name">' + esc(eng.engine) + '</span>'
-            + '<span class="eng-cn">' + esc(CN[eng.engine] || eng.engine) + '</span>'
-            + pill(state) + extra + '</div>'
-            + '<div class="seg-bar" aria-hidden="true">' + segs + '</div>'
-            + '</div>';
-        });
-        board.innerHTML = html;
-      }
-      function tick() {
-        Array.prototype.forEach.call(board.querySelectorAll('.cd-remaining[data-until]'), function (el) {
-          var u = el.getAttribute('data-until');
-          if (!u) return;
-          var ms = new Date(u).getTime() - Date.now();
-          if (ms <= 0) { el.textContent = '等待恢复探测'; return; }
-          var m = Math.floor(ms / 60000);
-          var s = Math.floor((ms % 60000) / 1000);
-          el.textContent = '剩余 ' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-        });
-      }
-      function load() {
-        fetch('/web-tool/engines/status')
-          .then(function (r) { return r.json(); })
-          .then(function (data) { render(data); tick(); })
-          .catch(function () {
-            board.innerHTML = '<div class="engine-row"><div class="eng-top"><span class="eng-name">—</span><span class="st-pill st-cb">状态获取失败</span></div></div>';
-          });
-      }
-      load();
-      setInterval(load, 10000);
-      setInterval(tick, 1000);
-    }
 
     function initOrigin() {
       /* 自适应部署地址:源码中的 {{ORIGIN}} 占位符在运行时替换为当前访问源。

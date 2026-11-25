@@ -51,14 +51,17 @@ This is **not** a general-purpose API gateway, nor another SerpAPI clone. The mo
 
 **Features at a glance**:
 
-- **Index-check API**: `POST /web-tool/v1/index/check` takes up to 20 URLs per request and returns per-engine `indexed` verdicts with match details; 1 URL × 1 engine = 1 unit.
+- **Index-check API**: `POST /web-tool/v1/index/check` handles ≤20 URLs synchronously and queues >20 URLs as a server-side job (202 + `job_id`); per-engine `indexed` verdicts with match details; 1 URL × 1 engine = 1 unit.
 - **Four-engine raw search**: `GET /web-tool/{engine}/search` with `format=json|markdown|text|ndjson`.
 - **Dual agent entry points**: MCP streamable HTTP (6 tools, incl. batch jobs) + OpenAPI 3.1 spec + an llms.txt capability list.
 - **Admin console**: API keys, quotas, usage logs, engine risk-control dashboard, playground, settings.
+- **User roles**: built-in `admin` / `operator` / `viewer` roles, re-read from the user store on every request; user management and session revocation are admin-only.
+- **Log rotation with retention**: `logs.txt.N` / `audit.log.N` are pruned by mtime after `app.log_retention_days` (default 30) at startup, after rotation and every 12 hours; `POST /api/logs/cleanup` triggers a manual sweep.
+- **IP blacklist**: `security.blacklist` seeds IP/CIDR rules on first start only, then rules are managed in the console/API; hits return 403 and write an audit entry.
 - **Built-in IP risk control**: desktop browser fingerprints, browser/HTTP dual-channel fallback, CAPTCHA gating, per-engine rate limits, circuit breakers, and an engine cooldown state machine.
 - **No external storage dependencies**: a single bbolt file holds all state — no database, no message queue; the build is a single executable (`./web2api serve`; browser mode needs a local Chrome/Chromium/Edge).
 
-What we deliberately **don't** do: no global engine coverage, no Google vertical matrix, no location/language parameters, no async job archival, no reranker add-on layer. Two honest caveats: billing is **per successful unit** — after an HTTP 200 completes, the response envelope is inspected engine by engine and only successful units are charged; engine-level failed units (the `error` field, including raw-mode `not_implemented`) are not billed, and when the envelope cannot be parsed the full requested units are billed (fallback rule); 4xx / 429 / 503 are not billed. Batch index checks are synchronous, capped at 20 URLs per request.
+What we deliberately **don't** do: no global engine coverage, no Google vertical matrix, no location/language parameters, no async job archival, no reranker add-on layer. Two honest caveats: billing is **per successful unit** — after an HTTP 200 completes, the response envelope is inspected engine by engine and only successful units are charged; engine-level failed units (the `error` field, including raw-mode `not_implemented`) are not billed, and when the envelope cannot be parsed the full requested units are billed (fallback rule); 4xx / 429 / 503 are not billed. Batch index checks are synchronous up to 20 URLs; above 20 they are queued as a server-side job (202 + `job_id`, progress/results/CSV via `/v1/index/check/jobs/*`; default cap 5000). There is no async job archival.
 
 Capability matrix below (✓ = yes, ✗ = no, partial = yes with clear limits). **As of 2026-11, based on vendors' public docs; not independently re-verified**:
 
@@ -105,13 +108,19 @@ go build -o web2api .
 Or Docker Compose (see [deploy/README.md](deploy/README.md)):
 
 ```bash
+# Both compose manifests require ADMIN_PASSWORD at parse time.
+read -rsp 'Admin password: ' ADMIN_PASSWORD; echo
+export ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d --build
+unset ADMIN_PASSWORD
 curl http://127.0.0.1:7000/web-tool/health
 ```
 
+`docker compose ps/logs/down` also parses that variable; put a 0600 `.env` next to the compose file to avoid repeating it (see DEPLOYMENT.md §3).
+
 > `{BASE}` below stands for your service root: `http://127.0.0.1:7000/web-tool` locally, or e.g. `https://your-domain.com/web-tool` once deployed. **Every endpoint lives under the fixed `/web-tool` prefix.**
 
-The default admin is **`admin` / `admin123`** — change the password right after the first deployment, either in the console (`/web-tool/console/`, Settings page) or via `config.yaml`'s `platform.admin_password`. When bound to a non-loopback address with the default `admin123` password, the startup log emits a security warning (loopback-only deployments don't trigger it; `security.data_plane_auth=false` adds a separate data-plane warning). Console login has no CAPTCHA — never expose the admin endpoints to the public internet.
+The default admin is **`admin` / `admin123`** — change the password right after the first deployment, either in the console (`/web-tool/console/`, Settings page) or via `config.yaml`'s `platform.admin_password`. When bound to a non-loopback address (including `0.0.0.0` and container networks) with the default `admin123` password, the service **refuses to start and exits with code 1** — set `WEB2API_PLATFORM_ADMIN_PASSWORD` or `platform.admin_password` first. Only loopback-only deployments allow the default password. Console login has no CAPTCHA — never expose the admin endpoints to the public internet.
 
 **First call** (after creating an API key on the console's `#/keys` page):
 
@@ -134,7 +143,7 @@ Three steps to your first verdict (full agent guide: [docs/AGENT-README.md](docs
 curl -s -X POST {BASE}/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"<your-admin-password>"}'
-# → {"token":"<ADMIN_JWT>","expires_in":86400,"user":{"username":"admin"}}
+# → {"token":"<ADMIN_JWT>","expires_in":86400,"user":{"username":"admin","role":"admin","user_id":"<用户 ID>"}}
 
 # 2) Create an API key (the full key, shaped like sk-w2a-<32-hex>, is returned only once — save it)
 curl -s -X POST {BASE}/api/keys \
@@ -187,11 +196,13 @@ Agent plane
   GET  /web-tool/openapi.yaml      OpenAPI 3.1 spec
   GET  /web-tool/llms.txt          agent capability list
 
-Control plane (JWT)
-  /web-tool/api/auth/login|password, /web-tool/api/keys, /web-tool/api/stats/*,
-  /web-tool/api/usage, /web-tool/api/engines (cooldown state machine),
-  /web-tool/api/engines/{name}/cooldown/reset|force,
-  /web-tool/api/playground/check (console playground, not billed)
+Control plane (JWT; minimum role in parentheses; insufficient → 403 insufficient_role)
+  viewer+: /api/me (role/user_id), /api/keys GET, /api/stats/*, /api/usage,
+           /api/audit, /api/engines, /api/sessions GET, /api/logs, /api/logs/config, /api/playground/check
+  operator+: /api/keys POST/PATCH/DELETE/rotate, /api/engines/{name}/cooldown/reset|force, /api/blacklist CRUD
+  admin:    /api/users CRUD + /api/users/:id/password, DELETE /api/sessions/:id,
+            POST /api/logs/cleanup, GET /api/admin/backup
+Full-site blacklist guard hit → 403 reason=blacklisted (before all other middleware).
 
 Health & observability (no auth)
   /web-tool/health, /ready, /stats, /stats/cache|proxy|cb
@@ -223,7 +234,7 @@ claude mcp add --transport http web2api {BASE}/mcp --header "X-API-Key: <YOUR_AP
 
 Claude Desktop adds remote MCP servers through its Connectors UI; ChatGPT, Codex and VS Code Copilot — clients that already support remote MCP (streamable HTTP) — can connect per their own documentation, and other clients should check their docs for remote-transport support. Config field names differ slightly between clients; follow each client's documentation.
 
-Once connected, agents can call 6 tools directly: `web_search` (four-engine search, 1 unit/call), `check_indexed` (index check, urls×engines units; over 20 URLs it queues an async job and returns a `job_id`), `get_index_job` (job progress/results), `cancel_index_job` (cancel a job), `get_quota` (quota), `list_engines` (engines and cooldown state). The protocol is MCP streamable HTTP, JSON-RPC 2.0, protocolVersion `2025-06-18`, with in-memory `Mcp-Session-Id` sessions. **An API key is mandatory** — unauthenticated requests get 401.
+Once connected, agents can call 6 tools directly: `web_search` (four-engine search, 1 unit/call), `check_indexed` (index check, urls×engines units; over 20 URLs it queues an async job and returns a `job_id`), `get_index_job` (job progress/results), `cancel_index_job` (cancel a job), `get_quota` (quota), `list_engines` (engines and cooldown state). The protocol is MCP streamable HTTP, JSON-RPC 2.0, protocolVersion `2025-06-18`, with in-memory `Mcp-Session-Id` sessions. **Authentication is either a billed API key or an admin JWT bound to an active session (`sid` required, re-checked against the persisted user on every request)**. Operator/viewer JWTs get `403 {"error":"forbidden","code":"insufficient_role"}`; unauthenticated requests get 401. Admin JWT calls are not billed.
 
 ### Dify / n8n / LangChain (OpenAPI import)
 
@@ -259,9 +270,9 @@ Cooldown and circuit breaking are two independent mechanisms; the cooldown check
 - **Credential storage**: admin password stored as a bcrypt hash (settings bucket, overwriting the config default once changed); API keys stored as SHA-256 hashes only, the full key returned exactly once at creation; JWT signing key is 32 random bytes stored at `<data_dir>/secret.key` (0600).
 - **Login brute-force protection**: 5 consecutive failures for the same username across source IPs lock it for 15 minutes (`security.login_lockout.{fails:5,minutes:15}`); during the lockout every attempt gets `429 {"error":"too_many_attempts"}` + `Retry-After`.
 - **Admin API rate limit**: 60 req/min by default (`security.admin_rate_per_minute`), exceeding it returns 429 + `Retry-After`.
-- **Token versioning**: changing the password (`POST /web-tool/api/auth/password`, new password ≥ 8 chars) bumps `token_version`, **immediately invalidating all old JWTs (console sessions and MCP Bearer sessions alike)**.
+- **Token versioning**: only the configured bootstrap admin changing their password via `POST /web-tool/api/auth/password` (new password ≥ 8 chars) bumps `token_version` and invalidates all old JWTs; other accounts only revoke their own sessions. Offline `web2api admin-reset --data-dir <dir> --username admin --password <new>` updates both settings and users buckets and bumps `token_version`.
 - **Transport**: CORS is open by default, but non-loopback binding combined with no-auth configurations emit startup warnings; in production bind to loopback, tighten `cors.allow_origins`, or put nginx + TLS in front.
-- **Storage**: bbolt (pure Go, no CGO) single file `<data_dir>/web2api.db`; if a second process holds the data directory, startup fails outright (fail-closed, preventing split-brain accounting); other open failures fall back to an equivalent JSON file store (same interface; the `/health` `storage` field exposes the actual type).
+- **Storage**: bbolt (pure Go, no CGO) single file `<data_dir>/web2api.db`; if a second process holds the data directory, startup fails outright (fail-closed, preventing split-brain accounting); other open failures fall back to an equivalent JSON file store (same interface; the `/health` `storage` field exposes the actual type). Caveats: offline `admin-backup`/`admin-restore` only handle bbolt (not JSON fallback), and `GET /api/audit` reads only the active `audit.log`, not rotated `audit.log.N` archives (service logs `GET /api/logs` do include rotations).
 
 ---
 
@@ -317,7 +328,12 @@ security:                 # control-plane hardening
     fails: 5              # failure threshold per username across IPs
     minutes: 15           # lockout duration
   admin_rate_per_minute: 60  # global admin API rate limit (429 rate_limited beyond)
-  data_plane_auth: true      # true also requires X-API-Key on /{engine}/search and /stats/* (bundled template default; the in-code default stays false for existing deployments)
+  data_plane_auth: true      # bundled template AND in-code default are true: /{engine}/search and /stats/* require X-API-Key
+                             # false opens the data plane anonymously — compatibility only, keep true in production
+  log_max_mb: 10             # single log file cap (MB); 0 disables size rotation but time retention still applies
+  log_backups: 5
+  log_retention_days: 30     # prune logs.txt.N / audit.log.N by mtime; 0 disables time-based deletion
+  blacklist: []              # first-start IP/CIDR seed; one-shot marker, then manage via console/API
 ```
 
 Engine and anti-scraping parameters (rate limits, fingerprints, circuit breakers, proxies, 2captcha) are documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and the config.yaml comments.
@@ -328,6 +344,8 @@ Engine and anti-scraping parameters (rate limits, fingerprints, circuit breakers
 
 ```bash
 go test ./...                                  # unit tests (offline)
+go test -race -count=1 ./...                   # race detector needs cgo; on Windows use the Docker Linux path in docs/TESTING.md
+                                               # (already verified: 11 packages green, qa/features-audit/race-final.log)
 node deploy/e2e.mjs http://127.0.0.1:7000      # platform contract smoke (MCP handshake, cooldown recovery, openapi.yaml/llms.txt assertions)
 node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # engine steady-state observation
 ```

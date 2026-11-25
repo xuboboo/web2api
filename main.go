@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/xuboboo/web2api/cmd"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/cmd"
 )
 
 func main() {

@@ -19,8 +19,9 @@ app:
   log_format: "text" # json|text
   log_level: "" # error|warn|info|debug|trace; empty = warn for CLI, info for serve
   save_log: true # Also write logs to ./logs.txt in serve mode; false = stderr only
-  log_max_mb: 10 # S4-GAP 日志轮转: logs.txt 单文件上限(MB),超过滚动为 logs.txt.1/.2…(0=不轮转)
+  log_max_mb: 10 # logs.txt 单文件上限(MB),超过滚动为 logs.txt.1/.2…;0=仅关闭按大小轮转,按天保留仍生效
   log_backups: 5 # S4-GAP 日志轮转: 保留的历史日志份数(audit.log 同机制)
+  log_retention_days: 30 # 自动清理: 删除超过该天数的滚动日志(logs.txt.*/audit.log.*),0=仅按份数保留
   timeout: 15 # Browser/search timeout in seconds, per attempt; the request deadline is derived from this x retries
   browser_path: "" # Custom browser binary path (chrome/chromium/edge..)
   profiles: "" # Overriding built-in browser profiles
@@ -141,8 +142,9 @@ security:
   trusted_proxies: ["127.0.0.1/32", "::1/128"] # trust_proxy_headers=true 时仅这些反代来源可按覆盖后的 X-Real-IP 取得客户端 IP
   mcp_allowed_origins: [] # S4-B-10: MCP Origin 白名单,除请求同源外额外放行的来源(如 "https://panel.example.com");空=仅同源,空 Origin(curl/Agent)始终放行
   metrics_token: "" # S4 指标端点 /web-tool/metrics 的 Bearer 令牌;空=仅本机(loopback)可抓取
+  blacklist: [] # 初始 IP/CIDR 黑名单(如 ["203.0.113.7", "198.51.100.0/24"]);仅首次启动写入,之后以面板管理为准
   login_lockout:
-    fails: 5 # 同一 用户名+IP 连续登录失败阈值
+    fails: 5 # 同一用户名跨 IP 连续登录失败阈值（轮换来源不会重置预算）
     minutes: 15 # 锁定时长(期间登录一律 429 {"error":"too_many_attempts"} + Retry-After)
   password_policy: # S4-B-11: 管理员改密校验(自然语言报错)
     min_length: 8 # 最小长度(默认 8,兼容既有契约)

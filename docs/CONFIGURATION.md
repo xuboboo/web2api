@@ -40,6 +40,9 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `log_format` | 空（按模式推导） | `text` | `json` 或 `text` |
 | `log_level` | 空（CLI=warn，serve=info） | 空 | `error/warn/info/debug/trace` |
 | `save_log` | `true` | `true` | serve 模式额外写 `./logs.txt` |
+| `log_max_mb` | `10` | `10` | `logs.txt` 单文件上限（MB），0=仅按天保留、不按大小轮转 |
+| `log_backups` | `5` | `5` | 历史日志份数（审计日志另有独立上限，不受 0 影响） |
+| `log_retention_days` | `30` | `30` | 滚动日志按 mtime 保留天数（详见下文「app 日志轮转」） |
 | `timeout` | `30` | `15` | 单次引擎尝试超时（秒） |
 | `browser_path` | 空（自动探测） | 空 | 自定义 Chrome/Chromium 路径 |
 | `profiles` | 空 | 空 | 覆盖内置指纹目录的 JSON 文件 |
@@ -49,7 +52,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `block_resources` | 空 | `image,font,css,media` | 浏览器模式屏蔽的子资源 |
 | `block_trackers` | `false` | `true` | 屏蔽已知追踪域名 |
 | `debug_endpoints` | `false` | — | 开启 `/debug/fingerprint-check` |
-| `max_processes` | `4` | `6` | 并发 Chrome 进程上限 |
+| `max_processes` | `4` | `1` | 并发 Chrome 进程上限（代码默认 4；本仓库为低内存场景固定为 1） |
 | `idle_ttl` | `10m` | `45s` | 空闲 Chrome 回收时间（低内存优化；默认 10m） |
 | `max_concurrent_requests` | `0`（不限） | `2` | 在途搜索/收录请求并发上限，0=不限。小内存机器用它压峰值内存，超出排队 |
 
@@ -62,6 +65,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `admin_username` | `admin` | `admin` | 控制台管理员登录名 |
 | `admin_password` | `admin123` | `admin123` | 控制台管理员密码（生产环境务必修改） |
 | `jwt_expire_hours` | `24` | `24` | 管理员 JWT 有效期（小时） |
+| `usage_retention_days` | `30` | `30` | 用量账本保留天数，启动时与每 256 条写入后滚动清理；0=不限 |
 
 说明:存储主路径为 bbolt(纯 Go 无 CGO)。S4-B-06 起**锁冲突 fail-closed**:
 数据目录被第二个进程占用时启动直接失败(避免双实例分裂记账);JSON 文件回退
@@ -70,6 +74,8 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 1 条 URL × 1 个引擎 = 1 次;`daily_quota=0` 为不限。管理员会话(sessions 桶)支持
 逐会话撤销与滑动续期,审计轨迹落 `<data_dir>/audit.log`(JSON Lines,与
 app.log_max_mb/log_backups 同轮转机制)。
+
+角色：平台固定三种角色 `admin` / `operator` / `viewer`（权限 `admin > operator > viewer`），没有新增平台配置键。`admin_username` / `admin_password` 仅在首次启动迁移进 `users` 桶，之后用户库是唯一事实来源；不含 `uid`/`role` 声明的旧 JWT 会按 `sub` 查找持久化用户，并按其**当前角色与 active 状态**逐请求校验，不会自动按 `admin` 放行；仅当用户库为空时才回退到内置 bootstrap admin。MCP 平面的 JWT 还必须携带 `sid` 且持久化角色为 `admin`，否则 403 `insufficient_role`。各 `/api/*` 端点按最小角色守卫，详见 [API.md](API.md) §6。
 
 ## proxies
 
@@ -132,9 +138,10 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `admin_rate_per_ip` | `30` | `30` | S4-B-05: `/api/*` 按 IP 分桶限速（0=关） |
 | `api_rate_per_minute` | `120` | `120` | S4-B-02: `/v1/*` 与 MCP 每 key 限速（0=关） |
 | `unauth_rate_per_minute` | `30` | `30` | S4-B-02: 无有效凭据请求按 IP 前置限速（0=关） |
-| `data_plane_auth` | `false` | `true` | S4-B-03: `serve` 的 Viper 默认与本仓库模板均为 true；只有显式设为 false 才开放匿名专用数据面。`platform.DefaultSecurityConfig()` 保留 false 兼容直接构造 |
+| `data_plane_auth` | `true` | `true` | `serve` 的 Viper 默认与本仓库模板均为 true；只有显式设为 false 才开放匿名专用数据面。`platform.DefaultSecurityConfig()` 的 false 仅用于直接构造结构体，不影响 CLI/serve 默认值 |
 | `trust_proxy_headers` | `false` | `false` | TLS 反代场景开启；仅受信代理来源可按 `X-Real-IP` 取得客户端 IP，受信 HTTPS 请求下发 HSTS |
 | `trusted_proxies` | `["127.0.0.1/32","::1/128"]` | `["127.0.0.1/32","::1/128"]` | 允许提供 `X-Real-IP` 的反代 IP/CIDR；Nginx 必须用 `$remote_addr` 覆盖该头。跨容器反代要显式加入其地址/CIDR |
+| `blacklist` | `[]` | `[]` | 初始 IP/CIDR 黑名单规则（如 `["203.0.113.7","198.51.100.0/24"]`），**仅首次启动写入**；之后以控制台/API 管理为准。客户端 IP 取自 `trust_proxy_headers` / `trusted_proxies` |
 | `mcp_allowed_origins` | 空 | 空 | S4-B-10: MCP Origin 白名单（空=仅同源；空 Origin 始终放行） |
 | `metrics_token` | 空 | 空 | S4: `/web-tool/metrics` Bearer 令牌（空=仅 loopback 抓取） |
 | `login_lockout.fails` | `5` | `5` | 登录锁定阈值 |
@@ -148,7 +155,7 @@ app.log_max_mb/log_backups 同轮转机制)。
 | --- | --- | --- | --- |
 | `engine_cooldown.steps_minutes` | `[10, 30, 120]` | 同默认 | 连续第 1/2/3+ 次被拦截（blocked 403 / 429 / captcha）的冷却分钟数（最后一个值向后延续） |
 | `engine_cooldown.reset_after_minutes` | `240` | 同默认 | 连续无拦截达此时长后连续计数归零，重新从第 1 档起算 |
-| `engine_cooldown.per_engine.<engine>.steps_minutes` | 空 | 空 | 按引擎覆盖档位；本仓库给 `baidu` 配 `[2, 10, 30]`（实测停 2 分钟即可恢复） |
+| `engine_cooldown.per_engine.<engine>.steps_minutes` | 空 | `baidu: [2,10,30]` | 按引擎覆盖档位；本仓库给 `baidu` 配 `[2, 10, 30]`（实测停 2 分钟即可恢复） |
 | `index_check.max_retries` | `1` | `1` | 收录单元的重试次数；被拦即失败，避免把请求量放大 4 倍喂同一出口 IP |
 
 冷却期内该引擎所有 search/check 快速失败（503 `engine_cooldown` 信封 + `Retry-After`），不发真实请求；到期放行一个探测请求——成功即恢复，再次被拦截进下一档，其他失败（如超时）按当前档时长顺延重试。运维干预：`POST /web-tool/api/engines/{name}/cooldown/reset` 强制恢复、`cooldown/force {"minutes":N}` 强制冷却（维护窗口）。
@@ -157,8 +164,11 @@ app.log_max_mb/log_backups 同轮转机制)。
 
 | 键 | 默认值 | 本仓库 | 说明 |
 | --- | --- | --- | --- |
-| `app.log_max_mb` | `10` | `10` | serve 模式 `logs.txt` 单文件上限（MB），超过滚动为 `logs.txt.1/.2…`（0=不轮转） |
+| `app.log_max_mb` | `10` | `10` | serve 模式 `logs.txt` 单文件上限（MB），超过滚动为 `logs.txt.1/.2…`；`0` 仅关闭按大小轮转，按天清理与份数上限仍生效 |
 | `app.log_backups` | `5` | `5` | 保留的历史日志份数（`audit.log` 同机制） |
+| `app.log_retention_days` | `30` | `30` | 按 mtime 删除超过 N 天的滚动日志（`logs.txt.N` / `audit.log.N`）；`0` 关闭按天删除，只按 `log_backups` 份数保留 |
+
+历史滚动文件在启动时、每次轮转后以及每 12 小时自动清理一次；管理员也可调用 `POST /api/logs/cleanup` 立即清理（见 [API.md](API.md) §6.13、[OPERATIONS.md](OPERATIONS.md) §2）。当前 `logs.txt` / `audit.log` 不会被时间清理删除。
 
 启动校验（S4-GAP 运维）: 不认识的配置键启动时输出 Warn 清单；
 `WEB2API_STRICT_CONFIG=1` 时转为启动失败（退出码非 0）。

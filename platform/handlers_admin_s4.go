@@ -22,25 +22,36 @@ const (
 	localAdminSessionID    = "platform_session_id"
 	localAdminUsername     = "platform_username"
 	localAdminTokenVersion = "platform_token_version"
+	localAdminUserID       = "platform_user_id"
+	localAdminRole         = "platform_role"
 )
 
 // Audit action names (audit trail + GET /api/audit).
 const (
-	AuditActionKeyCreate      = "key.create"
-	AuditActionKeyUpdate      = "key.update"
-	AuditActionKeyDelete      = "key.delete"
-	AuditActionKeyRotate      = "key.rotate"
-	AuditActionPasswordChange = "password.change"
-	AuditActionLoginSuccess   = "login.success"
-	AuditActionLoginFailed    = "login.failed"
-	AuditActionLoginLockout   = "login.lockout"
-	AuditActionCooldownReset  = "cooldown.reset"
-	AuditActionCooldownForce  = "cooldown.force"
-	AuditActionSessionRevoke  = "session.revoke"
-	AuditActionSessionLogout  = "session.logout"
-	AuditActionSessionRefresh = "session.refresh"
-	AuditActionBackupExport   = "backup.export"
-	AuditActionUsageExport    = "usage.export"
+	AuditActionKeyCreate       = "key.create"
+	AuditActionKeyUpdate       = "key.update"
+	AuditActionKeyDelete       = "key.delete"
+	AuditActionKeyRotate       = "key.rotate"
+	AuditActionPasswordChange  = "password.change"
+	AuditActionLoginSuccess    = "login.success"
+	AuditActionLoginFailed     = "login.failed"
+	AuditActionLoginLockout    = "login.lockout"
+	AuditActionCooldownReset   = "cooldown.reset"
+	AuditActionCooldownForce   = "cooldown.force"
+	AuditActionSessionRevoke   = "session.revoke"
+	AuditActionSessionLogout   = "session.logout"
+	AuditActionSessionRefresh  = "session.refresh"
+	AuditActionUserCreate      = "user.create"
+	AuditActionUserUpdate      = "user.update"
+	AuditActionUserDelete      = "user.delete"
+	AuditActionUserPassword    = "user.password"
+	AuditActionBlacklistAdd    = "blacklist.add"
+	AuditActionBlacklistUpdate = "blacklist.update"
+	AuditActionBlacklistDelete = "blacklist.delete"
+	AuditActionLogsCleanup     = "logs.cleanup"
+	AuditActionBlacklistHit    = "blacklist.hit"
+	AuditActionBackupExport    = "backup.export"
+	AuditActionUsageExport     = "usage.export"
 )
 
 // shortSID renders a session id for audit targets (前 12 位,避免 64 位 hex
@@ -183,7 +194,19 @@ func (p *Platform) handleAuthRefresh(c *fiber.Ctx) error {
 			return errUnauthorized(c)
 		}
 	}
-	token, err := p.issueSessionToken(p.cfg.AdminUsername, sid, version)
+	u, ok := p.currentRequestUser(c)
+	if !ok {
+		return errUnauthorized(c)
+	}
+	if sid == "" {
+		// Legacy tokens had no session; refresh must bind a revocable one.
+		session, err := p.createUserSession(u, c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
+		if err != nil {
+			return errInternal(c, err)
+		}
+		sid = session.ID
+	}
+	token, err := p.issueUserToken(u, sid, version)
 	if err != nil {
 		return errInternal(c, err)
 	}

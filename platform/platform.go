@@ -124,6 +124,9 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 	} else if isBoltLockError(err) {
 		_ = p.closeAudit()
 		return nil, fmt.Errorf("platform: bbolt 数据目录被其他进程占用(%s),拒绝启动以避免双实例分裂记账: %w", boltPath, err)
+	} else if errors.Is(err, ErrBoltContentCorrupt) || isBoltCorruptOpenError(err) {
+		_ = p.closeAudit()
+		return nil, fmt.Errorf("platform: 数据库内容损坏(%s),拒绝静默回退到空账本;请先从备份恢复: %w", boltPath, err)
 	} else {
 		logrus.WithError(err).Warn("platform: bbolt 打开失败,回退到 JSON 文件存储(fallback,接口不变)")
 		jsonStore, jsonErr := newJSONStore(filepath.Join(cfg.DataDir, "web2api.json"))
@@ -143,6 +146,11 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 		_ = p.store.Close()
 		return nil, err
 	}
+	// 控制台用户与角色: 首次启动把 config 管理员迁入 users 桶, 既有无损升级。
+	if err := p.bootstrapAdminUser(); err != nil {
+		_ = p.store.Close()
+		return nil, fmt.Errorf("bootstrap admin user: %w", err)
+	}
 	// S4-GAP 审计日志: JSON Lines writer (rotation bounds configurable via
 	// SetAuditRotation; defaults 10MB × 5).
 	p.auditMu.Lock()
@@ -152,6 +160,22 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 	p.pruneUsage()
 	p.started = time.Now()
 	return p, nil
+}
+
+// isBoltCorruptOpenError distinguishes a damaged on-disk database from an
+// environment where bbolt cannot be used at all. Only the latter may fall back
+// to the JSON store.
+func isBoltCorruptOpenError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"invalid database", "checksum", "file too small", "unexpected eof"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // isBoltLockError classifies bbolt open failures caused by a held file lock
@@ -325,6 +349,15 @@ func (p *Platform) issueSessionToken(username, sessionID string, version int) (s
 		return signJWT(p.secret, username, time.Now().Add(p.jwtTTL()), version)
 	}
 	return signJWTSession(p.secret, username, time.Now().Add(p.jwtTTL()), version, sessionID, newSessionID())
+}
+
+// issueUserToken signs a token carrying the console user id and role.
+func (p *Platform) issueUserToken(u *User, sessionID string, version int) (string, error) {
+	exp := time.Now().Add(p.jwtTTL())
+	if sessionID == "" {
+		return signJWTSessionWithUser(p.secret, u.Username, u.ID, u.Role, exp, version, "", "")
+	}
+	return signJWTSessionWithUser(p.secret, u.Username, u.ID, u.Role, exp, version, sessionID, newSessionID())
 }
 
 // Close releases the storage handle and the audit writer.

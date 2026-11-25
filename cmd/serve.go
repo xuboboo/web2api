@@ -222,6 +222,11 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		plat.SetSecurity(config.Security)
 		plat.SetVersion(version)
 		plat.SetAuditRotation(config.App.LogMaxMB, config.App.LogBackups)
+		plat.SetAuditRetention(config.App.LogRetentionDays)
+		if err := plat.SeedBlacklist(config.Security.Blacklist, "config"); err != nil {
+			_ = plat.Close()
+			return nil, fmt.Errorf("platform: seed blacklist: %w", err)
+		}
 		// B-06: /health.storage 探针字段(bbolt|json;平台关闭时省略)。
 		serv.SetStorageKind(plat.StoreKind())
 		if err := enforceAdminPasswordSafety(plat); err != nil {
@@ -232,6 +237,9 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		// RegisterAdmin/RegisterPublic mount literal /api/* and /v1/* paths on
 		// the given router, so the router must be rooted at BasePath (passing
 		// a Group(BasePath+"/api") would double the /api segment).
+		// The early guard is installed via ServerOptions.ExtraMiddleware before
+		// any core route was registered; bind it now that the platform exists.
+		activeBlacklistGuard.Store(plat.BlacklistGuard())
 		root := app.Group(core.BasePath)
 		// serv (*core.Server) satisfies platform.EngineControl structurally:
 		// EnginesStatusWithCooldown / ResetCooldown / ForceCooldown (契约 A).
@@ -462,11 +470,8 @@ func mountStaticPanels(app *fiber.App) {
 		logrus.Warn("官网 404 页缺失(web/site/404.html 未找到)," + core.BasePath + "/* 未命中路径将返回 JSON 404")
 	}
 
-	// (5) A-14 根级 robots.txt / sitemap.xml:BasePath 挂载下 /web-tool/robots.txt
-	// 由上面的 app.Static 自动覆盖;根路径 /robots.txt、/sitemap.xml 需在
-	// BasePath 之外单独注册,读同一份文件。部署依赖(如实声明):反向代理必须
-	// 把根路径转发到本实例——若代理只转发 /web-tool/*,根级文件不可达;sitemap
-	// <loc> 与 og:url 同批依赖生产域名(web/site/sitemap.xml 内为占位符)。
+	// Site files are also served at the root if provided by the deployment.
+	// Only publish a sitemap once its absolute public URLs are known.
 	registerRootSEOFile(app, "/robots.txt", filepath.Join(siteDir, "robots.txt"))
 	registerRootSEOFile(app, "/sitemap.xml", filepath.Join(siteDir, "sitemap.xml"))
 }
@@ -501,10 +506,9 @@ func buildFingerprintBrowserOptions() core.BrowserOpts {
 	return opts
 }
 
-// cspInlineScriptHashes allows the status board and the copy script in the
-// OpenAPI and llms.txt browser views. Theme scripts load from same-origin assets.
-const cspInlineScriptHashes = "'sha256-7bxcJ1DCPtpI0CkqsVSW8dBEXlYAjzUnZ378OsV5tJw=' " +
-	"'sha256-QMScITwwri5Sy12UZQ78xHdQQtmsA+TNYyrbbubwJxg='"
+// cspInlineScriptHashes allows the copy script in the OpenAPI and llms.txt
+// browser views. The public site uses same-origin external scripts.
+const cspInlineScriptHashes = "'sha256-QMScITwwri5Sy12UZQ78xHdQQtmsA+TNYyrbbubwJxg='"
 
 // contentSecurityPolicy is the site-wide CSP value. style-src keeps
 // 'unsafe-inline' because the status/404 pages and the asset viewer ship
@@ -539,6 +543,23 @@ func securityHeadersHandler() fiber.Handler {
 	}
 }
 
+// activeBlacklistGuard is bound once the platform is constructed. The Fiber
+// handler itself is installed as core ExtraMiddleware before core registers
+// its health/stats/search routes, so those routes cannot bypass the blacklist.
+var activeBlacklistGuard atomic.Value
+
+func earlyBlacklistGuard(c *fiber.Ctx) error {
+	v := activeBlacklistGuard.Load()
+	if v == nil {
+		return c.Next()
+	}
+	guard, ok := v.(fiber.Handler)
+	if !ok || guard == nil {
+		return c.Next()
+	}
+	return guard(c)
+}
+
 func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fingerprintBrowserOpts core.BrowserOpts) core.ServerOptions {
 	retryCfg := core.RetryConfig{
 		MaxRetries:     config.Resilience.MaxRetries,
@@ -568,7 +589,7 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		IndexRequestTimeout:   core.IndexCheckDeadlineCap,
 		ResolveConfig:         core.DefaultURLResolveConfig(),
 		MaxConcurrentRequests: config.App.MaxConcurrentRequests,
-		ExtraMiddleware:       []fiber.Handler{securityHeadersHandler()},
+		ExtraMiddleware:       []fiber.Handler{securityHeadersHandler(), earlyBlacklistGuard},
 		Resilience: core.ResilientConfig{
 			Retry: retryCfg,
 			CircuitBreaker: core.CircuitBreakerConfig{

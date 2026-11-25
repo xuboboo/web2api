@@ -33,7 +33,24 @@ info:
 
     ## 限流
     所有 429/503 响应携带 `Retry-After` 头(秒)。管理 API 默认全局限速 60 req/min(`security.admin_rate_per_minute`),
-    超限返回 `429 {"error":"too_many_requests"}` + `Retry-After`。
+    超限返回 `429 {"error":"rate_limited"}` + `Retry-After`。
+
+    ## 角色(最小权限)
+    固定三种角色 `admin > operator > viewer`,按持久化用户记录逐请求校验(角色/状态变更立即生效);
+    GET 读取端点 + `/api/playground/check` + `/api/auth/{password,logout,refresh}` 需 viewer;
+    API key 增删改/轮换、引擎冷却 reset/force、黑名单管理需 operator;
+    用户管理 `/api/users*`、会话撤销、备份下载、`/api/logs/cleanup` 需 admin。
+    角色不足 `403 {"error":"forbidden","code":"insufficient_role"}`;
+    黑名单命中 `403 {"error":"forbidden","reason":"blacklisted"}`(全站前置中间件,先于所有路由与其它中间件)。
+    `platform.admin_username`/`admin_password` 仅首启迁移进用户库,之后用户库为唯一事实来源;
+    不含 uid/role 声明的旧 JWT 按 sub 查用户库并按当前角色与状态逐请求校验；
+    仅用户库为空才回退 bootstrap admin；MCP JWT 必须含 sid 且角色为 admin。用户状态取 active/disabled。
+
+    ## 日志与黑名单
+    `app.log_retention_days`(默认 30,0=仅按份数保留)在启动、轮转后与每 12 小时按 mtime 删除
+    过期的 `logs.txt.N` / `audit.log.N`;`GET /api/logs*` 只读查询(日志行为不可信诊断数据,不执行),
+    `POST /api/logs/cleanup` 手动清理。`security.blacklist` 仅首启种子 IP/CIDR,之后走控制台/API;
+    过期规则只被忽略,不会被日志清理删除。
 servers:
   - url: https://your-host/web-tool
     description: 自托管部署根(替换为你的域名;Dify/n8n/LangChain 导入要求域名格式,禁用 IP)
@@ -43,7 +60,7 @@ tags:
   - name: agent-plane
     description: Agent 平面 — MCP 与静态资源(/mcp、openapi.yaml、llms.txt)
   - name: admin
-    description: 控制平面 — 管理面板后台(/api/*)
+    description: 控制平面 — 管理面板后台(/api/*);按最小角色 viewer/operator/admin 守卫
   - name: ops
     description: 运维 — 健康/就绪/运行统计
 
@@ -589,7 +606,7 @@ paths:
       operationId: adminLogin
       summary: 管理员登录(获取 JWT)
       description: |
-        凭证错误返回 401。防爆破(契约 B):同一 用户名+IP 连续 5 次失败锁定 15 分钟
+        凭证错误返回 401。防爆破(契约 B):同一用户名跨 IP 连续 5 次失败锁定 15 分钟
         (`security.login_lockout.fails/minutes`),锁定期间一律
         `429 {"error":"too_many_attempts"}` + `Retry-After`。
       requestBody:
@@ -614,8 +631,11 @@ paths:
                   expires_in: { type: integer, example: 86400 }
                   user:
                     type: object
+                    description: role/user_id 为 additive 字段。
                     properties:
                       username: { type: string, example: admin }
+                      role: { type: string, enum: [admin, operator, viewer], example: admin }
+                      user_id: { type: string, description: 用户 ID }
         "401":
           description: 凭证错误(平台信封)
           content:
@@ -634,10 +654,11 @@ paths:
     post:
       tags: [admin]
       operationId: changePassword
-      summary: 修改管理员密码(JWT)
+      summary: 修改当前登录账号密码(JWT, viewer+)
       description: |
-        契约 B:新密码 ≥ 8 位;bcrypt 哈希存 settings 桶并覆盖 config 默认值;
-        成功后 token_version+1,全部旧 token 立即失效(需重新登录)。
+        新密码 ≥ 8 位并按 security.password_policy 校验。bcrypt 哈希写入用户库并撤销该用户会话。
+        仅当操作者是 platform.admin_username 对应的 bootstrap admin 时,另写 settings 桶覆盖 config 默认值、
+        token_version+1 并撤销全部会话;其他账号改密不影响他人 JWT。响应返回新签发 token,无需重新登录。
       security:
         - BearerAuth: []
       requestBody:
@@ -652,13 +673,16 @@ paths:
                 new_password: { type: string, minLength: 8 }
       responses:
         "200":
-          description: 修改成功;旧 token 全部失效
+          description: 修改成功(返回新 token;仅 bootstrap admin 触发全局旧 JWT 失效)
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   ok: { type: boolean, example: true }
+                  token: { type: string, description: 新签发 JWT }
+                  expires_in: { type: integer, example: 86400 }
+                  token_version: { type: integer, example: 2 }
         "400":
           description: 参数错误(新密码过短等)
           content:
@@ -676,14 +700,14 @@ paths:
             Retry-After: { description: 重试等待秒数, schema: { type: integer } }
           content:
             application/json:
-              example: { error: too_many_requests }
+              example: { error: rate_limited }
 
   /api/me:
     get:
       tags: [admin]
       operationId: adminMe
       summary: 当前管理员概览(JWT)
-      description: 返回管理员用户名、密钥数量与今日/累计调用次数,面板总览页首屏数据。
+      description: 返回用户名、role/user_id(字符串 additive 字段)、密钥数量与今日/累计调用次数,面板总览页首屏数据;最小角色 viewer。
       security:
         - BearerAuth: []
       responses:
@@ -695,9 +719,12 @@ paths:
                 type: object
                 properties:
                   username: { type: string, example: admin }
+                  role: { type: string, enum: [admin, operator, viewer], example: admin }
+                  user_id: { type: string, description: 用户 ID }
                   keys_count: { type: integer, example: 3 }
                   today_calls: { type: integer, example: 128 }
                   total_calls: { type: integer, example: 4271 }
+                  version: { type: string, description: 应用版本号 }
         "401":
           description: JWT 缺失/过期/已失效(改密后)
           content:
@@ -748,12 +775,7 @@ paths:
           description: 创建成功(含一次性完整 key)
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/ApiKeyView"
-                  - type: object
-                    properties:
-                      key: { type: string, example: sk-w2a-3f9c… }
+              schema: { $ref: "#/components/schemas/ApiKeyCreated" }
         "400":
           description: 参数错误
           content:
@@ -855,6 +877,8 @@ paths:
                   total_units: { type: integer }
                   active_keys: { type: integer }
                   success_rate_24h: { type: number, example: 97.5 }
+                  today_calls_all: { type: integer }
+                  rejected_today_24h: { type: integer }
                   by_engine:
                     type: object
                     additionalProperties:
@@ -942,6 +966,7 @@ paths:
                         units: { type: integer }
                         status: { type: integer }
                         took_ms: { type: integer }
+                        outcome: { type: string, enum: [billed, engine_failed, rejected], description: S4 前存量记录为 "" }
         "401":
           description: 平台信封 401
           content:
@@ -1154,6 +1179,523 @@ paths:
           description: 快照文件(web2api.db / web2api.json)
           content:
             application/octet-stream: {}
+
+  /api/users:
+    get:
+      tags: [admin]
+      operationId: listUsers
+      summary: 用户列表(JWT, admin)
+      description: 最小角色 admin;返回 total/items,不含密码哈希。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, example: 2 }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/UserView" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
+    post:
+      tags: [admin]
+      operationId: createUser
+      summary: 新建用户(JWT, admin)
+      description: role 取 admin/operator/viewer,新用户 status 固定 active;用户名重复或密码不合规回 400。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string, minLength: 2, maxLength: 64, example: ops01 }
+                password: { type: string, minLength: 8 }
+                role: { type: string, enum: [admin, operator, viewer] }
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  user: { $ref: "#/components/schemas/UserView" }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
+  /api/users/{id}:
+    patch:
+      tags: [admin]
+      operationId: updateUser
+      summary: 修改用户角色/状态(JWT, admin)
+      description: |
+        最小角色 admin。不能修改/禁用当前登录账号;不能降级或禁用最后一名 active admin。
+        变更会撤销该用户的会话。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [admin, operator, viewer] }
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  user: { $ref: "#/components/schemas/UserView" }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+        "404":
+          description: 资源不存在(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: not_found }
+
+    delete:
+      tags: [admin]
+      operationId: deleteUser
+      summary: 删除用户(JWT, admin)
+      description: 最小角色 admin;不能删除当前登录账号或最后一名 active admin;删除会撤销其会话。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+        "404":
+          description: 资源不存在(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: not_found }
+
+  /api/users/{id}/password:
+    post:
+      tags: [admin]
+      operationId: resetUserPassword
+      summary: 重置指定用户密码(JWT, admin)
+      description: |
+        最小角色 admin;新密码需满足 security.password_policy。成功后只撤销该用户会话。
+        管理员自助改密走 /api/auth/password,仍沿用 token_version 全局失效契约。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                new_password: { type: string, minLength: 8 }
+      responses:
+        "200":
+          description: 重置成功(该用户会话已撤销)
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+        "404":
+          description: 资源不存在(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: not_found }
+
+  /api/blacklist:
+    get:
+      tags: [admin]
+      operationId: listBlacklist
+      summary: 黑名单列表(JWT, operator+)
+      description: 返回 total/items;expired 为派生字段,过期规则只被忽略,不自动删除。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 黑名单条目
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, example: 1 }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/BlacklistEntryView" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
+    post:
+      tags: [admin]
+      operationId: createBlacklist
+      summary: 新增 IP/CIDR 黑名单规则(JWT, operator+)
+      description: |
+        最小角色 operator。kind 省略时按 value 推断 ip/cidr;非法 IP/CIDR 或重复规则回 400。
+        expires_at 须为 RFC3339 且晚于当前时间,省略表示永久。命中请求回 403 reason=blacklisted。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                kind: { type: string, enum: [ip, cidr], description: 可省略,按 value 推断 }
+                value: { type: string, example: 198.51.100.0/24 }
+                reason: { type: string, example: abusive crawler }
+                expires_at: { type: string, format: date-time, description: 可选,RFC3339 且晚于当前时间 }
+      responses:
+        "200":
+          description: 新增成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  entry: { $ref: "#/components/schemas/BlacklistEntryView" }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
+  /api/blacklist/{id}:
+    patch:
+      tags: [admin]
+      operationId: updateBlacklist
+      summary: 修改黑名单规则(JWT, operator+)
+      description: 最小角色 operator;expires_at 传空串表示永久,省略表示不改。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+                expires_at: { type: string, description: RFC3339 或空串;空串=永久 }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  entry: { $ref: "#/components/schemas/BlacklistEntryView" }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+        "404":
+          description: 资源不存在(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: not_found }
+
+    delete:
+      tags: [admin]
+      operationId: deleteBlacklist
+      summary: 删除黑名单规则(JWT, operator+)
+      description: 最小角色 operator;过期规则不会自动删除,需手动 DELETE。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+        "404":
+          description: 资源不存在(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: not_found }
+
+  /api/logs:
+    get:
+      tags: [admin]
+      operationId: queryLogs
+      summary: 查询服务日志(JWT, viewer+)
+      description: |
+        最小角色 viewer。读取 logs.txt 及其滚动文件的文本/JSON 两种格式;
+        日志行是不受信诊断数据,只展示不执行。since 接受 RFC3339。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: level
+          in: query
+          schema: { type: string }
+          description: 精确匹配日志级别
+        - name: q
+          in: query
+          schema: { type: string }
+          description: 消息子串过滤
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: RFC3339 起始时间
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: 日志条目(新→旧)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, example: 17 }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/LogEntryView" }
+        "400":
+          description: 参数非法(INVALID_PARAM,中文 message)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformBadRequest" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
+  /api/logs/config:
+    get:
+      tags: [admin]
+      operationId: logsConfig
+      summary: 日志轮转/保留配置(JWT, viewer+)
+      description: 最小角色 viewer;只读当前生效值,配置来源为 app.log_*。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 当前日志配置
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogConfigView" }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
+  /api/logs/cleanup:
+    post:
+      tags: [admin]
+      operationId: cleanupLogs
+      summary: 手动清理过期滚动日志(JWT, admin)
+      description: |
+        最小角色 admin。按 mtime 删除超过 app.log_retention_days 的 logs.txt.N 与 audit.log.N,
+        不删除当前日志文件;过期黑名单规则不会被清理。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 清理完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  removed_serve: { type: integer, example: 3 }
+                  removed_audit: { type: integer, example: 2 }
+        "401":
+          description: JWT 缺失/过期(平台信封)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformError" }
+              example: { error: unauthorized }
+        "403":
+          description: 角色不足(insufficient_role)或命中 IP/CIDR 黑名单(blacklisted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForbiddenError" }
+
 
   /api/engines:
     get:
@@ -1492,7 +2034,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 管理员 JWT(POST /api/auth/login 获得),管理员调用不计费。
+      description: 管理员 JWT(POST /api/auth/login 获得),调用不计费;角色取 admin/operator/viewer,旧 JWT 无 uid/role 声明时按 sub 查用户库校验当前角色，仅用户库为空才回退 bootstrap admin；MCP JWT 必须含 sid 且角色为 admin。
 
   schemas:
     PlatformError:
@@ -1501,7 +2043,7 @@ components:
       properties:
         error:
           type: string
-          enum: [unauthorized, quota_exceeded, not_found, too_many_attempts, too_many_requests, server_error]
+          enum: [unauthorized, forbidden, quota_exceeded, not_found, too_many_attempts, rate_limited, server_error]
       required: [error]
 
     PlatformBadRequest:
@@ -1511,7 +2053,82 @@ components:
         error: { type: string, example: bad_request }
         code: { type: string, example: INVALID_PARAM }
         reason: { type: string, example: INVALID_PARAM }
+        message: { type: string, description: 中文原因说明(用户/黑名单端点) }
       required: [error]
+
+    InsufficientRoleError:
+      type: object
+      description: 角色不足的 403 平台信封。
+      properties:
+        error: { type: string, example: forbidden }
+        code: { type: string, example: insufficient_role }
+      required: [error, code]
+
+    BlacklistedError:
+      type: object
+      description: IP/CIDR 黑名单命中的 403 平台信封(守卫先于其它中间件)。
+      properties:
+        error: { type: string, example: forbidden }
+        reason: { type: string, example: blacklisted }
+      required: [error, reason]
+
+    ForbiddenError:
+      type: object
+      description: 403 平台信封;角色不足带 code=insufficient_role,黑名单命中带 reason=blacklisted。
+      properties:
+        error: { type: string, example: forbidden }
+        code: { type: string, example: insufficient_role }
+        reason: { type: string, example: blacklisted }
+      required: [error]
+
+    UserView:
+      type: object
+      description: 控制台用户(不含密码哈希)。
+      properties:
+        id: { type: string }
+        username: { type: string, example: admin }
+        role: { type: string, enum: [admin, operator, viewer] }
+        status: { type: string, enum: [active, disabled] }
+        created_at: { type: string, format: date-time }
+        last_login_at:
+          oneOf: [{ type: string, format: date-time }, { type: "null" }]
+
+    BlacklistEntryView:
+      type: object
+      description: IP/CIDR 黑名单条目;expired 为派生字段,过期规则只忽略不自动删除。
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [ip, cidr] }
+        value: { type: string, example: 198.51.100.0/24 }
+        reason: { type: string }
+        created_by: { type: string, example: admin }
+        created_at: { type: string, format: date-time }
+        expires_at:
+          oneOf: [{ type: string, format: date-time }, { type: "null" }]
+        hits: { type: integer, example: 0 }
+        last_hit_at:
+          oneOf: [{ type: string, format: date-time }, { type: "null" }]
+        expired: { type: boolean, example: false }
+
+    LogEntryView:
+      type: object
+      description: 一行服务日志;message 为不可信诊断文本,只展示不执行。
+      properties:
+        time: { type: string, format: date-time }
+        level: { type: string, example: info }
+        message: { type: string }
+        source: { type: string, example: logs.txt.1 }
+
+    LogConfigView:
+      type: object
+      description: 日志轮转与保留配置(只读)。
+      properties:
+        max_mb: { type: integer, example: 10 }
+        backups: { type: integer, example: 5 }
+        retention_days: { type: integer, example: 30, description: 0=仅按份数保留 }
+        format: { type: string, enum: [text, json] }
+        file_logging_enabled: { type: boolean, example: true, description: false=当前进程未写 logs.txt(quiet/debug/关闭落盘) }
+        audit_retention_days: { type: integer, example: 30 }
 
     IndexJobAccepted:
       type: object
@@ -1609,6 +2226,22 @@ components:
         created_at: { type: string, format: date-time }
         last_used_at:
           oneOf: [{ type: string, format: date-time }, { type: "null" }]
+        expires_at:
+          oneOf: [{ type: string, format: date-time }, { type: "null" }]
+        allowed_ips:
+          type: array
+          items: { type: string }
+
+    ApiKeyCreated:
+      allOf:
+        - $ref: "#/components/schemas/ApiKeyView"
+        - type: object
+          required: [key]
+          properties:
+            key:
+              type: string
+              example: sk-w2a-…
+              description: 一次性完整密钥(创建/轮换响应返回,之后只存哈希)
 
     SearchResult:
       type: object

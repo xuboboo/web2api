@@ -5,7 +5,7 @@
 1. **收录判定**（`check_indexed`）：一批 URL 是否被百度 / 搜狗 / 360 / 必应收录，每 URL×引擎一个结论；
 2. **国内搜索**（`web_search`）：四引擎 organic 结果（rank/title/url/snippet）。
 
-两种接法任选：**MCP**（Claude 系客户端一次配置即得 6 个工具——4 个检索/判定工具 + 2 个批量任务工具）或 **OpenAPI spec**（Dify / n8n / LangChain 通用导入）。两者都已在服务端内置，无需装任何 SDK。
+两种接法任选：**MCP**（Claude 系客户端一次配置即得 6 个工具——4 个查询工具（`web_search` / `check_indexed` / `get_quota` / `list_engines`）+ 2 个批量任务工具（`get_index_job` / `cancel_index_job`））或 **OpenAPI spec**（Dify / n8n / LangChain 通用导入）。两者都已在服务端内置，无需装任何 SDK。
 
 ```
 能力自发现（给 LLM 看的）：
@@ -28,7 +28,7 @@
 | 身份 | 头 | 计费 |
 | --- | --- | --- |
 | API key（Agent 常规身份） | `X-API-Key: sk-w2a-…` | 计费（配额内按次扣费） |
-| 管理员 JWT | `Authorization: Bearer <token>`（仅 MCP 端点接受） | 不计费（仅调试/管理用；REST `/v1/*` 不接受 JWT，其 Bearer 等效密钥本体） |
+| 管理员 JWT（MCP） | `Authorization: Bearer <token>`，必须含有效 `sid` 且持久化角色为 `admin` | 不计费；operator/viewer JWT 返回 403 `insufficient_role`；REST `/v1/*` 不接受 JWT |
 
 计费口径：`web_search` 每次调用计 1 次；`check_indexed` = `URL 数 × 引擎数` 次；`get_quota` / `list_engines` 免费。**按成功单元计费**：HTTP 200 完成后逐引擎核对响应信封，仅成功单元按次扣费；失败单元（`error` 字段，含 raw 模式 `not_implemented`）不计费；响应信封无法解析时按请求单元全额计费（兜底）；4xx / 429 / 503 不扣费。详见 [API.md §9](API.md)。
 
@@ -158,7 +158,7 @@ curl {BASE}/v1/quota -H "X-API-Key: sk-w2a-…"
 
 ## 7. 限制与如实说明
 
-- **同步上限**：收录判定单请求最多 **20 URL**；更大批量请分片，或关注后续异步模式（规划中）。
+- **批量上限**：收录判定 ≤20 URL 同步返回；>20 条自动转服务端任务队列（202 + `job_id`，默认上限 5000，进度/结果/CSV 走 `/v1/index/check/jobs/{id}`）。`index_jobs.enabled=false` 可关闭队列，此时 >20 条返回 400 `TOO_MANY_URLS`。
 - **漏报语义**：四引擎均以 URL 为查询词检索前 10 条，已收录但排名靠后会漏报；`match="none"` 严格含义是"前 10 条里没有"，不等于"未收录"。建议多引擎交叉验证：任一引擎 `indexed=true` 即可确认已收录。（bing 早期 `url:` 操作符已因实测失效而停用。）
 - **raw 模式**：部署方若以 `server.raw_requests: true` 运行，收录判定每个单元返回 `not_implemented`（HTTP 仍 200、**不计费**）——遇到整批 `not_implemented` 请让部署方切回浏览器模式，而不是重试。
 - **协议版本**：MCP `protocolVersion` 为 `2025-06-18`（当前主流客户端的 legacy 握手）；对 2026-07-28 现代版客户端：服务器按 legacy 语义应答，现代请求头（`MCP-Protocol-Version`、`Mcp-Method` 等）会被忽略，不影响 tools/call。

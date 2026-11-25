@@ -13,7 +13,7 @@
 | 推荐 | 4 vCPU / 4 GB / 40 GB | `max_processes=4`，四引擎并行，批量任务稳定 |
 | 有并发租户 | 8 vCPU / 8 GB + 代理池 | 每个出口 IP 独立限速；`max_concurrent_requests` 提到 16–32 |
 
-> 内存估算依据：每个 Chrome 实例 150–300 MB；`app.max_processes=N` 即上限。1.4 GB 的机器必须把 `shm_size` 降到 512mb（compose 已按此写好注释）。
+> 内存估算依据：每个 Chrome 实例 150–300 MB；`app.max_processes=N` 即上限。两个 compose 模板均固定 `shm_size: 512mb`（注释说明普通主机可用 2gb）；1.4 GB 机器不要调高该值。
 
 ## 2. 端口与网络
 
@@ -92,7 +92,8 @@ WorkingDirectory=/opt/web2api
 Environment=WEB2API_SERVER_HOST=127.0.0.1
 Environment=WEB2API_SERVER_PORT=7000
 Environment=WEB2API_PLATFORM_DATA_DIR=/var/lib/web2api
-EnvironmentFile=-/etc/web2api/web2api.env     # 放管理员密码等敏感项，权限 0600
+# 放管理员密码等敏感项，权限 0600（systemd 不支持行尾注释，必须独占一行）
+EnvironmentFile=-/etc/web2api/web2api.env
 ExecStart=/opt/web2api/web2api serve -c /etc/web2api/config.yaml
 Restart=always
 RestartSec=5
@@ -174,6 +175,19 @@ Docker Compose 部署必须把备份文件映射到容器内可写目录，并�
 | 指标 | `curl -s :7000/web-tool/metrics`（本机） | OpenMetrics 文本 |
 | 一次真实判定 | 带 Key 查 1 条 URL | `indexed` 字段有值，`took_ms` 数秒 |
 | 任务通道 | 25 条 URL | 202 + `job_id`，轮询 `status` 到 `done` |
+| 角色初值 | 登录响应与 `/api/me` | `user.role=admin`、`user_id` 非空 |
+| 日志保留 | `GET /web-tool/api/logs/config -H "Authorization: Bearer $TOKEN"`（登录后执行） | `retention_days` 与配置一致，`file_logging_enabled=true` |
+| 黑名单初值 | `GET /web-tool/api/blacklist` | 仅配置种子条目；不要把自己来源 IP 写进去 |
+
+### 首次上线后的身份与日志配置
+
+1. 用管理员登录并确认 `GET /web-tool/api/me` 返回 `role=admin`。需要多人协作时再创建 `operator` / `viewer`：`operator` 可管理密钥、冷却和黑名单，`viewer` 只读；用户管理、会话撤销与日志清理仅 `admin` 可用。
+2. 按合规要求设置 `app.log_retention_days`（默认 30 天）。滚动日志按 mtime 清理，可用 `POST /web-tool/api/logs/cleanup` 立即触发；当前 `logs.txt` / `audit.log` 不会被时间清理删除。
+3. `security.blacklist` 只在**首次启动**写入 settings 一次性标记，之后请在控制台或 `POST /web-tool/api/blacklist` 管理。默认拒绝封禁当前客户端 IP；确需封禁自身要显式传 `force:true`，该操作会立即锁死自己的全部 Web 访问。
+4. 忘记管理员密码时先停服，再用 `web2api admin-reset --data-dir <data_dir> --username admin --password <新密码>` 离线重置；它会同时更新用户库并递增 token_version，所有旧 JWT 失效。详见 OPERATIONS.md §8。
+### 官网搜索索引
+
+内置 `robots.txt` 屏蔽控制台和 API 路径。确认正式 HTTPS 域名后，可部署包含官网和状态页绝对 URL 的 `web/site/sitemap.xml`，并在根路径 `robots.txt` 中声明该站点地图的绝对地址。若由反向代理提供这些文件，确认 `/robots.txt` 和 `/sitemap.xml` 抵达预期服务。默认安装可直接访问官网，且不会向搜索引擎发布占位域名。
 
 ## 8. 已知部署限制
 

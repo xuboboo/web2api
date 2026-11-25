@@ -18,7 +18,7 @@ func TestRotatingFileWriterRollsOnSize(t *testing.T) {
 	}
 
 	line := strings.Repeat("x", 39) + "\n" // 40 bytes
-	for i := 0; i < 6; i++ {                 // 6 × 40 = 240B → rolls twice+
+	for i := 0; i < 6; i++ {               // 6 × 40 = 240B → rolls twice+
 		if _, err := w.Write([]byte(line)); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}

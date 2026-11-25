@@ -7,9 +7,9 @@
 <meta name="robots" content="noindex">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='27' cy='27' r='13.5' fill='%23FFFFFF'/%3E%3Cpath d='M20.5 27.5 25.5 32.5 34 22.5' fill='none' stroke='%23177E5B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M37 37 47 47' fill='none' stroke='%23FFFFFF' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
 <script src="/web-tool/assets/theme-boot.js?v=20261125"></script>
-<link rel="stylesheet" href="/web-tool/assets/style.css?v=20261118b">
+<link rel="stylesheet" href="/web-tool/assets/style.css?v=20261125g">
 <style>
-.nf-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 48px 24px; }
+.nf-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px 20px; background: radial-gradient(ellipse at 50% 45%, var(--brand-tint), transparent 62%); }
 .nf-card {
   max-width: 460px;
   width: 100%;
@@ -17,7 +17,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--card);
-  padding: 48px 32px 40px;
+  padding: clamp(28px, 6vw, 48px);
+  box-shadow: var(--shadow-1);
 }
 .nf-logo { width: 56px; height: 56px; margin: 0 auto 20px; }
 .nf-code {
@@ -35,13 +36,13 @@
 <main class="nf-page">
   <div class="nf-card">
     <svg class="nf-logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#177E5B"/><circle cx="27" cy="27" r="13.5" fill="#FFFFFF"/><path d="M20.5 27.5 25.5 32.5 34 22.5" fill="none" stroke="#177E5B" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 37 47 47" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/></svg>
-    <div class="nf-code">404 · NOT FOUND</div>
+    <div class="nf-code">404</div>
     <h1>页面不存在</h1>
-    <p>你要访问的页面不在 /web-tool 下。</p>
+    <p>页面可能已移动，或网址输入有误。</p>
     <div class="nf-btns">
-      <a class="btn btn-primary" href="/web-tool/">返回官网</a>
+      <a class="btn btn-primary" href="/web-tool/"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg>返回官网</a>
       <a class="btn btn-secondary" href="/web-tool/console/">进入控制台</a>
-      <a class="btn btn-ghost" href="/web-tool/status/">查看服务器状态</a>
+      <a class="btn btn-ghost" href="/web-tool/status/">查看服务状态</a>
     </div>
   </div>
 </main>

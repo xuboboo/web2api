@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xuboboo/web2api/core"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 )
 
 // webSearchURL is 360 Search's web SERP endpoint.

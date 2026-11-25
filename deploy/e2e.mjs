@@ -25,7 +25,7 @@
  *   E2E_SKIP_LOCKOUT=1               跳过登录锁定测试(见下)
  *
  * ⚠ 登录锁定测试会在套件末尾对 admin@<本机IP> 连续输错密码,触发 15 分钟锁定
- *   (security.login_lockout 默认值),套件跑完后该 用户名+IP 在锁定窗口内无法
+ *   (security.login_lockout 默认值),套件跑完后该用户名(跨 IP)在锁定窗口内无法
  *   登录控制台。CI/无人值守环境可放心;人工环境可设 E2E_SKIP_LOCKOUT=1 跳过。
  *
  *   node deploy/e2e.mjs [baseUrl]
@@ -401,7 +401,7 @@ if (process.env.E2E_SKIP_LOCKOUT === '1') {
   console.log('  skip [security] 登录锁定测试(E2E_SKIP_LOCKOUT=1)');
   results.push({ group: 'security', name: '登录锁定', ok: true, ms: 0, detail: 'skipped by E2E_SKIP_LOCKOUT=1' });
 } else {
-  await test('security', '同一 用户名+IP 连续失败 5 次后 → 429 too_many_attempts + Retry-After', async () => {
+  await test('security', '同一用户名跨 IP 连续失败 5 次后 → 429 too_many_attempts + Retry-After', async () => {
     let locked = false;
     for (let i = 1; i <= 8 && !locked; i++) {
       const r = await req('/api/auth/login', { method: 'POST', body: { username: ADMIN_USER, password: `wrong-${i}` } });
