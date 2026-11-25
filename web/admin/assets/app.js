@@ -695,6 +695,17 @@
           onUnauthorized();
         }
         if (!res.ok) {
+          /* 管理面 429/503 且 Retry-After 较短时,只读 GET 自动重试一次,
+             避免快速切换面板页面时偶发「加载失败」;写操作不重试。 */
+          if ((res.status === 429 || res.status === 503) && String(method).toUpperCase() === 'GET' &&
+              (opts._retry || 0) < 2 && !isNaN(retryAfter) && retryAfter > 0 && retryAfter <= 5) {
+            var nextOpts = {};
+            for (var k in opts) { if (Object.prototype.hasOwnProperty.call(opts, k)) nextOpts[k] = opts[k]; }
+            nextOpts._retry = (opts._retry || 0) + 1;
+            return new Promise(function (resolve, reject) {
+              setTimeout(function () { api(method, path, body, nextOpts).then(resolve, reject); }, retryAfter * 1000);
+            });
+          }
           var err = new Error(extractErrMsg(data, res.status));
           err.status = res.status;
           err.data = data;
@@ -3893,10 +3904,9 @@ async def run():
         new_password: newPwd.value
       })
         .then(function () {
-          // 契约:成功后 token_version+1,全部旧 token(含当前)立即失效 → 回登录页
+          // 成功响应携带新 token,当前会话续期;仅配置管理员改密会全局失效旧 JWT
           clearAuth();
-          toast('密码已修改,请使用新密码重新登录', 'success');
-          showLogin();
+          toast('密码已修改,当前会话已续期', 'success');
         })
         .catch(function (e) {
           showErr(e.message);
@@ -3912,7 +3922,7 @@ async def run():
       }
     });
 
-    var pwdCard = el('div', { class: 'card', id: 'st-account' },
+    var pwdCard = el('form', { class: 'card', id: 'st-account', onsubmit: function (e) { e.preventDefault(); } },
       el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '修改管理员密码' })),
       el('div', { class: 'card-body' },
         el('div', { class: 'field' },
@@ -4578,7 +4588,9 @@ async def run():
           el('li', null, el('b', { text: '单文件大小上限:' }), cfgVal(cfg.max_mb, ' MB')),
           el('li', null, el('b', { text: '保留备份数:' }), cfgVal(cfg.backups, ' 份')),
           el('li', null, el('b', { text: '保留天数:' }), cfgVal(cfg.retention_days, ' 天')),
-          el('li', null, el('b', { text: '日志格式:' }), cfgVal(cfg.format))));
+          el('li', null, el('b', { text: '日志格式:' }), cfgVal(cfg.format)),
+          el('li', null, el('b', { text: '文件落盘:' }), cfg.file_logging_enabled === true ? '开启' : (cfg.file_logging_enabled === false ? '关闭' : '—')),
+          el('li', null, el('b', { text: '审计保留天数:' }), cfgVal(cfg.audit_retention_days, ' 天'))));
       }).catch(function (e) {
         configBody.innerHTML = '';
         configBody.appendChild(el('div', { class: 'muted', text: '日志配置加载失败:' + e.message }));

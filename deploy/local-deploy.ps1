@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
   [string]$DeployDir = 'C:\Users\YDSD\AppData\Local\web2api-local',
   [string]$Binary = '',
@@ -39,6 +39,9 @@ function Start-Live() {
   $cred = Import-Clixml -LiteralPath $credPath
   $metricsToken = Read-Plain (Import-Clixml -LiteralPath $metricsPath)
   $vars = @{
+    # 本机 UI 压力验收需要较高管理面预算；生产默认值不变。
+    WEB2API_SECURITY_ADMIN_RATE_PER_MINUTE = '300'
+    WEB2API_SECURITY_ADMIN_RATE_PER_IP = '300'
     WEB2API_SERVER_HOST = '127.0.0.1'
     WEB2API_SERVER_PORT = '7000'
     WEB2API_APP_DEBUG_ENDPOINTS = 'false'
@@ -62,7 +65,7 @@ function Cache-Bust() {
   foreach ($asset in @('assets/app.js', 'assets/style.css')) {
     $file = Join-Path $deployWeb ('admin/' + $asset)
     $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.Substring(0, 8)
-    $text = [regex]::Replace($text, '(' + [regex]::Escape($asset) + '\?v=)[^"'']+', '${1}' + $hash)
+    $text = [regex]::Replace($text, '(' + [regex]::Escape($asset) + '\?v=)[^"'']+', '$1' + $hash)
   }
   [IO.File]::WriteAllText($indexPath, $text, (New-Object Text.UTF8Encoding($false)))
 }
