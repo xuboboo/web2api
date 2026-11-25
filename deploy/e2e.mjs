@@ -27,15 +27,6 @@
  * ⚠ 登录锁定测试会在套件末尾对 admin@<本机IP> 连续输错密码,触发 15 分钟锁定
  *   (security.login_lockout 默认值),套件跑完后该用户名(跨 IP)在锁定窗口内无法
  *   登录控制台。CI/无人值守环境可放心;人工环境可设 E2E_SKIP_LOCKOUT=1 跳过。
- *
- *   node deploy/e2e.mjs [baseUrl]
- *   WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
- *
- * 可调环境变量:
- *   WEB2API_BASE_URL / 第 1 个参数   目标地址(不含 /web-tool 前缀)
- *   WEB2API_ADMIN_USER / WEB2API_ADMIN_PASSWORD  管理员凭据(默认 admin/admin123)
- *   E2E_LIVE_INDEX_CHECK=1           追加一次真实引擎收录判定(需要引擎可用)
- *
  * 退出码:存在关键失败时为 1,可直接接入 CI。
  */
 const BASE = (process.env.WEB2API_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '');
@@ -356,7 +347,7 @@ await test('stability', 'cooldown force → /api/engines 显示 cooldown + until
 });
 
 await test('stability', '冷却引擎 search 快速失败:503 engine_cooldown + Retry-After(不发真实请求)', async () => {
-  const r = await req('/sogou/search?text=e2e-cooldown-probe&limit=1');
+  const r = await req('/sogou/search?text=e2e-cooldown-probe&limit=1', { headers: { 'X-API-Key': mcpKey } });
   assert(r.status === 503, `status=${r.status}, want 503`);
   assert(r.json && r.json.error === 'engine_cooldown' && r.json.reason === 'COOLDOWN', `body=${r.text.slice(0, 160)}`);
   assert(Number.isInteger(r.json.retry_after_seconds) && r.json.retry_after_seconds > 0, `retry_after_seconds=${r.json.retry_after_seconds}`);

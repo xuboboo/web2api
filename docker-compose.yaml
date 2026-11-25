@@ -1,6 +1,5 @@
 services:
   web2api:
-    container_name: serp
     init: true
     # Chrome needs more than the default 64MB /dev/shm. 2gb is safe on normal hosts;
     # on 1.4GB-RAM servers use 512mb (launch already passes --disable-dev-shm-usage).

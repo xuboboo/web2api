@@ -27,8 +27,8 @@
 ## 3. 部署方式 A：Docker Compose（推荐）
 
 ```bash
-# 1) 准备配置与强密码（禁止把密码写在命令行历史里）
-cp config.yaml /opt/web2api/config.yaml
+# 1) 把仓库检出到 /opt/web2api（compose 与 Dockerfile 都在仓库里）
+git clone https://github.com/xuboboo/web2api.git /opt/web2api
 $EDITOR /opt/web2api/config.yaml          # platform.data_dir / server.host
 read -rsp '管理员密码: ' ADMIN_PASSWORD; echo
 export ADMIN_PASSWORD
@@ -41,9 +41,11 @@ unset ADMIN_PASSWORD
 # 3) 验证
 docker compose ps
 docker compose logs --tail=50 web2api
-curl -s https://radar.ydsdoa.cn/web-tool/health
-curl -s -o /dev/null -w '%{http_code}\n' https://radar.ydsdoa.cn/web-tool/console/   # 预期 200/301
+curl -s http://127.0.0.1:7000/web-tool/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7000/web-tool/console/   # 预期 200/301
 ```
+
+> 正式访问根是 `https://radar.ydsdoa.cn/web-tool/`，但必须由反向代理把 `/web-tool` 指到本机 `127.0.0.1:7000`。验证时 `https://radar.ydsdoa.cn/web-tool/health` 应返回 JSON；若返回 HTML，说明域名当前仍指向其它应用，文档中的公网链接暂不可达。
 
 > **`ADMIN_PASSWORD` 对每条 compose 命令都是必需的**：`docker-compose.yaml` 用 `${ADMIN_PASSWORD:?...}` 声明它，缺失时 `docker compose` 会在解析阶段直接报错（这是有意的——容器里进程必须绑 `0.0.0.0` 才能被端口映射访问，而服务在非 loopback + 默认密码时会拒绝启动，见 F-26）。
 >
@@ -150,7 +152,7 @@ server {
     proxy_request_buffering off;
 
     location / {
-        proxy_pass https://radar.ydsdoa.cn;
+        proxy_pass http://127.0.0.1:7000;
         proxy_set_header Host              $host;
         # Overwrite, not append: client-supplied forwarding headers are untrusted.
         proxy_set_header X-Real-IP         $remote_addr;
@@ -186,13 +188,13 @@ Docker Compose 部署必须把备份文件映射到容器内可写目录，并�
 
 | 检查 | 命令 | 期望 |
 | --- | --- | --- |
-| 存活 | `curl -s :7000/web-tool/health` | 200 |
-| 就绪（含浏览器） | `curl -s :7000/web-tool/ready` | 200 |
+| 存活 | `curl -s http://127.0.0.1:7000/web-tool/health` | 200 |
+| 就绪（含浏览器） | `curl -s http://127.0.0.1:7000/web-tool/ready` | 200 |
 | 数据面鉴权 | 无 Key 调 `/v1/index/check` | 401 |
 | 管理面鉴权 | 无 JWT 调 `/api/keys` | 401 |
 | 控制台 | `/web-tool/console/` | 200 |
 | 官网 | `/web-tool/` | 200 |
-| 指标 | `curl -s :7000/web-tool/metrics`（本机） | OpenMetrics 文本 |
+| 指标 | `curl -s http://127.0.0.1:7000/web-tool/metrics`（本机） | OpenMetrics 文本 |
 | 一次真实判定 | 带 Key 查 1 条 URL | `indexed` 字段有值，`took_ms` 数秒 |
 | 任务通道 | 25 条 URL | 202 + `job_id`，轮询 `status` 到 `done` |
 | 角色初值 | 登录响应与 `/api/me` | `user.role=admin`、`user_id` 非空 |

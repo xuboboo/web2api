@@ -2293,5 +2293,6 @@ html.dark .toast { background: #000; border-color: hsl(0 0% 20%); }
 }
 .app-footer a { color: var(--brand); text-decoration: none; }
 .app-footer a:hover { text-decoration: underline; }
-.app-footer-brand { font-family: var(--mono, ui-monospace, monospace); }
+.app-footer-brand { font-family: var(--font-mono); }
 .app-footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
+.td-nowrap { white-space: nowrap; }

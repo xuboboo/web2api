@@ -13,7 +13,7 @@
   {BASE}/openapi.yaml    OpenAPI 3.1 全端点规范
 ```
 
-下文统一用 `{BASE}` 代表你的服务根地址（本机默认 `https://radar.ydsdoa.cn/web-tool`，部署后如 `https://your-domain.com/web-tool`），所有路径固定带 `/web-tool` 前缀；示例中的 `https://radar.ydsdoa.cn/...` 请整体替换为 `{BASE}/...`。
+下文统一用 `{BASE}` 代表你的服务根地址（正式地址示例 `https://radar.ydsdoa.cn/web-tool`，部署后如 `https://your-domain.com/web-tool`），所有路径固定带 `/web-tool` 前缀；示例中的域名地址请整体替换为 `{BASE}/...`。
 
 ---
 
