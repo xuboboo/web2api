@@ -24,10 +24,10 @@ type jsonStore struct {
 }
 
 type jsonStoreData struct {
-	Keys     map[string]*APIKey     `json:"keys"`
-	Usage    []UsageRecord          `json:"usage"`
-	Settings map[string]string      `json:"settings"` // base64-encoded values
-	Seq      uint64                 `json:"usage_seq"`
+	Keys     map[string]*APIKey       `json:"keys"`
+	Usage    []UsageRecord            `json:"usage"`
+	Settings map[string]string        `json:"settings"` // base64-encoded values
+	Seq      uint64                   `json:"usage_seq"`
 	Sessions map[string]*AdminSession `json:"sessions,omitempty"` // S4-GAP 会话系统
 }
 
@@ -42,7 +42,7 @@ func newJSONStore(path string) (*jsonStore, error) {
 		},
 	}
 	raw, err := os.ReadFile(path)
-	if err == nil && len(raw) > 0 {
+	if err == nil {
 		if err := json.Unmarshal(raw, &s.data); err != nil {
 			return nil, fmt.Errorf("platform: corrupt JSON fallback store %s: %w", path, err)
 		}
@@ -60,8 +60,9 @@ func newJSONStore(path string) (*jsonStore, error) {
 		}
 		return s, nil
 	}
-	// Missing file (or unreadable) — start fresh. If the file existed but was
-	// unreadable the caller has already been warned by New().
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("platform: read JSON fallback store %s: %w", path, err)
+	}
 	if err := s.saveLocked(); err != nil {
 		return nil, err
 	}
@@ -135,41 +136,75 @@ func (s *jsonStore) PutKey(key *APIKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := *key
+	old := s.data.Keys[key.ID]
 	s.data.Keys[key.ID] = &cp
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		if old == nil {
+			delete(s.data.Keys, key.ID)
+		} else {
+			s.data.Keys[key.ID] = old
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *jsonStore) UpdateKey(id string, edit func(*APIKey)) (*APIKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.data.Keys[id]
+	if old == nil {
+		return nil, nil
+	}
+	updated := *old
+	edit(&updated)
+	s.data.Keys[id] = &updated
+	if err := s.saveLocked(); err != nil {
+		s.data.Keys[id] = old
+		return nil, err
+	}
+	result := updated
+	return &result, nil
 }
 
 func (s *jsonStore) DeleteKey(id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.data.Keys[id]; !ok {
+	old := s.data.Keys[id]
+	if old == nil {
 		return false, nil
 	}
 	delete(s.data.Keys, id)
-	return true, s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.data.Keys[id] = old
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *jsonStore) RecordUsage(rec *UsageRecord, keyID string, units int64, consume bool, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	oldSeq := rec.Seq
 	s.data.Seq++
 	rec.Seq = int64(s.data.Seq)
 	s.data.Usage = append(s.data.Usage, *rec)
-	if k, ok := s.data.Keys[keyID]; ok {
-		atCopy := at
-		k.LastUsedAt = &atCopy
-		if consume && units > 0 {
-			today := localDate(at)
-			if k.TodayDate != today {
-				k.TodayDate = today
-				k.UsedToday = units
-			} else {
-				k.UsedToday += units
-			}
-			k.UsedTotal += units
-		}
+	oldKey := s.data.Keys[keyID]
+	if oldKey != nil {
+		key := *oldKey
+		applyKeyUsage(&key, units, consume, at)
+		s.data.Keys[keyID] = &key
 	}
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.data.Seq--
+		s.data.Usage = s.data.Usage[:len(s.data.Usage)-1]
+		rec.Seq = oldSeq
+		if oldKey != nil {
+			s.data.Keys[keyID] = oldKey
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *jsonStore) AllUsage() ([]UsageRecord, error) {
@@ -316,8 +351,17 @@ func (s *jsonStore) PutSession(sess *AdminSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := *sess
+	old := s.data.Sessions[sess.ID]
 	s.data.Sessions[sess.ID] = &cp
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		if old == nil {
+			delete(s.data.Sessions, sess.ID)
+		} else {
+			s.data.Sessions[sess.ID] = old
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *jsonStore) DeleteSession(id string) (bool, error) {
@@ -380,10 +424,26 @@ func (s *jsonStore) GetSetting(name string) ([]byte, error) {
 }
 
 func (s *jsonStore) PutSetting(name string, value []byte) error {
+	return s.PutSettings(map[string][]byte{name: value})
+}
+
+func (s *jsonStore) PutSettings(values map[string][]byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.Settings[name] = base64.StdEncoding.EncodeToString(value)
-	return s.saveLocked()
+	old := s.data.Settings
+	updated := make(map[string]string, len(old)+len(values))
+	for name, value := range old {
+		updated[name] = value
+	}
+	for name, value := range values {
+		updated[name] = base64.StdEncoding.EncodeToString(value)
+	}
+	s.data.Settings = updated
+	if err := s.saveLocked(); err != nil {
+		s.data.Settings = old
+		return err
+	}
+	return nil
 }
 
 func (s *jsonStore) Close() error {

@@ -396,9 +396,12 @@ func (p *Platform) AuthAny() fiber.Handler {
 					return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().APIRatePerMinute))
 				}
 				units := p.mcpChargeUnits(c)
-				if units > 0 && key.DailyQuota > 0 && usedTodayUnits(key, time.Now())+int64(units) > key.DailyQuota {
-					core.Metrics().IncQuotaBlocked()
-					return errQuotaExceeded(c)
+				if units > 0 {
+					release, err := p.reserveQuota(c, key.ID, int64(units))
+					if release == nil {
+						return err
+					}
+					defer release()
 				}
 				c.Locals(localAuthType, "api_key")
 				c.Locals(localKeyID, key.ID)
@@ -451,7 +454,7 @@ func (p *Platform) mcpChargeUnits(c *fiber.Ctx) int {
 	if c.Method() != fiber.MethodPost {
 		return 0
 	}
-	path := strings.TrimSuffix(c.Path(), "/")
+	path := strings.TrimSuffix(c.Route().Path, "/")
 	if !strings.HasSuffix(path, "/mcp") {
 		return 0
 	}

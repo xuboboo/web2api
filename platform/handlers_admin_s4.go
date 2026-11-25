@@ -14,12 +14,14 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 )
 
 // Locals keys written by jwtGuard.
 const (
-	localAdminSessionID = "platform_session_id"
-	localAdminUsername  = "platform_username"
+	localAdminSessionID    = "platform_session_id"
+	localAdminUsername     = "platform_username"
+	localAdminTokenVersion = "platform_token_version"
 )
 
 // Audit action names (audit trail + GET /api/audit).
@@ -143,12 +145,12 @@ func normalizeAllowedIPs(ips []string) ([]string, error) {
 // ---------------------------------------------------------------------------
 
 // handleLogout answers POST /api/auth/logout: revoke the current session and
-// expire the httpOnly cookie. Always {"ok":true} once authenticated.
+// expire the httpOnly cookie.
 func (p *Platform) handleLogout(c *fiber.Ctx) error {
 	sid, _ := c.Locals(localAdminSessionID).(string)
 	if sid != "" {
 		if _, err := p.revokeSession(sid); err != nil {
-			logrus.WithError(err).Warn("platform: 撤销会话失败(登出继续)")
+			return errInternal(c, err)
 		}
 		p.auditFrom(c, "", AuditActionSessionLogout, shortSID(sid), "ok")
 	}
@@ -161,22 +163,34 @@ func (p *Platform) handleLogout(c *fiber.Ctx) error {
 // is returned in the body AND set as the cookie. Bearer-only clients keep
 // working through the body token.
 func (p *Platform) handleAuthRefresh(c *fiber.Ctx) error {
-	sid, _ := c.Locals(localAdminSessionID).(string)
-	if sid == "" {
-		// Pre-S4 token without a session: re-issue at the current version.
-		token, err := p.issueToken(p.cfg.AdminUsername)
-		if err != nil {
-			return errInternal(c, err)
-		}
-		return c.JSON(fiber.Map{"token": token, "expires_in": int64(p.jwtTTL() / time.Second)})
-	}
-	p.touchSession(sid, true)
-	token, err := p.issueSessionToken(p.cfg.AdminUsername, sid)
+	p.adminAuthMu.Lock()
+	defer p.adminAuthMu.Unlock()
+	version, err := p.tokenVersion()
 	if err != nil {
 		return errInternal(c, err)
 	}
-	p.setSessionCookie(c, token, p.jwtTTL())
-	p.auditFrom(c, "", AuditActionSessionRefresh, shortSID(sid), "ok")
+	authorizedVersion, ok := c.Locals(localAdminTokenVersion).(int)
+	if !ok || authorizedVersion != version {
+		return errUnauthorized(c)
+	}
+	sid, _ := c.Locals(localAdminSessionID).(string)
+	if sid != "" {
+		active, err := p.touchSession(sid, true)
+		if err != nil {
+			return errInternal(c, err)
+		}
+		if !active {
+			return errUnauthorized(c)
+		}
+	}
+	token, err := p.issueSessionToken(p.cfg.AdminUsername, sid, version)
+	if err != nil {
+		return errInternal(c, err)
+	}
+	if sid != "" {
+		p.setSessionCookie(c, token, p.jwtTTL())
+		p.auditFrom(c, "", AuditActionSessionRefresh, shortSID(sid), "ok")
+	}
 	return c.JSON(fiber.Map{"token": token, "expires_in": int64(p.jwtTTL() / time.Second)})
 }
 
@@ -243,18 +257,16 @@ func (p *Platform) handleRuntime(c *fiber.Ctx) error {
 // from the next request on.
 func (p *Platform) handleRotateKey(c *fiber.Ctx) error {
 	id := c.Params("id")
-	key, err := p.store.GetKeyByID(id)
+	full, hash := generateAPIKeyMaterial()
+	key, err := p.store.UpdateKey(id, func(current *APIKey) {
+		current.KeyHash = hash
+		current.Prefix = full[:keyPrefixDisplayLen]
+	})
 	if err != nil {
 		return errInternal(c, err)
 	}
 	if key == nil {
 		return errNotFound(c)
-	}
-	full, hash := generateAPIKeyMaterial()
-	key.KeyHash = hash
-	key.Prefix = full[:keyPrefixDisplayLen]
-	if err := p.store.PutKey(key); err != nil {
-		return errInternal(c, err)
 	}
 	p.auditFrom(c, "", AuditActionKeyRotate, key.Name, "ok")
 	view := newKeyView(key, time.Now())
@@ -359,20 +371,11 @@ func (p *Platform) handleUsageExport(c *fiber.Ctx) error {
 			fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,%d,%d,%d,%d\n",
 				r.Seq,
 				r.Time.Format(time.RFC3339),
-				csvCell(r.KeyID), csvCell(r.KeyName), csvCell(r.Endpoint), csvCell(engines),
+				core.SpreadsheetCSVCell(r.KeyID), core.SpreadsheetCSVCell(r.KeyName), core.SpreadsheetCSVCell(r.Endpoint), core.SpreadsheetCSVCell(engines),
 				r.URLs, r.Units, r.Status, r.TookMS)
 		}
 		return c.SendString(b.String())
 	}
-}
-
-// csvCell quotes a CSV field when it contains a comma/quote/newline (the key
-// name is caller-controlled text — injection-safe rendering here).
-func csvCell(v string) string {
-	if strings.ContainsAny(v, ",\"\n\r") {
-		return `"` + strings.ReplaceAll(v, `"`, `""`) + `"`
-	}
-	return v
 }
 
 // reconcileSample is one mismatching record in GET /api/reconcile samples.

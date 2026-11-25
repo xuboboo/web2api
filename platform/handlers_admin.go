@@ -149,6 +149,11 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	usernameOK := req.Username == p.cfg.AdminUsername
+	if usernameOK {
+		p.adminAuthMu.Lock()
+		defer p.adminAuthMu.Unlock()
+	}
 	now := time.Now()
 	if lockedUntil, locked := p.loginLockedAt(req.Username, now); locked {
 		remaining := int((lockedUntil.Sub(now) + time.Second - time.Nanosecond) / time.Second)
@@ -159,7 +164,6 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 		p.auditFrom(c, "", AuditActionLoginLockout, req.Username, "locked")
 		return errTooManyAttempts(c, remaining)
 	}
-	usernameOK := req.Username == p.cfg.AdminUsername
 	if !usernameOK {
 		// S4-B-04: equalize the timing by running the same bcrypt work.
 		_ = bcrypt.CompareHashAndPassword(dummyAdminHash, []byte(req.Password))
@@ -171,11 +175,15 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 		return errUnauthorized(c)
 	}
 	p.clearLoginFailures(req.Username)
+	version, err := p.tokenVersion()
+	if err != nil {
+		return errInternal(c, err)
+	}
 	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
 	if err != nil {
 		return errInternal(c, err)
 	}
-	token, err := p.issueSessionToken(req.Username, session.ID)
+	token, err := p.issueSessionToken(req.Username, session.ID, version)
 	if err != nil {
 		return errUnauthorized(c)
 	}
@@ -230,6 +238,16 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	p.adminAuthMu.Lock()
+	defer p.adminAuthMu.Unlock()
+	version, err := p.tokenVersion()
+	if err != nil {
+		return errInternal(c, err)
+	}
+	authorizedVersion, ok := c.Locals(localAdminTokenVersion).(int)
+	if !ok || authorizedVersion != version {
+		return errUnauthorized(c)
+	}
 	if bcrypt.CompareHashAndPassword(p.adminHash(), []byte(req.OldPassword)) != nil {
 		core.Metrics().IncLoginFailure()
 		return errUnauthorized(c)
@@ -242,21 +260,28 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if err != nil {
 		return errInternal(c, err)
 	}
-	if err := p.store.PutSetting(settingAdminHash, hash); err != nil {
-		return errInternal(c, err)
+	if version >= 1<<30 {
+		return errInternal(c, fmt.Errorf("admin token version limit reached"))
 	}
-	if err := p.store.PutSetting(settingAdminPasswordCustom, []byte("1")); err != nil {
+	version++
+	if err := p.store.PutSettings(map[string][]byte{
+		settingAdminHash:           hash,
+		settingAdminPasswordCustom: []byte("1"),
+		settingTokenVersion:        []byte(strconv.Itoa(version)),
+	}); err != nil {
 		return errInternal(c, err)
 	}
 	p.setAdminHash(hash)
 	// S4-GAP 会话: 全部旧会话(含当前)随 token_version 一并失效,再发新会话。
-	revoked, _ := p.revokeAllSessions()
-	version := p.bumpTokenVersion()
+	revoked, err := p.revokeAllSessions()
+	if err != nil {
+		logrus.WithError(err).Warn("platform: could not mark every old session revoked after password change")
+	}
 	session, err := p.createSession(c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
 	if err != nil {
 		return errInternal(c, err)
 	}
-	token, err := p.issueSessionToken(p.cfg.AdminUsername, session.ID)
+	token, err := p.issueSessionToken(p.cfg.AdminUsername, session.ID, version)
 	if err != nil {
 		return errInternal(c, err)
 	}
@@ -421,13 +446,6 @@ func (p *Platform) handleListKeys(c *fiber.Ctx) error {
 // accepts bare IPs / CIDR ranges, empty list clears the restriction.
 func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 	id := c.Params("id")
-	key, err := p.store.GetKeyByID(id)
-	if err != nil {
-		return errInternal(c, err)
-	}
-	if key == nil {
-		return errNotFound(c)
-	}
 	var req struct {
 		Name       *string `json:"name"`
 		Status     *string `json:"status"`
@@ -440,34 +458,33 @@ func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	var update APIKey
 	changed := []string{}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
 			return errBadRequest(c, "INVALID_PARAM")
 		}
-		key.Name = name
+		update.Name = name
 		changed = append(changed, "name")
 	}
 	if req.Status != nil {
 		if *req.Status != KeyStatusActive && *req.Status != KeyStatusDisabled {
 			return errBadRequest(c, "INVALID_PARAM")
 		}
-		key.Status = *req.Status
+		update.Status = *req.Status
 		changed = append(changed, "status")
 	}
 	if req.DailyQuota != nil {
 		if *req.DailyQuota < 0 {
 			return errBadRequest(c, "INVALID_PARAM")
 		}
-		key.DailyQuota = *req.DailyQuota
+		update.DailyQuota = *req.DailyQuota
 		changed = append(changed, "daily_quota")
 	}
 	if req.ExpiresAt != nil {
 		raw := strings.TrimSpace(string(req.ExpiresAt))
-		if raw == "" || raw == "null" {
-			key.ExpiresAt = nil // 显式 null / 空串 = 清除过期时间
-		} else {
+		if raw != "" && raw != "null" {
 			var rawTime string
 			if err := json.Unmarshal(req.ExpiresAt, &rawTime); err != nil {
 				return errBadRequestMsg(c, "INVALID_PARAM", "过期时间格式无效,应为 RFC3339(如 2026-12-31T23:59:59+08:00)")
@@ -476,7 +493,7 @@ func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 			if perr != nil {
 				return errBadRequestMsg(c, "INVALID_PARAM", "过期时间格式无效,应为 RFC3339(如 2026-12-31T23:59:59+08:00)")
 			}
-			key.ExpiresAt = &parsed
+			update.ExpiresAt = &parsed
 		}
 		changed = append(changed, "expires_at")
 	}
@@ -485,11 +502,31 @@ func (p *Platform) handleUpdateKey(c *fiber.Ctx) error {
 		if errIP != nil {
 			return errBadRequestMsg(c, "INVALID_PARAM", "IP 白名单格式无效: "+errIP.Error())
 		}
-		key.AllowedIPs = normalized
+		update.AllowedIPs = normalized
 		changed = append(changed, "allowed_ips")
 	}
-	if err := p.store.PutKey(key); err != nil {
+	key, err := p.store.UpdateKey(id, func(current *APIKey) {
+		if req.Name != nil {
+			current.Name = update.Name
+		}
+		if req.Status != nil {
+			current.Status = update.Status
+		}
+		if req.DailyQuota != nil {
+			current.DailyQuota = update.DailyQuota
+		}
+		if req.ExpiresAt != nil {
+			current.ExpiresAt = update.ExpiresAt
+		}
+		if req.AllowedIPs != nil {
+			current.AllowedIPs = update.AllowedIPs
+		}
+	})
+	if err != nil {
 		return errInternal(c, err)
+	}
+	if key == nil {
+		return errNotFound(c)
 	}
 	p.auditFrom(c, "", AuditActionKeyUpdate, key.Name, strings.Join(changed, ","))
 	return c.JSON(newKeyView(key, time.Now()))

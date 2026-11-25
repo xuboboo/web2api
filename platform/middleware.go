@@ -179,15 +179,24 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 			return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().APIRatePerMinute))
 		}
 
-		urls, engines, parsed := p.parseIndexRequest(c)
+		endpoint := c.Route().Path
+		isLookupPath := strings.HasSuffix(strings.TrimSuffix(endpoint, "/"), "/v1/index/check")
+		var urls, engines []string
 		units := 0
-		if parsed {
-			units = len(urls) * len(engines)
+		if isLookupPath {
+			var parsed bool
+			urls, engines, parsed = p.parseIndexRequest(c)
+			if parsed {
+				units = len(urls) * len(engines)
+			}
 		}
 
-		if units > 0 && key.DailyQuota > 0 && usedTodayUnits(key, time.Now())+int64(units) > key.DailyQuota {
-			core.Metrics().IncQuotaBlocked()
-			return errQuotaExceeded(c)
+		if units > 0 {
+			release, err := p.reserveQuota(c, key.ID, int64(units))
+			if release == nil {
+				return err
+			}
+			defer release()
 		}
 
 		c.Locals(localKeyName, *key)
@@ -203,20 +212,40 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 
 		handlerErr := c.Next()
 
-		endpoint := c.Route().Path
-		if endpoint == "" || endpoint == "/" {
-			endpoint = c.Path()
-		}
-		// Usage logging is scoped to the index/check endpoints per contract;
-		// /v1/quota and /v1/engines stay out of the usage journal, and job
-		// polling (/v1/index/check/jobs/...) is a progress read, not a lookup.
-		isLookupPath := (strings.Contains(endpoint, "/v1/index") || strings.Contains(c.Path(), "/v1/index")) &&
-			!strings.Contains(c.Path(), "/jobs")
 		if isLookupPath {
 			p.writeUsage(c, key, endpoint, urls, engines, units, started, handlerErr)
 		}
 		return handlerErr
 	}
+}
+
+// reserveQuota accounts for requests whose actual usage will only be
+// recorded after they finish. REST and MCP draw from the same budget.
+func (p *Platform) reserveQuota(c *fiber.Ctx, keyID string, units int64) (func(), error) {
+	p.quotaMu.Lock()
+	defer p.quotaMu.Unlock()
+	key, err := p.store.GetKeyByID(keyID)
+	if err != nil {
+		return nil, errInternal(c, err)
+	}
+	if key == nil || key.Status != KeyStatusActive {
+		return nil, errUnauthorized(c)
+	}
+	now := time.Now()
+	pending := p.pendingQuota[keyID]
+	if key.DailyQuota > 0 && units > key.DailyQuota-usedTodayUnits(key, now)-pending {
+		core.Metrics().IncQuotaBlocked()
+		return nil, errQuotaExceeded(c)
+	}
+	p.pendingQuota[keyID] = pending + units
+	return func() {
+		p.quotaMu.Lock()
+		defer p.quotaMu.Unlock()
+		p.pendingQuota[keyID] -= units
+		if p.pendingQuota[keyID] == 0 {
+			delete(p.pendingQuota, keyID)
+		}
+	}, nil
 }
 
 // writeUsage persists the usage record and key counters after an index/check
@@ -376,7 +405,8 @@ func (p *Platform) verifyAdminToken(token string) (*jwtClaims, bool) {
 	if err != nil {
 		return nil, false
 	}
-	if claims.TV != p.tokenVersion() {
+	version, err := p.tokenVersion()
+	if err != nil || claims.TV != version {
 		return nil, false
 	}
 	if claims.SID != "" && !p.sessionActive(claims.SID) {
@@ -410,7 +440,10 @@ func (p *Platform) jwtGuard() fiber.Handler {
 		}
 		c.Locals(localAdminSessionID, claims.SID)
 		c.Locals(localAdminUsername, claims.Sub)
-		p.touchSession(claims.SID, false)
+		c.Locals(localAdminTokenVersion, claims.TV)
+		if _, err := p.touchSession(claims.SID, false); err != nil {
+			logrus.WithError(err).Warn("platform: 更新会话活跃时间失败")
+		}
 		return c.Next()
 	}
 }

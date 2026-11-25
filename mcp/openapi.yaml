@@ -738,7 +738,7 @@ paths:
             application/json:
               example: { error: invalid_origin }
         "404":
-          description: Mcp-Session-Id 未知或已过期(HTTP 404 + JSON-RPC -32001)
+          description: Mcp-Session-Id 未知、已过期或归属其他身份(HTTP 404 + JSON-RPC -32001)
           content:
             application/json:
               example:
@@ -753,6 +753,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformError" }
               example: { error: quota_exceeded }
+
+    delete:
+      tags: [agent-plane]
+      operationId: terminateMcpSession
+      summary: 关闭当前身份的 MCP 会话
+      description: 使用签发会话时的 API Key 身份或管理员账号鉴权，并发送初始化返回的会话 ID。
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - in: header
+          name: Mcp-Session-Id
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: 会话已关闭
+        "401":
+          description: 未授权
+        "403":
+          description: Origin 校验失败
+        "404":
+          description: 会话未知、已过期或归属其他身份
 
   /openapi.yaml:
     get:

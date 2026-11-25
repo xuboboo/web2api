@@ -62,11 +62,15 @@ func FetchPageTitle(ctx context.Context, targetURL string, q Query) (string, boo
 	if targetURL == "" {
 		return "", false
 	}
-	if title, ok := cachedPageTitle(targetURL); ok {
-		return title, true
+	if entry, found := cachedPageTitle(targetURL); found {
+		return entry.title, entry.ok
 	}
 
+	ctx = EnsureContext(ctx)
 	title, err := fetchPageTitle(ctx, targetURL, q)
+	if ctx.Err() != nil {
+		return "", false
+	}
 	if err != nil || title == "" {
 		reason := "empty title"
 		if err != nil {
@@ -86,12 +90,12 @@ func ResetPageTitleCache() {
 	pageTitleCache.entries = map[string]pageTitleEntry{}
 }
 
-func cachedPageTitle(targetURL string) (string, bool) {
+func cachedPageTitle(targetURL string) (pageTitleEntry, bool) {
 	pageTitleCache.Lock()
 	defer pageTitleCache.Unlock()
 	entry, ok := pageTitleCache.entries[targetURL]
 	if !ok {
-		return "", false
+		return pageTitleEntry{}, false
 	}
 	ttl := pageTitleNegativeTTL
 	if entry.ok {
@@ -99,9 +103,9 @@ func cachedPageTitle(targetURL string) (string, bool) {
 	}
 	if time.Since(entry.at) > ttl {
 		delete(pageTitleCache.entries, targetURL)
-		return "", false
+		return pageTitleEntry{}, false
 	}
-	return entry.title, entry.ok
+	return entry, true
 }
 
 func storePageTitle(targetURL, title string, ok bool, reason string) {
@@ -139,7 +143,7 @@ func fetchPageTitle(ctx context.Context, targetURL string, q Query) (string, err
 	if err != nil {
 		return "", err
 	}
-	defer DrainAndCloseResponse(resp)
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", &titleProbeError{status: resp.StatusCode}
 	}

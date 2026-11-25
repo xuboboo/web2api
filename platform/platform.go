@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,7 +34,8 @@ type Platform struct {
 	// adminHashP is the bcrypt hash of the admin password (kept in the settings
 	// bucket; an API-changed password overrides the config default). S4-B-11:
 	// accessed atomically so concurrent login/password-change cannot race.
-	adminHashP atomic.Pointer[[]byte]
+	adminHashP  atomic.Pointer[[]byte]
+	adminAuthMu sync.Mutex // serializes login, refresh and password changes
 
 	// appVersion is injected by the serve command for GET /api/me|/api/runtime
 	// (S4-B-07: 真实版本只在鉴权后的端点暴露).
@@ -56,9 +58,11 @@ type Platform struct {
 	// S4 rate-limit tables (B-02 per-key/unauth, B-05 per-IP admin).
 	ratelimits platformRateLimiters
 
-	// S4-GAP 会话系统: memory cache over the sessions bucket.
+	quotaMu      sync.Mutex
+	pendingQuota map[string]int64
+
+	// Serializes session updates and revocations across store operations.
 	sessionMu sync.Mutex
-	sessions  *sessionCache
 
 	// S4-GAP 审计日志: JSON Lines writer at <data_dir>/audit.log.
 	auditMu sync.Mutex
@@ -106,7 +110,7 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 	p.loginFails = map[loginAttemptKey]*loginFailState{}
 	p.adminLimiter = rate.NewLimiter(rate.Every(time.Minute/time.Duration(p.sec.AdminRatePerMinute)), p.sec.AdminRatePerMinute)
 	p.ratelimits = newPlatformRateLimiters()
-	p.sessions = newSessionCache()
+	p.pendingQuota = make(map[string]int64)
 
 	// Primary storage: bbolt (pure Go, no CGO). S4-B-06 fail-closed: a locked
 	// database (second process on the same data_dir) is a startup FAILURE, not
@@ -182,15 +186,22 @@ func (p *Platform) initSecret() error {
 			p.secret = raw
 			return nil
 		}
-		logrus.Warn("platform: secret.key 内容无效,重新生成 JWT 签名密钥")
+		return fmt.Errorf("platform: invalid JWT signing secret at %s", secretPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("platform: read secret.key: %w", err)
 	}
 
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return fmt.Errorf("platform: generate jwt secret: %w", err)
 	}
-	if err := os.WriteFile(secretPath, []byte(hex.EncodeToString(buf)), 0o600); err != nil {
-		return fmt.Errorf("platform: write secret.key: %w", err)
+	f, err := os.OpenFile(secretPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("platform: create secret.key: %w", err)
+	}
+	_, writeErr := f.WriteString(hex.EncodeToString(buf))
+	if err := errors.Join(writeErr, f.Sync(), f.Close()); err != nil {
+		return fmt.Errorf("platform: persist secret.key: %w", err)
 	}
 	p.secret = buf
 	return nil
@@ -206,22 +217,41 @@ func (p *Platform) initSecret() error {
 // settings record).
 func (p *Platform) initAdminPassword() error {
 	stored, err := p.store.GetSetting(settingAdminHash)
-	if err == nil && len(stored) > 0 {
-		if custom, cerr := p.store.GetSetting(settingAdminPasswordCustom); cerr == nil && len(custom) > 0 {
-			p.setAdminHash(stored)
-			logrus.Info("platform: 使用面板修改后的管理员密码(settings 桶),config 中的默认密码已覆盖")
-			return nil
+	if err != nil {
+		return fmt.Errorf("platform: read admin password hash: %w", err)
+	}
+	custom, err := p.store.GetSetting(settingAdminPasswordCustom)
+	if err != nil {
+		return fmt.Errorf("platform: read admin password source: %w", err)
+	}
+	if len(custom) > 0 {
+		if _, err := bcrypt.Cost(stored); err != nil {
+			return fmt.Errorf("platform: invalid custom admin password hash: %w", err)
 		}
-		if bcrypt.CompareHashAndPassword(stored, []byte(p.cfg.AdminPassword)) == nil {
-			p.setAdminHash(stored)
-			return nil
-		}
+		p.setAdminHash(stored)
+		logrus.Info("platform: 使用面板修改后的管理员密码(settings 桶),config 中的默认密码已覆盖")
+		return nil
+	}
+	if bcrypt.CompareHashAndPassword(stored, []byte(p.cfg.AdminPassword)) == nil {
+		p.setAdminHash(stored)
+		return nil
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(p.cfg.AdminPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("platform: hash admin password: %w", err)
 	}
-	if err := p.store.PutSetting(settingAdminHash, hash); err != nil {
+	values := map[string][]byte{settingAdminHash: hash}
+	if len(stored) > 0 {
+		version, err := p.tokenVersion()
+		if err != nil {
+			return fmt.Errorf("platform: read admin token version: %w", err)
+		}
+		if version >= 1<<30 {
+			return errors.New("platform: admin token version limit reached")
+		}
+		values[settingTokenVersion] = []byte(strconv.Itoa(version + 1))
+	}
+	if err := p.store.PutSettings(values); err != nil {
 		return fmt.Errorf("platform: persist admin password hash: %w", err)
 	}
 	p.setAdminHash(hash)
@@ -274,44 +304,27 @@ func (p *Platform) closeAudit() error {
 	return p.audit.Close()
 }
 
-// tokenVersion reads the admin JWT token_version (契约 B). Password changes
-// bump it, invalidating every previously issued token. Tokens issued before
-// the mechanism existed carry tv=0, matching the initial stored version.
-func (p *Platform) tokenVersion() int {
+// tokenVersion reads the persisted JWT version. Version 0 is reserved for
+// stores created before the setting existed.
+func (p *Platform) tokenVersion() (int, error) {
 	raw, err := p.store.GetSetting(settingTokenVersion)
 	if err != nil || len(raw) == 0 {
-		return 0
+		return 0, err
 	}
-	version := 0
-	for _, ch := range string(raw) {
-		if ch < '0' || ch > '9' {
-			return 0
-		}
-		version = version*10 + int(ch-'0')
-		if version > 1<<30 {
-			return 0
-		}
+	version, err := strconv.Atoi(string(raw))
+	if err != nil || version < 0 || version > 1<<30 {
+		return 0, errors.New("invalid admin token version")
 	}
-	return version
+	return version, nil
 }
 
-// bumpTokenVersion increments and persists the token version, returning it.
-func (p *Platform) bumpTokenVersion() int {
-	version := p.tokenVersion() + 1
-	_ = p.store.PutSetting(settingTokenVersion, []byte(fmt.Sprintf("%d", version)))
-	return version
-}
-
-// issueToken signs an admin JWT bound to the current token version (legacy
-// shape, no session binding — kept for the password-change response).
-func (p *Platform) issueToken(username string) (string, error) {
-	return signJWT(p.secret, username, time.Now().Add(p.jwtTTL()), p.tokenVersion())
-}
-
-// issueSessionToken signs an admin JWT bound to the current token version and
-// the given admin session (S4-GAP 会话系统; fresh jti per issuance).
-func (p *Platform) issueSessionToken(username, sessionID string) (string, error) {
-	return signJWTSession(p.secret, username, time.Now().Add(p.jwtTTL()), p.tokenVersion(), sessionID, newSessionID())
+// issueSessionToken signs a token with the credential version authorized by
+// the caller. An empty session ID preserves support for legacy JWTs.
+func (p *Platform) issueSessionToken(username, sessionID string, version int) (string, error) {
+	if sessionID == "" {
+		return signJWT(p.secret, username, time.Now().Add(p.jwtTTL()), version)
+	}
+	return signJWTSession(p.secret, username, time.Now().Add(p.jwtTTL()), version, sessionID, newSessionID())
 }
 
 // Close releases the storage handle and the audit writer.

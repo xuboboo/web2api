@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type testNetIPResolver func(context.Context, string, string) ([]netip.Addr, error)
@@ -36,16 +38,47 @@ func TestNormalizePageTitle(t *testing.T) {
 func TestPageTitleCacheRespectsTTLAndNegatives(t *testing.T) {
 	ResetPageTitleCache()
 	storePageTitle("https://example.test/a", "标题甲", true, "")
-	if got, ok := cachedPageTitle("https://example.test/a"); !ok || got != "标题甲" {
-		t.Fatalf("positive cache miss: %q ok=%v", got, ok)
+	if got, ok := cachedPageTitle("https://example.test/a"); !ok || !got.ok || got.title != "标题甲" {
+		t.Fatalf("positive cache miss: %+v found=%v", got, ok)
 	}
 	storePageTitle("https://example.test/b", "", false, "probe failed")
-	if _, ok := cachedPageTitle("https://example.test/b"); ok {
-		t.Fatal("negative cache entry must report not-ok")
+	if got, found := cachedPageTitle("https://example.test/b"); !found || got.ok {
+		t.Fatal("negative cache entry must be a cached miss")
 	}
 	ResetPageTitleCache()
 	if _, ok := cachedPageTitle("https://example.test/a"); ok {
 		t.Fatal("reset must clear the cache")
+	}
+}
+
+func TestFetchPageTitleReusesNegativeResultUntilExpiry(t *testing.T) {
+	ResetPageTitleCache()
+	t.Cleanup(ResetPageTitleCache)
+
+	const target = "https://negative.web2api.test/article"
+	lookups := 0
+	ctx := context.WithValue(t.Context(), guardedNetworkHooksKey{}, guardedNetworkHooks{
+		resolver: testNetIPResolver(func(context.Context, string, string) ([]netip.Addr, error) {
+			lookups++
+			return nil, errors.New("DNS unavailable")
+		}),
+	})
+	for i := 0; i < 2; i++ {
+		if title, ok := FetchPageTitle(ctx, target, Query{}); ok || title != "" {
+			t.Fatalf("negative probe returned title %q, ok %v", title, ok)
+		}
+	}
+	if lookups != 1 {
+		t.Fatalf("DNS lookups = %d, want 1", lookups)
+	}
+	pageTitleCache.Lock()
+	entry := pageTitleCache.entries[target]
+	entry.at = time.Now().Add(-pageTitleNegativeTTL - time.Second)
+	pageTitleCache.entries[target] = entry
+	pageTitleCache.Unlock()
+	FetchPageTitle(ctx, target, Query{})
+	if lookups != 2 {
+		t.Fatalf("DNS lookups after expiry = %d, want 2", lookups)
 	}
 }
 
@@ -235,8 +268,7 @@ func TestFetchPageTitleRejectsPrivateTargets(t *testing.T) {
 
 	// A blocked probe must be remembered as a negative result, not retried on
 	// every unit of a batch.
-	storePageTitle(srv.URL, "", false, "target not allowed")
-	if _, ok := cachedPageTitle(srv.URL); ok {
-		t.Fatal("negative cache entry must report not-ok")
+	if got, found := cachedPageTitle(srv.URL); !found || got.ok {
+		t.Fatal("blocked probe must cache a miss")
 	}
 }

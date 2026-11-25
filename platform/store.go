@@ -10,10 +10,10 @@ import (
 // fallback mirrors them as fields of one document). usage_daily is the S4
 // 计数索引 bucket (GAP-性能 b) and sessions backs the admin session store.
 const (
-	bucketKeys      = "keys"
-	bucketUsage     = "usage"
-	bucketSettings  = "settings"
-	bucketSessions  = "sessions"
+	bucketKeys       = "keys"
+	bucketUsage      = "usage"
+	bucketSettings   = "settings"
+	bucketSessions   = "sessions"
 	bucketUsageDaily = "usage_daily"
 
 	settingUsageSeq            = "usage_seq"
@@ -75,6 +75,8 @@ type Store interface {
 	GetKeyByID(id string) (*APIKey, error)
 	GetKeyByHash(keyHash string) (*APIKey, error)
 	PutKey(key *APIKey) error
+	// UpdateKey edits the latest record atomically and returns nil if absent.
+	UpdateKey(id string, edit func(*APIKey)) (*APIKey, error)
 	DeleteKey(id string) (bool, error)
 
 	// RecordUsage atomically appends one usage record and, when the key still
@@ -108,6 +110,7 @@ type Store interface {
 
 	GetSetting(name string) ([]byte, error)
 	PutSetting(name string, value []byte) error
+	PutSettings(values map[string][]byte) error
 
 	Close() error
 }

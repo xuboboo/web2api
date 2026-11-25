@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // IndexJobStatus is the lifecycle state of one index-check job.
@@ -195,9 +196,23 @@ func (s *IndexJobStore) AppendResult(jobID string, row IndexCheckURLResult) erro
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "results.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, "results.jsonl"), os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+			return errors.Join(err, f.Close())
+		}
+		// Isolate a torn line so it cannot swallow the next complete result.
+		if last[0] != '\n' {
+			payload = append([]byte{'\n'}, payload...)
+		}
 	}
 	if _, err := f.Write(append(payload, '\n')); err != nil {
 		return errors.Join(err, f.Close())
@@ -300,7 +315,7 @@ func WriteCSV(rows []IndexCheckURLResult, engines []string) []byte {
 	b.WriteString(strings.Join(header, ","))
 	b.WriteString("\r\n")
 	for _, row := range rows {
-		fields := []string{csvField(row.URL)}
+		fields := []string{SpreadsheetCSVCell(row.URL)}
 		for _, engine := range engines {
 			outcome, ok := row.Engines[engine]
 			if !ok {
@@ -309,7 +324,7 @@ func WriteCSV(rows []IndexCheckURLResult, engines []string) []byte {
 			}
 			success, engineErr := outcome.Verdict()
 			if engineErr != nil {
-				fields = append(fields, "", "", "", "", csvField(engineErr.Code))
+				fields = append(fields, "", "", "", "", SpreadsheetCSVCell(engineErr.Code))
 				continue
 			}
 			if success == nil {
@@ -318,8 +333,8 @@ func WriteCSV(rows []IndexCheckURLResult, engines []string) []byte {
 			}
 			fields = append(fields,
 				fmt.Sprintf("%t", success.Indexed),
-				success.Match,
-				csvField(success.MatchedResultURL),
+				SpreadsheetCSVCell(success.Match),
+				SpreadsheetCSVCell(success.MatchedResultURL),
 				fmt.Sprintf("%d", success.TotalResults),
 				"")
 		}
@@ -329,7 +344,16 @@ func WriteCSV(rows []IndexCheckURLResult, engines []string) []byte {
 	return []byte(b.String())
 }
 
-func csvField(s string) string {
+// SpreadsheetCSVCell quotes a text field and prevents spreadsheet formula
+// interpretation. JSON exports keep the original value.
+func SpreadsheetCSVCell(s string) string {
+	first, _ := utf8.DecodeRuneInString(strings.TrimSpace(s))
+	switch {
+	case strings.HasPrefix(s, "\t"), strings.HasPrefix(s, "\r"), strings.HasPrefix(s, "\n"):
+		s = "'" + s
+	case strings.ContainsRune("=+-@＝＋－＠", first):
+		s = "'" + s
+	}
 	if strings.ContainsAny(s, ",\"\r\n") {
 		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
 	}

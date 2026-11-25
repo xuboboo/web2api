@@ -139,12 +139,11 @@ type IndexJobManager struct {
 
 	mu    sync.Mutex
 	jobs  map[string]*jobState
-	order []string
 	queue chan string
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	lifecycle sync.Mutex
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 // NewIndexJobManager builds a manager. engines/rs are the same instances the
@@ -170,20 +169,24 @@ func (m *IndexJobManager) Start(ctx context.Context) {
 	if m == nil {
 		return
 	}
-	m.mu.Lock()
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
 	if m.cancel != nil {
-		m.mu.Unlock()
 		return
 	}
-	m.ctx, m.cancel = context.WithCancel(ctx)
-	runCtx := m.ctx
-	m.mu.Unlock()
-
-	m.resume(runCtx)
+	runCtx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+	recovered := m.resume(runCtx)
 
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		for _, id := range recovered {
+			if runCtx.Err() != nil {
+				return
+			}
+			m.runJob(runCtx, id)
+		}
 		m.loop(runCtx)
 	}()
 }
@@ -193,34 +196,43 @@ func (m *IndexJobManager) Stop() {
 	if m == nil {
 		return
 	}
-	m.mu.Lock()
-	cancel := m.cancel
-	m.cancel = nil
-	m.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	if m.cancel != nil {
+		m.cancel()
+		m.wg.Wait()
+		m.cancel = nil
 	}
-	m.wg.Wait()
 }
 
 // resume reloads unfinished jobs from disk. Results already on disk stay
 // applied, so a restart continues where the previous process stopped.
-func (m *IndexJobManager) resume(ctx context.Context) {
+func (m *IndexJobManager) resume(ctx context.Context) []string {
 	metas, err := m.store.ListMeta()
 	if err != nil {
-		return
+		WithRequest(ctx).WithError(err).Error("cannot list index jobs for recovery")
+		return nil
 	}
-	for _, meta := range metas {
+	var recovered []string
+	// ListMeta returns newest first. Run the restored backlog in FIFO order.
+	for i := len(metas) - 1; i >= 0; i-- {
+		meta := metas[i]
 		if meta.Status.Terminal() {
 			continue
 		}
 		rows, err := m.store.LoadResults(meta.ID)
 		if err != nil {
+			WithRequest(ctx).WithError(err).WithField("job_id", meta.ID).Error("cannot load index job results for recovery")
 			continue
 		}
+		st := &jobState{job: *meta, attempts: map[string]int{}}
+		st.job.Completed, st.job.Indexed, st.job.NotIndexed, st.job.Failed = 0, 0, 0, 0
 		done := make(map[string]bool, len(rows))
 		for _, row := range rows {
-			done[row.URL] = true
+			if !done[row.URL] {
+				done[row.URL] = true
+				m.countResult(st, row)
+			}
 		}
 		pending := make([]string, 0, len(meta.URLs))
 		for _, u := range meta.URLs {
@@ -228,18 +240,17 @@ func (m *IndexJobManager) resume(ctx context.Context) {
 				pending = append(pending, u)
 			}
 		}
-		st := &jobState{job: *meta, pending: pending, attempts: map[string]int{}}
+		st.pending = pending
 		st.job.Status = IndexJobQueued
-		st.job.Completed = meta.Completed
+		st.job.WaitSeconds, st.job.Retrying = 0, 0
 		m.mu.Lock()
 		m.jobs[meta.ID] = st
-		m.order = append(m.order, meta.ID)
 		m.mu.Unlock()
-		_ = m.store.SaveMeta(&st.job)
-		m.enqueue(ctx, meta.ID)
+		recovered = append(recovered, meta.ID)
 		WithRequest(ctx).WithField("job_id", meta.ID).WithField("pending", len(pending)).
 			Info("index job restored after restart")
 	}
+	return recovered
 }
 
 // Submit validates and queues a batch for the caller identified by ctx.
@@ -270,6 +281,10 @@ func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []s
 	if len(clean) > m.opts.MaxURLs {
 		return nil, errTooManyURLs(fmt.Sprintf("urls accepts at most %d entries per job, got %d", m.opts.MaxURLs, len(clean)))
 	}
+	selected, apiErr := SelectIndexCheckEngines(m.engines, engines)
+	if apiErr != nil {
+		return nil, apiErr
+	}
 
 	now := time.Now().UTC()
 	job := IndexJob{
@@ -278,19 +293,23 @@ func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []s
 		CreatedAt:  now,
 		UpdatedAt:  now,
 		OwnerKeyID: JobOwner(ctx),
-		Engines:    append([]string(nil), engines...),
+		Engines:    IndexCheckEngineNames(selected),
 		Total:      len(clean),
 		URLs:       clean,
+	}
+	// Submitters share the queue lock so the capacity check remains valid
+	// until this job is persisted and published to the runner.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.queue) == cap(m.queue) {
+		return nil, &APIError{HTTPStatus: 503, ErrorCode: "job_queue_full", Reason: "JOB_QUEUE_FULL", Message: "index job queue is full; retry later", RetryAfterSeconds: 60}
 	}
 	if err := m.store.SaveMeta(&job); err != nil {
 		return nil, &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot persist the job"}
 	}
 	st := &jobState{job: job, pending: clean, attempts: map[string]int{}}
-	m.mu.Lock()
 	m.jobs[job.ID] = st
-	m.order = append(m.order, job.ID)
-	m.mu.Unlock()
-	m.enqueue(ctx, job.ID)
+	m.queue <- job.ID
 
 	out := job
 	out.URLs = nil
@@ -364,48 +383,44 @@ func (m *IndexJobManager) Results(id string) ([]IndexCheckURLResult, error) {
 
 // Cancel stops a queued or running job owned by ownerKeyID.
 func (m *IndexJobManager) Cancel(id, ownerKeyID string) bool {
+	cancelled, _ := m.cancelJob(id, ownerKeyID)
+	return cancelled
+}
+
+func (m *IndexJobManager) cancelJob(id, ownerKeyID string) (bool, error) {
 	m.mu.Lock()
 	st, ok := m.jobs[id]
 	m.mu.Unlock()
 	if !ok {
-		return false
+		return false, nil
 	}
 	st.mu.Lock()
-	if !jobVisibleTo(st.job.OwnerKeyID, ownerKeyID) {
+	if !jobVisibleTo(st.job.OwnerKeyID, ownerKeyID) || st.job.Status.Terminal() {
 		st.mu.Unlock()
-		return false
+		return false, nil
 	}
-	if st.job.Status.Terminal() {
+	now := time.Now().UTC()
+	next := st.job
+	next.Status = IndexJobCancelled
+	next.FinishedAt, next.UpdatedAt = &now, now
+	next.WaitSeconds, next.Retrying = 0, 0
+	if err := m.store.SaveMeta(&next); err != nil {
 		st.mu.Unlock()
-		return false
+		WithRequest(context.Background()).WithError(err).WithField("job_id", id).Error("cannot persist index job cancellation")
+		return false, err
 	}
 	if st.cancel != nil {
 		st.cancel()
 	}
-	st.job.Status = IndexJobCancelled
-	now := time.Now().UTC()
-	st.job.FinishedAt = &now
-	st.job.UpdatedAt = now
-	snap := st.job
-	st.releaseLocked() // terminal + released atomically; snap keeps the list for disk
+	st.job = next
+	st.releaseLocked()
 	st.mu.Unlock()
-	_ = m.store.SaveMeta(&snap)
 	m.evictTerminal()
-	return true
-}
-
-// enqueue hands the id to the runner. It blocks (respecting ctx) rather than
-// spawning a goroutine when the buffer is full: a second concurrent runner would
-// break the one-job-at-a-time pacing contract the rate limiter depends on.
-func (m *IndexJobManager) enqueue(ctx context.Context, id string) {
-	select {
-	case m.queue <- id:
-	case <-ctx.Done():
-	}
+	return true, nil
 }
 
 func (m *IndexJobManager) loop(ctx context.Context) {
-	for {
+	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 			return
@@ -417,6 +432,9 @@ func (m *IndexJobManager) loop(ctx context.Context) {
 
 // runJob drains one job to completion, terminal status, or cancellation.
 func (m *IndexJobManager) runJob(parent context.Context, id string) {
+	if parent.Err() != nil {
+		return
+	}
 	m.mu.Lock()
 	st, ok := m.jobs[id]
 	m.mu.Unlock()
@@ -434,7 +452,8 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 	st.running = true
 	st.job.Status = IndexJobRunning
 	st.job.UpdatedAt = time.Now().UTC()
-	snapshot := st.job
+	m.saveJobLocked(st)
+	engineNames := st.job.Engines
 	st.mu.Unlock()
 	defer func() {
 		cancel()
@@ -443,17 +462,23 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 		st.cancel = nil
 		st.mu.Unlock()
 	}()
-	_ = m.store.SaveMeta(&snapshot)
-
-	selected := m.selectedEngines(st.job.Engines)
+	selected, engineErr := SelectIndexCheckEngines(m.engines, engineNames)
+	if engineErr != nil {
+		m.finish(st, IndexJobFailed, engineErr.Message)
+		return
+	}
 
 	for {
 		if jobCtx.Err() != nil {
-			m.finish(st, IndexJobCancelled, "cancelled by caller")
+			m.suspend(st)
 			return
 		}
 
 		st.mu.Lock()
+		if st.job.Status.Terminal() {
+			st.mu.Unlock()
+			return
+		}
 		if len(st.pending) == 0 {
 			st.mu.Unlock()
 			m.finish(st, IndexJobDone, "")
@@ -463,17 +488,16 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 			st.job.Status = IndexJobWaiting
 			st.job.WaitSeconds = int(wait.Seconds())
 			st.job.UpdatedAt = time.Now().UTC()
-			snapshot := st.job
+			m.saveJobLocked(st)
 			st.mu.Unlock()
-			_ = m.store.SaveMeta(&snapshot)
 			if err := SleepContext(jobCtx, wait); err != nil {
-				m.finish(st, IndexJobCancelled, "cancelled by caller")
+				m.suspend(st)
 				return
 			}
-			st.mu.Lock()
-			st.job.Status = IndexJobRunning
-			st.job.WaitSeconds = 0
+			continue
 		}
+		st.job.Status = IndexJobRunning
+		st.job.WaitSeconds = 0
 
 		take := m.opts.Chunk
 		if take > len(st.pending) {
@@ -487,6 +511,11 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 
 		var retry []string
 		st.mu.Lock()
+		if jobCtx.Err() != nil || st.job.Status.Terminal() {
+			st.mu.Unlock()
+			m.suspend(st)
+			return
+		}
 		for _, row := range rows {
 			if m.shouldRetry(row) && st.attempts[row.URL] < m.opts.MaxUnitRetries {
 				st.attempts[row.URL]++
@@ -494,31 +523,26 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 				continue
 			}
 			if err := m.store.AppendResult(id, row); err != nil {
-				st.job.LastError = err.Error()
+				st.mu.Unlock()
+				WithRequest(jobCtx).WithError(err).WithField("job_id", id).Error("cannot persist index job result")
+				m.finish(st, IndexJobFailed, "cannot persist index job result")
+				return
 			}
-			st.job.Completed++
-			if m.rowFailed(row) {
-				st.job.Failed++
-			} else if m.rowIndexed(row) {
-				st.job.Indexed++
-			} else {
-				st.job.NotIndexed++
-			}
+			m.countResult(st, row)
 		}
 		st.job.Retrying = len(retry)
 		st.pending = append(st.pending, retry...)
 		st.job.UpdatedAt = time.Now().UTC()
-		snapshot := st.job
+		m.saveJobLocked(st)
 		st.mu.Unlock()
-		_ = m.store.SaveMeta(&snapshot)
 	}
 }
 
 // selectedEngines resolves the job's engines against the live registry.
 func (m *IndexJobManager) selectedEngines(names []string) []SearchEngine {
 	selected, err := SelectIndexCheckEngines(m.engines, names)
-	if err != nil || len(selected) == 0 {
-		return m.engines
+	if err != nil {
+		return nil
 	}
 	return selected
 }
@@ -597,6 +621,37 @@ func (m *IndexJobManager) rowIndexed(row IndexCheckURLResult) bool {
 	return false
 }
 
+func (m *IndexJobManager) countResult(st *jobState, row IndexCheckURLResult) {
+	st.job.Completed++
+	if m.rowFailed(row) {
+		st.job.Failed++
+	} else if m.rowIndexed(row) {
+		st.job.Indexed++
+	} else {
+		st.job.NotIndexed++
+	}
+}
+
+// suspend preserves an interrupted job for recovery after service shutdown.
+func (m *IndexJobManager) suspend(st *jobState) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.job.Status.Terminal() {
+		return
+	}
+	st.job.Status = IndexJobQueued
+	st.job.WaitSeconds, st.job.Retrying = 0, 0
+	st.job.UpdatedAt = time.Now().UTC()
+	m.saveJobLocked(st)
+}
+
+// saveJobLocked keeps older snapshots from overwriting later transitions.
+func (m *IndexJobManager) saveJobLocked(st *jobState) {
+	if err := m.store.SaveMeta(&st.job); err != nil {
+		WithRequest(context.Background()).WithError(err).WithField("job_id", st.job.ID).Error("cannot persist index job metadata")
+	}
+}
+
 // finish records a terminal status.
 func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr string) {
 	now := time.Now().UTC()
@@ -611,10 +666,9 @@ func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr st
 	if lastErr != "" {
 		st.job.LastError = lastErr
 	}
-	snapshot := st.job
-	st.releaseLocked() // terminal + released atomically; snapshot keeps the list for disk
+	m.saveJobLocked(st)
+	st.releaseLocked()
 	st.mu.Unlock()
-	_ = m.store.SaveMeta(&snapshot)
 	m.evictTerminal()
 }
 

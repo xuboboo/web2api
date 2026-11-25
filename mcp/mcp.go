@@ -23,14 +23,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/sirupsen/logrus"
+	"github.com/xuboboo/web2api/core"
 )
 
 // Version is reported as serverInfo.version by initialize. The serve command
@@ -154,82 +156,70 @@ type server struct {
 	originAllowlist []string // normalized extra allowed origins (S4-B-10)
 }
 
-// sessionStore tracks MCP sessions issued at initialize. Sessions live in
-// memory only (single-process deployment); expired entries are pruned lazily
-// on every access, so no background goroutine is required.
+// sessionStore tracks ephemeral MCP sessions by authenticated owner.
 type sessionStore struct {
-	mu  sync.Mutex
-	m   map[string]time.Time
-	ttl time.Duration
+	mu        sync.Mutex
+	m         map[string]mcpSession
+	ttl       time.Duration
+	lastPrune time.Time
+}
+
+type mcpSession struct {
+	owner    string
+	lastSeen time.Time
 }
 
 func newSessionStore(ttl time.Duration) *sessionStore {
-	return &sessionStore{m: make(map[string]time.Time), ttl: ttl}
+	return &sessionStore{m: make(map[string]mcpSession), ttl: ttl}
 }
 
-// newSession mints a fresh session id (256-bit random hex).
-func (s *sessionStore) newSession() string {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		// crypto/rand failure is fatal-grade; fall back to a time-derived id
-		// rather than crashing the request path.
-		id := hex.EncodeToString([]byte(time.Now().Format(time.RFC3339Nano)))
-		s.mu.Lock()
-		s.m[id] = time.Now()
-		s.mu.Unlock()
-		return id
-	}
-	id := hex.EncodeToString(buf)
-	s.mu.Lock()
-	s.m[id] = time.Now()
-	s.mu.Unlock()
-	return id
-}
-
-// touch reports whether id is live, refreshing its last-seen timestamp and
-// pruning expired sessions.
-//
-// T-01 根因修复: id 通常来自 fiber c.Get → fasthttp Peek 的零拷贝字符串
-// (unsafeString),其底层 kv 缓冲区在 Ctx 池化下会被后续请求原地复用改写;
-// Go 1.24+ 的 Swiss map 在命中赋值时也会重写键槽。若把该别名直接写进
-// s.m,键内容会随后续请求(典型:伪造 Mcp-Session-Id 的请求把缓冲区前缀
-// 覆盖掉)就地变化,有效会话随即间歇性 404 -32001 "session not found",
-// 且之后同 sid 又恢复 200。入库前必须深拷贝为自有字符串。
-func (s *sessionStore) touch(id string) bool {
-	id = strings.Clone(id)
+func (s *sessionStore) newSession(owner string) string {
+	var buf [32]byte
+	_, _ = rand.Read(buf[:])
+	id := hex.EncodeToString(buf[:])
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pruneLocked(now)
-	_, ok := s.m[id]
-	if ok {
-		s.m[id] = now
+	s.m[id] = mcpSession{owner: strings.Clone(owner), lastSeen: now}
+	return id
+}
+
+func (s *sessionStore) touch(id, owner string) bool {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked(now)
+	entry, ok := s.m[id]
+	if !ok || now.Sub(entry.lastSeen) >= s.ttl || entry.owner != owner {
+		return false
 	}
-	return ok
+	entry.lastSeen = now
+	// Fiber's header string aliases request memory. The map must own its key.
+	s.m[strings.Clone(id)] = entry
+	return true
 }
 
-// drop removes a session (MCP DELETE termination) and reports whether it existed.
-// id 深拷贝的必要性同 touch(T-01):不把 fasthttp 缓冲区别名留在任何
-// 与 map 交互的路径上。
-func (s *sessionStore) drop(id string) bool {
-	id = strings.Clone(id)
+func (s *sessionStore) drop(id, owner string) bool {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.m[id]
+	s.pruneLocked(now)
+	entry, ok := s.m[id]
+	if !ok || now.Sub(entry.lastSeen) >= s.ttl || entry.owner != owner {
+		return false
+	}
 	delete(s.m, id)
-	return ok
-}
-
-// size reports the number of live sessions (diagnostics only).
-func (s *sessionStore) size() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.m)
+	return true
 }
 
 func (s *sessionStore) pruneLocked(now time.Time) {
-	for id, seen := range s.m {
-		if now.Sub(seen) > s.ttl {
+	if now.Sub(s.lastPrune) < time.Minute {
+		return
+	}
+	s.lastPrune = now
+	for id, entry := range s.m {
+		if now.Sub(entry.lastSeen) >= s.ttl {
 			delete(s.m, id)
 		}
 	}
@@ -240,7 +230,7 @@ func (s *sessionStore) pruneLocked(now time.Time) {
 // POST /web-tool/mcp, GET /web-tool/openapi.yaml, GET /web-tool/llms.txt
 // (the same convention as platform.RegisterAdmin/RegisterPublic).
 //
-// auth wraps POST /mcp only: it performs credential validation, quota
+// auth wraps POST and DELETE /mcp. It performs credential validation, quota
 // precheck and billing (contract: 全部由 AuthAny 包装层负责). The two static
 // asset routes stay public so Dify/n8n/LangChain can import the spec by URL
 // without credentials. auth may be nil (bare test/loopback deployments).
@@ -248,12 +238,13 @@ func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 	srv := &server{deps: deps, sessions: *newSessionStore(sessionTTL)}
 	srv.originAllowlist = normalizeOriginAllowlist(deps.OriginAllowlist)
 
-	post := []fiber.Handler{srv.handleMCP}
-	if auth != nil {
-		post = append([]fiber.Handler{auth}, post...)
+	if auth == nil {
+		app.Post("/mcp", srv.handleMCP)
+		app.Delete("/mcp", srv.handleTerminate)
+	} else {
+		app.Post("/mcp", auth, srv.handleMCP)
+		app.Delete("/mcp", auth, srv.handleTerminate)
 	}
-	app.Post("/mcp", post...)
-	app.Delete("/mcp", srv.handleTerminate)
 	app.Get("/mcp", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusMethodNotAllowed).JSON(fiber.Map{
 			"error": "method_not_allowed",
@@ -268,8 +259,11 @@ func Register(app fiber.Router, auth fiber.Handler, deps Deps) error {
 // handleTerminate implements MCP streamable HTTP session termination
 // (DELETE with Mcp-Session-Id): known session → 204; otherwise 404.
 func (s *server) handleTerminate(c *fiber.Ctx) error {
+	if !s.validOrigin(c.Get(fiber.HeaderOrigin), c.Hostname()) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "invalid_origin"})
+	}
 	id := strings.TrimSpace(c.Get(sessionHeader))
-	if id == "" || !s.sessions.drop(id) {
+	if id == "" || !s.sessions.drop(id, mcpSessionOwner(c)) {
 		return c.Status(fiber.StatusNotFound).JSON(rpcResponse{
 			JSONRPC: "2.0",
 			ID:      json.RawMessage("null"),
@@ -289,19 +283,7 @@ func (s *server) handleMCP(c *fiber.Ctx) error {
 	}
 
 	if id := strings.TrimSpace(c.Get(sessionHeader)); id != "" {
-		if !s.sessions.touch(id) {
-			// T-01 取证日志(debug 级,仅 --verbose/--debug 运行时可见):记录实际
-			// 收到的 sid 全文、长度与库内活跃会话数,用于区分三类成因——伪造/过期
-			// sid(正常)、其他进程铸造的 sid(多实例/端口复用)、本进程铸造却被
-			// 误判丢失(touch 查表缺陷;根因见 sessionStore.touch 的深拷贝注释,
-			// 保留本日志以便线上复核)。本机无 gcc 无法构建 -race,该日志是
-			// 生产环境的精确取证通道。
-			logrus.WithFields(logrus.Fields{
-				"sid":           id,
-				"sid_len":       len(id),
-				"ip":            c.IP(),
-				"live_sessions": s.sessions.size(),
-			}).Debug("mcp: Mcp-Session-Id 校验失败(session not found)")
+		if !s.sessions.touch(id, mcpSessionOwner(c)) {
 			return c.Status(fiber.StatusNotFound).JSON(rpcResponse{
 				JSONRPC: "2.0",
 				ID:      json.RawMessage("null"),
@@ -382,7 +364,7 @@ func (s *server) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 		}
 	}
 
-	sessionID := s.sessions.newSession()
+	sessionID := s.sessions.newSession(mcpSessionOwner(c))
 	c.Set(sessionHeader, sessionID)
 
 	return respondResult(c, req.ID, map[string]any{
@@ -465,6 +447,16 @@ func (s *server) handleToolsCall(c *fiber.Ctx, req rpcRequest) error {
 			}
 			payload, err := s.deps.SubmitIndexJob(ctx, urls, engines)
 			if err != nil {
+				var apiErr *core.APIError
+				if errors.As(err, &apiErr) {
+					if apiErr.HTTPStatus == fiber.StatusServiceUnavailable {
+						if apiErr.RetryAfterSeconds > 0 {
+							c.Set(fiber.HeaderRetryAfter, strconv.Itoa(apiErr.RetryAfterSeconds))
+						}
+						return respondRPCError(c, apiErr.HTTPStatus, req.ID, codeInternalError, apiErr.Error())
+					}
+					return respondToolError(c, req.ID, "job_failed", apiErr.Message)
+				}
 				return respondToolError(c, req.ID, "job_failed", err.Error())
 			}
 			return respondToolResult(c, req.ID, payload)
@@ -566,6 +558,17 @@ func quotaView(c *fiber.Ctx) any {
 		"key_id":    keyID,
 		"detail":    "实时配额与用量见 GET /v1/quota(同一 X-API-Key)",
 	}
+}
+
+// mcpSessionOwner namespaces API key identities and administrator identities.
+func mcpSessionOwner(c *fiber.Ctx) string {
+	if key := localString(c, localKeyID, platformKeyID); key != "" {
+		return "key:" + key
+	}
+	if admin := localString(c, localUsername, platformUsername); admin != "" {
+		return "admin:" + admin
+	}
+	return ""
 }
 
 // localString returns the first non-empty string local among the keys.
