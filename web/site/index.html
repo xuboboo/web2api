@@ -11,7 +11,7 @@
 <meta property="og:site_name" content="Web2API 网站收录查询开放平台">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23177E5B'/%3E%3Ccircle cx='27' cy='27' r='13.5' fill='%23FFFFFF'/%3E%3Cpath d='M20.5 27.5 25.5 32.5 34 22.5' fill='none' stroke='%23177E5B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M37 37 47 47' fill='none' stroke='%23FFFFFF' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E">
 <script src="/web-tool/assets/theme-boot.js?v=20261125"></script>
-<link rel="stylesheet" href="assets/style.css?v=20261125g">
+<link rel="stylesheet" href="assets/style.css?v=20261125h">
 <noscript><style>.reveal,.reveal-hero{opacity:1 !important;transform:none !important}</style></noscript>
 </head>
 <body>
@@ -26,6 +26,7 @@
       <span class="brand-sub">网站收录查询开放平台</span>
     </a>
     <nav class="nav-links" id="navLinks" aria-label="页面导航">
+      <a href="#product" data-section="product">产品介绍</a>
       <a href="#capabilities" data-section="capabilities">能力</a>
       <a href="#architecture" data-section="architecture">架构</a>
       <a href="#agents" data-section="agents">Agent 接入</a>
@@ -114,6 +115,53 @@
           <div class="stat-line"><span class="stat-num" data-count="0">0</span><span class="stat-unit">外部存储服务</span></div>
           <div class="stat-label">内置 bbolt，任务保存在本机</div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================== 产品介绍 / 技术核心 ======================== -->
+  <section class="section section-tight" id="product">
+    <div class="container">
+      <div class="sec-head center reveal">
+        <span class="eyebrow">产品介绍 · 技术核心</span>
+        <h2>把四引擎收录判定，变成一次可复现的 API 调用</h2>
+        <p class="split-lede">Web2API 面向站点运营、SEO / 内容团队与 AI Agent：不用逐个搜索引擎手工核对，统一接口返回每个引擎的收录结论、匹配证据与失败原因。</p>
+      </div>
+      <div class="card-grid cols-4">
+        <div class="f-card reveal">
+          <div class="f-body">
+            <div class="f-head"><span class="f-badge" aria-hidden="true">01</span><h3>收录判定语义</h3></div>
+            <p>以目标 URL 作为查询词，解析跳转链接并归一化比对；返回 <code>indexed</code> / <code>match</code> / 命中地址。未命中会如实说明，不做虚假“已收录”承诺。</p>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:160ms">
+          <div class="f-body">
+            <div class="f-head"><span class="f-badge" aria-hidden="true">02</span><h3>反爬韧性</h3></div>
+            <p>桌面浏览器指纹、浏览器 / HTTP 双通道、验证码门控、引擎限速、熔断与按引擎冷却；失败原因随结果返回，可观测、可运维。</p>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:320ms">
+          <div class="f-body">
+            <div class="f-head"><span class="f-badge" aria-hidden="true">03</span><h3>Agent 原生接入</h3></div>
+            <p>MCP streamable HTTP 与 OpenAPI 3.1 双入口，配套 llms.txt 能力清单；MCP 工具覆盖检索、收录判定、配额与批量任务。</p>
+          </div>
+        </div>
+        <div class="f-card reveal" style="--reveal-delay:480ms">
+          <div class="f-body">
+            <div class="f-head"><span class="f-badge" aria-hidden="true">04</span><h3>自托管与治理</h3></div>
+            <p>单二进制 + bbolt 单文件；三级角色、API Key 配额、用量审计、IP 黑名单与日志自动清理都在同一实例内完成。</p>
+          </div>
+        </div>
+      </div>
+      <div class="tech-band reveal">
+        <span>技术核心</span>
+        <code>Go + Fiber</code><code>Chromium / rod</code><code>bbolt</code><code>JWT + Session</code><code>MCP + OpenAPI</code><code>DECIMAL 用量账本</code>
+      </div>
+      <div class="split-ctas reveal">
+        <a class="btn btn-primary" href="/web-tool/console/">进入控制台
+          <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+        </a>
+        <a class="btn btn-secondary" href="#quickstart">查看快速开始</a>
       </div>
     </div>
   </section>
@@ -544,15 +592,16 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
         <a href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">API 文档</a>
         <a href="#agents">Agent 接入</a>
         <a href="https://github.com/xuboboo/web2api" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://www.onlinedown.net/" target="_blank" rel="noopener noreferrer">华军软件园</a>
       </nav>
     </div>
     <div class="foot-bottom">
-      <span>© 2026 Web2API 网站收录查询开放平台 · 基于 MIT 协议开源</span>
+      <span>版权所有 © 2026 华军软件园</span>
     </div>
   </div>
 </footer>
 
 <script src="assets/engine-status.js?v=20261125g" defer></script>
-<script src="assets/app.js?v=20261125f" defer></script>
+<script src="assets/app.js?v=20261125h" defer></script>
 </body>
 </html>
