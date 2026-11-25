@@ -113,6 +113,26 @@ sudo systemctl status web2api --no-pager
 
 > **二进制部署必须带上面板资源**：`web/site`、`web/admin` 要放在 `WorkingDirectory`（上面是 `/opt/web2api`）下，与二进制同级。release tar 包（`dist/web2api-*.tgz`）已包含 `web/`；自己 `go build` 的话需要手动拷贝。漏掉时 API 与 `/health` 都正常，但 `/web-tool/`、`/web-tool/console/` 返回 404（日志会打印「静态资源缺失」警告）。详见 `INSTALL.md` §4。
 
+### 本机 Windows 实例：可复现部署脚本
+
+仓库提供 `deploy/local-deploy.ps1`，把此前手工部署中易错的“复制到 web/web”“静态资源缓存版本不变”“启动凭据读取”全部固化为脚本：
+
+~~~powershell
+# 完整部署：构建 → 备份 → 替换二进制/web → 按文件哈希刷新静态资源版本 → 启动 → 验收
+./deploy/local-deploy.ps1 -UpdateConfig
+
+# 只做验收（不重启、不改动）：核对线上导航、JS 页面函数、health、登录角色、日志配置
+./deploy/local-deploy.ps1 -VerifyOnly
+~~~
+
+脚本行为与保护：
+
+- 复制前端时使用 `web/*` 通配复制到部署目录 `web` 根，并显式清理误建的 `web/web` 子目录；
+- 部署前检查仓库 `app.js` 必须包含 `pageUsers` / `pageLogs` / `pageBlacklist`，部署后再次核对磁盘与 HTTP 响应；
+- 用 `app.js` / `style.css` 的 SHA-256 前 8 位替换控制台 `index.html` 的 `?v=`，不需要手工维护版本号；
+- 启动脚本兼容 Windows PowerShell 5.1（SecureString 读取不用 `ConvertFrom-SecureString -AsPlainText`）；
+- 验收失败会抛错并保留带时间戳的旧二进制与 `web` 备份，便于回滚。
+
 ## 5. 反向代理（TLS 终结）
 
 ```nginx
