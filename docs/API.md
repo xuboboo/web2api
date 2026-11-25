@@ -504,10 +504,13 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 | 参数 | 说明 |
 | --- | --- |
 | `text` | 查询词（必填，缺失 → 400 `EMPTY_QUERY`） |
-| `limit` | 返回条数（非法值 → 400 `INVALID_LIMIT`） |
-| `start` | 分页偏移（非法值 → 400 `INVALID_START`） |
+| `limit` | 返回条数 1–100，默认 10。非法值返回 `400 INVALID_LIMIT` |
+| `start` | 非负分页偏移，默认 0。非法值返回 `400 INVALID_START` |
 | `format` | `json`（默认）/ `markdown` / `text` / `ndjson`；未知值 → 400 `UNKNOWN_FORMAT`；也可用 `Accept: text/markdown`、`text/plain`、`application/x-ndjson` 头选择 |
-| `site` / `file` / 日期参数等 | 引擎语法透传，详见 [ARCHITECTURE.md](ARCHITECTURE.md)（HTTP 查询参数名为 `file`，`filetype` 是内部字段名） |
+| `output` | `output=markdown` 同样选择 Markdown 输出 |
+| `lang` / `region` / `date` / `site` / `file` | 语言、区域、日期范围、站点和文件类型提示，实际支持情况由引擎决定 |
+| `filter` / `features` | 搜索结果过滤和 SERP 特性解析开关。默认开启，可用 `true` / `false` 或 `1` / `0` |
+| `resolve_urls` | `true` 解析全部跳转链接，`false` 或 `0` 不解析，正整数 N 仅处理前 N 条自然结果。省略时使用服务端配置 |
 
 **鉴权与计费**：该组端点由核心管道直接挂载，**不计费**。鉴权随 `security.data_plane_auth` 开关：本仓库 config.yaml 模板默认 `true`，`/{engine}/search` 与 `/stats/*` 需要 `X-API-Key`（兼容 `Authorization: Bearer <密钥本体>`），缺失或无效返回 401；置 `false` 时匿名可用（启动日志会给出安全告警）。无论开关如何，都受引擎限速、熔断、冷却（见 §8）与 CORS 保护，请不要将其当作公网匿名接口暴露。
 
@@ -529,16 +532,20 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 
 ## 4. 健康与观测端点
 
-全部免鉴权，用于探针与排障：
+这些端点读取当前状态和统计，不发起引擎查询。按下表选择探针及凭据。
 
-| 端点 | 说明 |
-| --- | --- |
-| `GET /web-tool/health` | 聚合健康：`{"status":"healthy\|degraded\|unhealthy","uptime":"2h13m","engines":[{"name":"baidu","initialized":true,"status":"ready\|not_initialized\|circuit_open"}],"storage":"bolt\|json"}`；`unhealthy` 时 HTTP 503。运行指标（goroutines/memory_mb/go_version）已移至鉴权后的 `/api/runtime`，不再在此匿名端点暴露 |
-| `GET /web-tool/ready` | 就绪探针；停机排水期返回 503 + `status=draining` |
-| `GET /web-tool/stats` | 缓存 / 代理 / 熔断 / 验证码求解器指标聚合 |
-| `GET /web-tool/stats/cache` | 端点响应缓存命中统计 |
-| `GET /web-tool/stats/proxy` | 代理池与健康度 |
-| `GET /web-tool/stats/cb` | 各引擎熔断器状态 |
+| 端点 | 鉴权 | 响应 |
+| --- | --- | --- |
+| `GET /web-tool/health` | 公开 | `healthy` 或 `degraded` 返回 200，所有引擎不可用时返回 `503 unhealthy`。包含 `uptime` 和 `engines[].{name,initialized,status}`。平台开启时附 `storage`（`bbolt` 或 `json`） |
+| `GET /web-tool/ready` | 公开 | `200 {"status":"ready"}`，停机排水时返回 `503 {"status":"draining"}` |
+| `GET /web-tool/engines/status` | 公开 | 引擎冷却、结束时间和熔断快照。适合发批次前检查，缓存 5 秒 |
+| `GET /web-tool/stats` | 随 `security.data_plane_auth`，配置模板默认需要 API Key | `cache`、`proxy`、`circuit_breakers`、`captcha` |
+| `GET /web-tool/stats/cache` | 同 `/stats` | 响应缓存统计 |
+| `GET /web-tool/stats/proxy` | 同 `/stats` | 代理池统计 |
+| `GET /web-tool/stats/cb` | 同 `/stats` | `{"circuit_breakers":[…]}` |
+| `GET /web-tool/metrics` | 已配置 `security.metrics_token` 时使用该专用 Bearer token，否则仅允许回环来源 | OpenMetrics 文本。凭据缺失或错误返回 401，回环限制拒绝返回 403 |
+
+`/health` 的单引擎状态为 `ready`、`not_initialized` 或 `circuit_open`。要查冷却时间，读取 `/engines/status` 的 `engines[].state` 与 `until`。状态为 `cooldown` 时，`until` 是 RFC3339 时间戳。其余状态的 `until` 为 `null`。
 
 ---
 
@@ -549,10 +556,11 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 | 入口 | 用途 |
 | --- | --- |
 | `POST /web-tool/mcp` | MCP (Model Context Protocol) streamable HTTP 端点：Claude / Claude Desktop / Claude Code / 自研 Agent 直接把本平台当工具集调用 |
-| `GET /web-tool/openapi.yaml` | OpenAPI 3.1 全端点规范（静态文件，`go:embed` 内嵌）：Dify / n8n / LangChain 导入即用 |
+| `DELETE /web-tool/mcp` | 用原身份和 `Mcp-Session-Id` 关闭会话，成功返回 204 |
+| `GET /web-tool/openapi.yaml` | 公开 OpenAPI 3.1 规范。管理端点见[管理 OpenAPI](internal/openapi-admin.yaml) |
 | `GET /web-tool/llms.txt` | 平台简介 + 端点清单（llms.txt 约定），供 LLM 自主发现能力 |
 
-`openapi.yaml` 与 `llms.txt` 免鉴权、200，`Cache-Control` 允许缓存。
+`openapi.yaml` 与 `llms.txt` 默认分别返回 YAML 和纯文本。浏览器请求含 `Accept: text/html` 时返回阅读页。导入工具可在地址末尾加 `?raw=1` 固定获取原文。
 
 ### 5.1 POST /web-tool/mcp
 
@@ -809,9 +817,10 @@ curl -X POST {BASE}/api/auth/login \
 
 | 端点 | 请求 | 响应 |
 | --- | --- | --- |
-| `POST /web-tool/api/keys` | `{"name":"ci-robot","daily_quota":500}`（`daily_quota` 缺省/0 = 不限） | key 对象 + **仅返回这一次**的完整 `key` |
+| `POST /web-tool/api/keys` | `name` 必填，可传 `daily_quota`、`expires_at` 和 `allowed_ips` | 密钥对象和一次性明文 `key` |
 | `GET /web-tool/api/keys` | — | key 对象数组（新→旧） |
-| `PATCH /web-tool/api/keys/:id` | `{"name"?,"status":"active\|disabled"?,"daily_quota"?}` | 更新后的 key 对象 |
+| `PATCH /web-tool/api/keys/:id` | 可更新 `name`、`status`、`daily_quota`、`expires_at`、`allowed_ips` | 更新后的密钥对象 |
+| `POST /web-tool/api/keys/:id/rotate` | 无请求体 | 原密钥对象和一次性新 `key`，旧密钥立即失效，ID 和使用记录保留 |
 | `DELETE /web-tool/api/keys/:id` | — | `{"ok":true}` |
 
 **POST 200 响应**：
@@ -831,7 +840,7 @@ curl -X POST {BASE}/api/auth/login \
 }
 ```
 
-完整密钥形如 `sk-w2a-<32位hex>`，仅创建响应返回一次，请立即保存；服务端只存 SHA-256 哈希，**列表中不再出现**。禁用（`status:"disabled"`）后的 key 调用公网 API 一律 401。
+完整密钥形如 `sk-w2a-<32位hex>`，只在创建或轮换响应中返回。禁用或过期后返回 401。`daily_quota: 0` 表示不限量，`expires_at` 接受 RFC3339 或 `null`，`allowed_ips` 接受 IP 或 CIDR 数组，空数组表示不限制。
 
 参数非法（空名、负配额、未知状态）→ 400 `{"error":"bad_request","code":"INVALID_PARAM","reason":"INVALID_PARAM"}`；`:id` 不存在 → 404 `{"error":"not_found"}`。
 
@@ -1008,6 +1017,24 @@ curl -s -X POST "$BASE/api/logs/cleanup" -H "Authorization: Bearer $TOKEN"
 - `GET /api/logs` → `{"total":N,"items":[{"time":"RFC3339","level":"…","message":"…","source":"logs.txt|logs.txt.1|…"}]}`。`level` 精确过滤、`q` 子串过滤、`since` 接受 RFC3339；`limit` 默认 50、最大 200，`offset` 默认 0。同时解析方括号文本与 JSON 两种日志格式；日志行按**不可信诊断数据**处理，只展示不执行。
 - `GET /api/logs/config` → `{"max_mb":10,"backups":5,"retention_days":30,"format":"text|json","file_logging_enabled":true,"audit_retention_days":30}`。`file_logging_enabled=false` 表示当前进程未写 `logs.txt`（quiet/debug/关闭落盘），此时查询到的历史文件不代表本次运行。
 - `POST /api/logs/cleanup`（admin）→ `{"ok":true,"removed_serve":N,"removed_audit":N}`；按 `app.log_retention_days` 删除过期的 `logs.txt.N` / `audit.log.N`。注意：`GET /api/audit` 只读取当前 `<data_dir>/audit.log`，不读轮转归档 `audit.log.N`；离线 `admin-backup` / `admin-restore` 只处理 bbolt，不覆盖 JSON fallback 存储（`web2api.json`）。
+
+### 6.14 会话、审计和备份
+
+管理角色按 `viewer < operator < admin` 继承权限。读取统计和调试收录通常需要 viewer，密钥写操作、引擎冷却操作和黑名单管理需要 operator，用户管理、撤销指定会话、备份和日志清理需要 admin。角色不足返回 `403`，其中 `error=forbidden`、`code=insufficient_role`。
+
+| 端点（公共前缀 `/web-tool`） | 最低角色 | 参数和响应 |
+| --- | --- | --- |
+| `POST /api/auth/refresh` | viewer | 无请求体。返回新 `token` 和 `expires_in`，更新会话 Cookie |
+| `POST /api/auth/logout` | viewer | 无请求体。撤销当前会话并清除 Cookie，返回 `{"ok":true}` |
+| `GET /api/sessions` | viewer | `items` 为活跃会话，包含当前会话标记 |
+| `DELETE /api/sessions/:id` | admin | 撤销指定会话，返回 `{"ok":true}`。找不到时返回 404 |
+| `GET /api/runtime` | viewer | `go_version`、`goroutines`、`memory_mb`、`uptime_seconds` 和可选 `version` |
+| `GET /api/audit` | viewer | `limit` 默认 20、最大 200，`offset` 默认 0。返回 `total` 和 `items` |
+| `GET /api/usage/export` | viewer | `format=csv\|json`，默认 CSV。支持 `key_id`、`from`、`to`，返回附件 |
+| `GET /api/reconcile` | viewer | 用 `date=YYYY-MM-DD` 对账，返回扣费记录和核对差异 |
+| `GET /api/admin/backup` | admin | 返回 `application/octet-stream` 附件，使用当前存储后端对应的 `.db` 或 `.json` |
+
+完整请求和响应定义见[管理 OpenAPI](internal/openapi-admin.yaml)。
 
 ---
 

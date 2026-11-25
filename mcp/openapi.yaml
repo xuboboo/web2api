@@ -55,36 +55,18 @@ paths:
       tags: [ops]
       operationId: healthCheck
       summary: 健康检查
-      description: 各引擎初始化与熔断状态汇总。200 表示进程存活。
+      description: 公开健康探针。healthy 和 degraded 返回 200，所有引擎不可用时返回 503 unhealthy。
       responses:
         "200":
           description: 引擎健康快照
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
-                  engines:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        engine:
-                          type: string
-                          example: baidu
-                        status:
-                          type: string
-                          example: ready
-                        available:
-                          type: boolean
-        "500":
-          description: 服务端错误(数据面信封)
+              schema: { $ref: "#/components/schemas/HealthSnapshot" }
+        "503":
+          description: 没有可用引擎。
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/DataPlaneError" }
+              schema: { $ref: "#/components/schemas/HealthSnapshot" }
 
   /ready:
     get:
@@ -95,15 +77,35 @@ paths:
       responses:
         "200":
           description: 就绪
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { const: ready } }, required: [status] }
         "503":
-          description: 排水中,暂不接流量
+          description: 排水中，暂不接收新流量。
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { const: draining } }, required: [status] }
+
+  /engines/status:
+    get:
+      tags: [ops]
+      operationId: getEngineStatus
+      summary: 公开引擎状态
+      description: 返回已注册引擎的冷却和熔断快照，缓存 5 秒。该端点只读状态，不执行搜索。
+      responses:
+        "200":
+          description: 引擎状态快照
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EngineStatusSnapshot" }
 
   /stats:
     get:
       tags: [ops]
       operationId: getStats
       summary: 运行统计
-      description: 缓存、代理、熔断器与验证码求解器的运行时统计。
+      description: 运行统计。配置模板默认需要 API Key，关闭 security.data_plane_auth 后可匿名读取。
+      security: [{ ApiKeyAuth: [] }, {}]
       responses:
         "200":
           description: 统计快照
@@ -122,6 +124,77 @@ paths:
                       type: object
                   captcha:
                     type: object
+        "401":
+          description: 所需 API Key 缺失或无效。
+        "403":
+          description: 来源被访问策略拒绝。
+
+  /stats/cache:
+    get:
+      tags: [ops]
+      operationId: getCacheStats
+      summary: 响应缓存统计
+      description: 鉴权条件同 /stats。
+      security: [{ ApiKeyAuth: [] }, {}]
+      responses:
+        "200":
+          description: 缓存统计对象
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { description: 所需 API Key 缺失或无效。 }
+        "403": { description: 来源被访问策略拒绝。 }
+
+  /stats/proxy:
+    get:
+      tags: [ops]
+      operationId: getProxyStats
+      summary: 代理池统计
+      description: 鉴权条件同 /stats。
+      security: [{ ApiKeyAuth: [] }, {}]
+      responses:
+        "200":
+          description: 代理统计对象
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { description: 所需 API Key 缺失或无效。 }
+        "403": { description: 来源被访问策略拒绝。 }
+
+  /stats/cb:
+    get:
+      tags: [ops]
+      operationId: getCircuitBreakerStats
+      summary: 引擎熔断统计
+      description: 鉴权条件同 /stats。
+      security: [{ ApiKeyAuth: [] }, {}]
+      responses:
+        "200":
+          description: 各引擎熔断快照
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  circuit_breakers: { type: array, items: { type: object } }
+        "401": { description: 所需 API Key 缺失或无效。 }
+        "403": { description: 来源被访问策略拒绝。 }
+
+  /metrics:
+    get:
+      tags: [ops]
+      operationId: scrapeMetrics
+      summary: OpenMetrics 指标
+      description: 配置 security.metrics_token 时需要专用 Bearer token，未配置时只允许回环客户端。
+      security: [{ MetricsTokenAuth: [] }, {}]
+      responses:
+        "200":
+          description: OpenMetrics 文本
+          content:
+            text/plain:
+              schema: { type: string }
+        "401": { description: 专用 token 缺失或无效。 }
+        "403": { description: 仅允许回环访问或来源被访问策略拒绝。 }
 
   /{engine}/search:
     get:
@@ -134,8 +207,7 @@ paths:
         响应 `meta.engines_cooldown` 携带冷却中的引擎;该引擎请求快速失败:
         `503 {"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":N}` + `Retry-After`。
         鉴权随部署方 security.data_plane_auth:模板默认 true 需 X-API-Key;置 false 时免鉴权。不计费。
-      security:
-        - ApiKeyAuth: []
+      security: [{ ApiKeyAuth: [] }, {}]
       parameters:
         - name: engine
           in: path
@@ -187,36 +259,62 @@ paths:
           description: 站内限定(domain)
           schema:
             type: string
+        - name: date
+          in: query
+          description: 日期范围提示，支持情况由所选引擎决定。
+          schema: { type: string }
+        - name: filter
+          in: query
+          description: 搜索过滤开关，默认启用。
+          schema: { type: string, enum: ["1", "0", "true", "false"], default: "1" }
         - name: features
           in: query
-          description: 是否解析 SERP 特性模块(默认 1)
+          description: 是否解析 SERP 特性模块，默认启用。
           schema:
             type: string
-            enum: ["0", "1"]
+            enum: ["0", "1", "true", "false"]
             default: "1"
         - name: resolve_urls
           in: query
-          description: 是否解析引擎跳转链接为直链(默认按服务端配置)
+          description: true 解析全部，false 或 0 不解析，正整数 N 仅处理前 N 条自然结果。省略时按服务端配置。
           schema:
             type: string
+        - name: format
+          in: query
+          description: 输出格式。省略时按 Accept 选择，未指定时为 JSON。
+          schema: { type: string, enum: [json, markdown, text, ndjson] }
+        - name: output
+          in: query
+          description: 设置为 markdown 时输出 Markdown。
+          schema: { type: string, enum: [markdown] }
       responses:
         "200":
           description: 搜索结果信封
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SearchEnvelope" }
+            text/markdown:
+              schema: { type: string }
+            text/plain:
+              schema: { type: string }
+            application/x-ndjson:
+              schema: { type: string }
         "400":
           description: 参数错误(数据面信封)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DataPlaneError" }
               example:
-                error: invalid_param
+                error: bad_request
                 code: 400
-                reason: INVALID_PARAM
-                message: limit must be between 1 and 100
+                reason: INVALID_LIMIT
+                message: "INVALID_LIMIT: limit must be between 1 and 100"
                 request_id: req_9f2c
                 meta: {}
+        "401":
+          description: 数据面要求鉴权，密钥缺失或无效。
+        "403":
+          description: 访问策略拒绝请求，或引擎返回 blocked。
         "429":
           description: 引擎侧拦截/验证码(数据面信封)+ Retry-After
           headers:
@@ -679,6 +777,17 @@ paths:
               example: { error: unauthorized }
 
   /mcp:
+    get:
+      tags: [agent-plane]
+      operationId: mcpGetUnsupported
+      summary: GET 不提供 SSE 流
+      description: 此路由固定返回 405。使用 POST 发送 JSON-RPC 消息，使用 DELETE 关闭会话。
+      responses:
+        "405":
+          description: 使用 POST 发送 JSON-RPC 消息。
+          content:
+            application/json:
+              example: { error: method_not_allowed }
     post:
       tags: [agent-plane]
       operationId: mcpRpc
@@ -835,12 +944,16 @@ paths:
       tags: [agent-plane]
       operationId: getOpenApiSpec
       summary: 本 OpenAPI 3.1 规范(go:embed 静态资源,公开)
-      description: 供 Dify/n8n/LangChain 等 OpenAPI toolkit 导入(Content-Type 为 application/yaml)。
+      description: 浏览器请求可返回 HTML 阅读页。使用 raw=1 固定获取 YAML 供工具导入。
+      parameters:
+        - { name: raw, in: query, schema: { type: string, enum: ["1"] }, description: 返回原始 YAML。 }
       responses:
         "200":
           description: YAML 规范文件
           content:
             application/yaml:
+              schema: { type: string }
+            text/html:
               schema: { type: string }
 
   /llms.txt:
@@ -848,12 +961,16 @@ paths:
       tags: [agent-plane]
       operationId: getLlmsTxt
       summary: 平台简介与端点清单(llms.txt,公开)
-      description: agent 友好的平台说明(Content-Type 为 text/markdown)。
+      description: 浏览器请求可返回 HTML 阅读页。使用 raw=1 固定获取纯文本。
+      parameters:
+        - { name: raw, in: query, schema: { type: string, enum: ["1"] }, description: 返回原始纯文本。 }
       responses:
         "200":
           description: llms.txt 内容
           content:
-            text/markdown:
+            text/plain:
+              schema: { type: string }
+            text/html:
               schema: { type: string }
 
 components:
@@ -868,8 +985,49 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: 管理员 JWT(控制台登录获得),管理员调用不计费。
+    MetricsTokenAuth:
+      type: http
+      scheme: bearer
+      description: security.metrics_token 配置的独立指标凭据。
 
   schemas:
+    HealthSnapshot:
+      type: object
+      required: [status, uptime, engines]
+      properties:
+        status: { type: string, enum: [healthy, degraded, unhealthy] }
+        uptime: { type: string, example: 2h13m }
+        engines:
+          type: array
+          items:
+            type: object
+            required: [name, initialized, status]
+            properties:
+              name: { type: string, example: baidu }
+              initialized: { type: boolean }
+              status: { type: string, enum: [ready, not_initialized, circuit_open] }
+        storage: { type: string, enum: [bbolt, json], description: 平台关闭时省略。 }
+
+    EngineStatusSnapshot:
+      type: object
+      required: [engines, generated_at]
+      properties:
+        generated_at: { type: string, example: "2026-11-25 15:09:29", description: 服务器本地时间。 }
+        engines:
+          type: array
+          items:
+            type: object
+            properties:
+              engine: { type: string, example: baidu }
+              endpoint: { type: string, example: /web-tool/baidu/search }
+              enabled: { type: boolean }
+              state: { type: string, enum: [ok, cooldown, circuit_open] }
+              until: { type: [string, "null"], format: date-time }
+              reason: { type: string, enum: ["", COOLDOWN, FORCED] }
+              consecutive_blocks: { type: integer, minimum: 0 }
+              last_error_at: { type: [string, "null"], format: date-time }
+              breaker: { type: object }
+
     PlatformError:
       type: object
       description: 平台信封错误(/v1/*、/mcp)。

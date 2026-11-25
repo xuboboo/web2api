@@ -61,7 +61,9 @@
 
 ### 运维
 
-- GET /health、GET /ready、GET /stats — 健康/就绪/运行统计。
+- GET /health、GET /ready、GET /engines/status — 公开探针和引擎状态，不发起搜索。
+- GET /stats 及其子路径 — 运行统计，配置模板默认需要 API Key。
+- GET /metrics — OpenMetrics。配置专用 Bearer token 时凭该 token 访问，否则仅允许回环来源。
 
 ## 错误信封与限速
 

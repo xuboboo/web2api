@@ -3357,7 +3357,8 @@ async def run():
       ['docs-quota', 'GET /v1/quota'],
       ['docs-engines', 'GET /v1/engines'],
       ['docs-mcp', 'MCP /web-tool/mcp'],
-      ['docs-admin', '管理 API 一览'],
+      ['docs-admin', '管理 API 与权限'],
+      ['docs-health', '健康与引擎状态'],
       ['docs-ratelimit', '限流与冷却'],
       ['docs-errors', '错误码'],
       ['docs-assets', 'Agent 静态资源']
@@ -3655,16 +3656,17 @@ async def run():
     /* ---- 管理 API 一览 ---- */
     root.appendChild(docSection({
       id: 'docs-admin',
-      title: '管理 API 一览(JWT Bearer)',
+      title: '管理 API 与权限',
       children: [
-        p('除 <code>POST /api/auth/login</code> 外均需 <code>Authorization: Bearer &lt;JWT&gt;</code>(面板登录获得)。管理 API 全局限速默认 60 次/分钟,超限返回 429 与 <code>Retry-After</code>。'),
+        p('登录后，程序可使用 <code>Authorization: Bearer &lt;JWT&gt;</code>，浏览器控制台使用会话 Cookie。角色权限依次为 viewer、operator、admin。角色不足返回 <code>403 insufficient_role</code>。'),
+        p('读取状态、统计、审计、用量及在线调试需要 viewer。密钥写操作、引擎冷却操作和黑名单管理需要 operator。用户管理、撤销指定会话、下载备份和日志清理需要 admin。'),
         paramTable([
           ['POST /api/auth/login', '—', '—', '管理员登录,返回 token、expires_in 与 user。同一用户名连续 5 次失败将锁定 15 分钟(换 IP 不重置),期间返回 429 too_many_attempts'],
-          ['POST /api/auth/password', 'JSON', '—', '修改管理员密码。请求体为 old_password 与 new_password(至少 8 位);成功后全部旧 token 立即失效'],
+          ['POST /api/auth/password', 'JSON', '—', '用 old_password 与 new_password 修改当前账号密码。新密码按服务配置校验。配置中的初始管理员改密会使全局旧 JWT 失效，其他账号改密撤销本人会话。'],
           ['GET /api/me', '—', '—', '当前管理员与调用概况'],
-          ['POST /api/keys', 'JSON', '—', '创建 API 密钥。请求体为 name 与可选的 daily_quota;完整密钥仅返回一次'],
+          ['POST /api/keys', 'JSON', '—', '创建密钥。name 必填，可传 daily_quota、expires_at 和 allowed_ips。完整密钥仅在创建或轮换时返回。'],
           ['GET /api/keys', '—', '—', '密钥列表(新→旧)'],
-          ['PATCH /api/keys/{id}', 'JSON', '—', '更新名称 / 状态 / 日配额'],
+          ['PATCH /api/keys/{id}', 'JSON', '—', '更新名称、状态、日配额、过期时间或允许访问的 IP / CIDR。'],
           ['DELETE /api/keys/{id}', '—', '—', '删除密钥'],
           ['GET /api/stats/overview', '—', '—', '总览统计(今日 / 累计 / 24h 成功率)'],
           ['GET /api/stats/timeseries', 'Query', '—', '按日时间序列 ?days=1..90,默认 14'],
@@ -3681,12 +3683,35 @@ async def run():
           ['GET /api/audit', 'Query', '—', '安全审计轨迹 ?limit&offset,分页返回总条数与 items 数组(动作 / 对象 / 时间 / IP)'],
           ['GET /api/usage/export', 'Query', '—', '用量导出 ?format=csv|json&key_id&from&to'],
           ['GET /api/reconcile', 'Query', '—', '记账对账 ?date=YYYY-MM-DD,返回扣费与流水差异数'],
-          ['GET /api/admin/backup', '—', '—', '下载 bbolt 一致性快照(attachment)'],
-          ['GET /api/runtime', '—', '—', '运行时指标(内存 / goroutine / Go 版本)']
-        ].map(function (r) {
-          // 管理端点表复用参数表的 4 列结构:端点/类型/必填→—/说明
-          return r;
-        }))
+          ['GET /api/admin/backup', '—', '—', '下载当前存储的 .db 或 .json 快照。'],
+          ['GET /api/runtime', '—', '—', '查看内存、goroutine 数量、Go 版本及运行时长。'],
+          ['GET /api/users', '—', '—', '查看用户、角色和状态。'],
+          ['POST /api/users', 'JSON', '—', '提交 username、password 和 role 创建用户。'],
+          ['PATCH /api/users/{id}', 'JSON', '—', '更新角色或状态。'],
+          ['DELETE /api/users/{id}', '—', '—', '删除用户。'],
+          ['POST /api/users/{id}/password', 'JSON', '—', '提交 new_password 重置用户密码。'],
+          ['GET /api/blacklist', '—', '—', '查看 IP 和 CIDR 规则。'],
+          ['POST /api/blacklist', 'JSON', '—', '提交 value 创建规则，可设置备注和过期时间。'],
+          ['PATCH /api/blacklist/{id}', 'JSON', '—', '修改备注或过期时间。'],
+          ['DELETE /api/blacklist/{id}', '—', '—', '删除规则。'],
+          ['GET /api/logs', 'Query', '—', '使用 level、q、since、limit 和 offset 查询服务日志。'],
+          ['GET /api/logs/config', '—', '—', '查看日志轮转和保留设置。'],
+          ['POST /api/logs/cleanup', '—', '—', '按当前保留策略清理过期归档日志。']
+        ])
+      ]
+    }));
+
+    root.appendChild(docSection({
+      id: 'docs-health',
+      title: '健康与引擎状态',
+      children: [
+        fieldTable([
+          ['GET /health', '公开。整体健康或部分引擎可用时返回 200，全部不可用时返回 503。'],
+          ['GET /ready', '公开。返回 ready，服务停机排水时返回 503 和 draining。'],
+          ['GET /engines/status', '公开。返回冷却与熔断状态，冷却时可读取 <code>until</code>。该请求不会访问搜索引擎。'],
+          ['GET /stats、/stats/cache、/stats/proxy、/stats/cb', '配置模板默认需要 API Key，由 <code>security.data_plane_auth</code> 控制。'],
+          ['GET /metrics', '配置了指标专用 token 时使用 Bearer 鉴权，否则只允许回环来源。']
+        ])
       ]
     }));
 
@@ -3755,7 +3780,7 @@ async def run():
       children: [
         p('面向 Agent / 客户端的全量机器可读描述,随服务自动提供:'),
         ulHtml([
-          '<a href="' + BASE + '/openapi.yaml" target="_blank" rel="noopener noreferrer">openapi.yaml</a> — OpenAPI 3.1 全端点描述(可直接导入 Dify / Apifox 等)',
+          '<a href="' + BASE + '/openapi.yaml" target="_blank" rel="noopener noreferrer">openapi.yaml</a> — 公开 API 的 OpenAPI 3.1 规范，导入工具时可加 <code>?raw=1</code> 获取 YAML',
           '<a href="' + BASE + '/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a> — 平台简介 + 端点清单(Agent 友好格式)',
           'MCP 接入配置示例见「<a href="#/agents">Agent 集成</a>」页(Claude / Dify / n8n / LangChain)。'
         ])
