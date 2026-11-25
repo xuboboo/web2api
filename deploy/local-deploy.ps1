@@ -62,7 +62,7 @@ function Start-Live() {
 function Cache-Bust() {
   $pages = @(
     @{ file = (Join-Path $deployWeb 'admin/index.html'); dir = (Join-Path $deployWeb 'admin') },
-    @{ file = (Join-Path $deployWeb 'index.html'); dir = $deployWeb }
+    @{ file = (Join-Path $deployWeb 'site/index.html'); dir = (Join-Path $deployWeb 'site') }
   )
   foreach ($page in $pages) {
     if (!(Test-Path -LiteralPath $page.file)) { continue }
