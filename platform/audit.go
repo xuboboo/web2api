@@ -12,6 +12,7 @@ package platform
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -166,8 +167,6 @@ func (a *AuditLog) Query(limit, offset int) ([]AuditEntry, int, error) {
 		}
 		return nil, 0, err
 	}
-	defer f.Close()
-
 	var entries []AuditEntry
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -182,7 +181,9 @@ func (a *AuditLog) Query(limit, offset int) ([]AuditEntry, int, error) {
 		}
 		entries = append(entries, e)
 	}
-	if err := scanner.Err(); err != nil {
+	scanErr := scanner.Err()
+	closeErr := f.Close()
+	if err := errors.Join(scanErr, closeErr); err != nil {
 		return nil, 0, err
 	}
 	total := len(entries)

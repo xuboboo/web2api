@@ -122,7 +122,7 @@ func (sog *Sogou) Name() string {
 // When the browser session is challenged, it falls back to the plain-HTTP path.
 func (sog *Sogou) Search(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
 	rawQuery := query
-	rawQuery.Insecure = rawQuery.Insecure || sog.Browser.Insecure
+	rawQuery.Insecure = rawQuery.Insecure || sog.Insecure
 
 	// While the browser path is known to be challenged, try the plain-HTTP path
 	// first: it stays usable much longer on a shared exit IP.
@@ -155,8 +155,8 @@ func (sog *Sogou) searchBrowser(ctx context.Context, query core.Query) (results 
 	}
 	scoped := *sog
 	scoped.logger = sog.logger.WithRequest(ctx)
-	if scoped.Browser.WaitLoadTime == 0 || scoped.Browser.WaitLoadTime > 250*time.Millisecond {
-		scoped.Browser.WaitLoadTime = 250 * time.Millisecond
+	if scoped.WaitLoadTime == 0 || scoped.WaitLoadTime > 250*time.Millisecond {
+		scoped.WaitLoadTime = 250 * time.Millisecond
 	}
 	sog = &scoped
 
@@ -327,7 +327,7 @@ func SearchResolveRedirects(ctx context.Context, results []core.SearchResult, qu
 }
 
 func (sog *Sogou) resolveRedirects(ctx context.Context, results []core.SearchResult, query core.Query) []core.SearchResult {
-	query.Insecure = query.Insecure || sog.Browser.Insecure
+	query.Insecure = query.Insecure || sog.Insecure
 	return resolveSogouRedirects(ctx, sog.logger, results, query)
 }
 

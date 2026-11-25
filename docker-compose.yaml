@@ -19,6 +19,21 @@ services:
       - "127.0.0.1:7000:7000"
     command: serve
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7000/web-tool/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     volumes:
       - ./config.yaml:/usr/src/app/config.yaml:ro
       # Persist API keys / usage / JWT secret across container recreation.

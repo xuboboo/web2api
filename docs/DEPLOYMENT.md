@@ -62,7 +62,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7000/web-tool/console/
 - `volumes: web2api-data:/usr/src/app/data` 必须保留 —— `web2api.db`、`secret.key`、`index_jobs/` 都在里面。
 - `init: true` + 镜像内 `tini` 负责回收 Chrome 子进程，缺了会攒僵尸进程。
 - 镜像内已固定 `WEB2API_APP_BROWSER_PATH=/headless-shell/headless-shell`。
-- `HEALTHCHECK` 打 `/web-tool/health`，失败 3 次容器会被标记 unhealthy。
+- Compose 显式检查 `/web-tool/health`；连续失败 3 次容器会被标记 unhealthy。两个 Compose manifest 同时丢弃全部 Linux capabilities、启用 `no-new-privileges`，并把 json-file 日志轮转限制为 20MB × 3。容器运行时需在上线 runner 实测。
 
 ## 4. 部署方式 B：systemd + 二进制
 
@@ -80,6 +80,7 @@ Group=web2api
 WorkingDirectory=/opt/web2api
 Environment=WEB2API_SERVER_HOST=127.0.0.1
 Environment=WEB2API_SERVER_PORT=7000
+Environment=WEB2API_PLATFORM_DATA_DIR=/var/lib/web2api
 EnvironmentFile=-/etc/web2api/web2api.env     # 放管理员密码等敏感项，权限 0600
 ExecStart=/opt/web2api/web2api serve -c /etc/web2api/config.yaml
 Restart=always
@@ -132,19 +133,21 @@ server {
 
 ```bash
 # 停止（优雅：等在途请求结束）
-docker compose stop          # 或 systemctl stop web2api
+systemctl stop web2api
 
-# 升级（零结构迁移：bbolt 直接被新版本打开）
-./web2api admin-backup --data-dir /var/lib/web2api --out /backup/pre-upgrade.db   # 先备份
-docker compose up -d --build && docker compose logs -f --tail=50 web2api
-curl -s http://127.0.0.1:7000/web-tool/ready
+# 以下为源码 + systemd 布局；升级前生成完整恢复点（零结构迁移）
+./web2api admin-backup --full -c /etc/web2api/config.yaml \
+  --data-dir /var/lib/web2api --out /backup/pre-upgrade.tar.gz
+systemctl start web2api
 
 # 回滚
-docker compose down
-docker run --rm -v web2api-data:/data -v /backup:/backup alpine \
-  cp /backup/pre-upgrade.db /data/web2api.db          # 或 ./web2api admin-restore --in ...
-docker tag <上一个镜像> web2api:local && docker compose up -d
+systemctl stop web2api
+./web2api admin-restore --in /backup/pre-upgrade.tar.gz \
+  --data-dir /var/lib/web2api --config-out /etc/web2api/config.yaml
+systemctl start web2api
 ```
+
+Docker Compose 部署必须把备份文件映射到容器内可写目录，并先用 `docker compose stop` 停服。完整恢复时挂载数据卷和目标配置目录；由于 Compose 模板把 `/usr/src/app/config.yaml` 只读挂载，`--config-out` 应写到单独的恢复配置卷，核对后再替换宿主机配置。Docker named volume 本身不能作为 `rename` 目标，使用 `--preserve-in` 把旧卷内容留档并从 staging 原地写入。完整命令、权限准备和恢复后验证见 `OPERATIONS.md` §3；该流程已在本地 Linux engine 完成往返实测（E60）。
 
 ## 7. 部署后验证清单
 

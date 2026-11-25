@@ -61,6 +61,51 @@ func TestContainerConfigShipsDefaults(t *testing.T) {
 			t.Errorf("config.yaml lost its %q section; the image depends on it", mustHave)
 		}
 	}
+	if !containsLine(raw, "  insecure: false") {
+		t.Error("production config must verify outbound TLS certificates by default")
+	}
+}
+
+func TestDockerfilePackageInstallFailureCannotBeMasked(t *testing.T) {
+	raw, err := os.ReadFile("../Dockerfile")
+	if err != nil {
+		t.Fatalf("Dockerfile must exist: %v", err)
+	}
+	// Keep optional chrome-user creation grouped inside the successful package
+	// installation chain. Otherwise apt-get failure can fall through `||` and
+	// let the image build without wget/tini, then fail at container start.
+	if !containsLine(raw, "&& (getent passwd chrome >/dev/null 2>&1 || useradd --create-home --uid 1001 --shell /bin/bash chrome)") {
+		t.Fatal("Dockerfile must keep chrome-user fallback grouped in the package-install chain")
+	}
+	if !containsLine(raw, "apt-get install -y --no-install-recommends ca-certificates wget tini \\") {
+		t.Fatal("Docker image must install system CA certificates for verified outbound TLS")
+	}
+}
+
+// Both supported Compose files must preserve the same container health and
+// privilege/logging baseline. A successful YAML parse alone does not catch
+// accidental drift between the root and standalone deployment manifests.
+func TestComposeManifestsShareContainerSecurityBaseline(t *testing.T) {
+	for _, path := range []string{"../docker-compose.yaml", "../deploy/docker-compose.yml"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, required := range []string{
+			"healthcheck:",
+			"http://127.0.0.1:7000/web-tool/health",
+			"cap_drop:",
+			"- ALL",
+			"no-new-privileges:true",
+			"driver: json-file",
+			"max-size: \"20m\"",
+			"max-file: \"3\"",
+		} {
+			if !containsLine(raw, required) {
+				t.Errorf("%s must contain %q", path, required)
+			}
+		}
+	}
 }
 
 func containsLine(raw []byte, needle string) bool {

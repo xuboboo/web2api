@@ -66,7 +66,7 @@ location /web-tool/ {
 | 配置 | 取值 | 原因 |
 | --- | --- | --- |
 | `server.host/port` | `0.0.0.0:7000` | 容器内监听，宿主机映射回环 |
-| `server.insecure` | `true` | 容器缺企业根证书，浏览器/HTTP 通道需放宽 TLS |
+| `server.insecure` | `false` | 默认校验出站 TLS 证书；确需企业代理根证书时应安装该 CA，而不是关闭校验 |
 | `app.block_resources` | `image,font,css,media` | 降低渲染开销 |
 | `app.max_processes` | `1` | 并发 Chrome 上限（1.4G 低内存优化，原默认 6） |
 | `app.idle_ttl` | `45s` | 空闲 Chrome 回收时间（低内存优化，原默认 5m） |

@@ -48,8 +48,9 @@ jobs:
             exit 1
           fi
 
-  # PR / main validation: build only, single platform (multi-arch under QEMU
-  # roughly doubles CI time for no extra signal; tag builds cover arm64).
+  # PR / main validation: build and run a single-platform container smoke test.
+  # Multi-arch remains covered by tag builds; the runtime smoke catches Docker
+  # health, least-privilege, and outbound CA regressions on a native runner.
   build:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -60,14 +61,64 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build (no push)
+      - name: Build smoke-test image (no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: false
+          load: true
+          tags: web2api:audit-smoke
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Assert non-root runtime and no baked state
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh web2api:audit-smoke -c '
+            test "$(id -u)" != "0"
+            test -z "$(find /usr/src/app/data -mindepth 1 -print -quit)"
+            test ! -e /usr/src/app/secret.key
+            test ! -e /usr/src/app/web2api.db
+          '
+
+      - name: Run container health, security, and HTTPS smoke tests
+        run: |
+          set -euo pipefail
+          name="web2api-audit-smoke-${GITHUB_RUN_ID}"
+          volume="${name}-data"
+          smoke_password=$(openssl rand -hex 32)
+          cleanup() {
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker volume create "$volume" >/dev/null
+
+          docker run -d --name "$name" \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --mount "source=$volume,target=/usr/src/app/data" \
+            -p 127.0.0.1:17000:7000 \
+            -e WEB2API_PLATFORM_ADMIN_PASSWORD="$smoke_password" \
+            web2api:audit-smoke serve
+
+          for attempt in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' "$name")
+            if [ "$status" = healthy ]; then break; fi
+            if [ "$status" = unhealthy ]; then docker logs "$name"; exit 1; fi
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = healthy
+          curl --fail --silent --show-error http://127.0.0.1:17000/web-tool/health
+
+          inspect=$(docker inspect "$name")
+          echo "$inspect" | jq -e '.[0].HostConfig.CapDrop | index("ALL") != null' >/dev/null
+          echo "$inspect" | jq -e '.[0].HostConfig.SecurityOpt | any(. == "no-new-privileges:true")' >/dev/null
+
+          # The container must trust public certificates with the shipped
+          # ca-certificates bundle; this exercises the final image's CA store.
+          docker exec "$name" wget --quiet --tries=2 --spider https://example.com/
 
   # Publish on version tags (and manual dispatch from a tag ref).
   # No fork-secrets concern: this never runs for pull_request events.

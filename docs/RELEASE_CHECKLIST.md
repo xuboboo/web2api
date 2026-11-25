@@ -2,6 +2,8 @@
 
 用法：逐项执行、记录结果；**任何一项"否"都不允许上线**。命令按生产地址替换变量。
 
+> 复审记录（2026-11-25）：当前单测、vet、Linux/amd64 交叉构建与两份 Compose 语法已复跑；所有未复跑项保持未勾选。历史实测值及本轮环境限制见 `docs/audit/REPORT.md`。
+
 ```bash
 BASE=https://api.example.com/web-tool
 TOKEN=<管理员 JWT>
@@ -15,42 +17,42 @@ KEY=<新签发的 API Key>
 | # | 检查 | 命令 / 方法 | 通过标准 | 结果 |
 | --- | --- | --- | --- | --- |
 | A1 | 管理员密码已改 | 非 loopback + 默认密码启动必须退出码 1；改密后正常启动 | 无默认密码公网启动 | ☑ 机制已实测（E19）；部署侧仍需确认密码已改 |
-| A2 | 数据目录已持久化 | `docker inspect` 挂载 / `df` 看目录 | 容器重建后 `web2api.db` 仍在 | ☐ |
-| A3 | `secret.key` 权限 0600 | `ls -l $DATA/secret.key` | `-rw-------` | ☐ |
-| A4 | 仓库/镜像内无运行态数据 | `docker run --rm web2api:local ls /usr/src/app` | 无 `data/` | ☐ |
+| A2 | 数据目录已持久化 | `docker inspect` 挂载 / `df` 看目录 | 容器重建后 `web2api.db` 仍在 | ☑（E60：删除并重建容器后仍为 bbolt，管理员可登录，恢复 Key 仍在） |
+| A3 | `secret.key` 权限 0600 | `ls -l $DATA/secret.key` | `-rw-------` | ☑（E60：恢复后的 named volume 中 `secret.key` 为 0600；生产部署仍需核验运行用户） |
+| A4 | 仓库/镜像内无运行态数据 | 最终镜像内检查 `/usr/src/app/data` 与 `web2api.db`/`secret.key` | `data/` 为空初始化目录；无数据库、密钥、审计日志或任务文件 | ☑（E60：数据目录故意预建并由 `chrome` 拥有，内容为空；CI 已增加契约检查） |
 | A5 | 反代后 `trust_proxy_headers` 已开 | 看配置 + 登录失败日志里的 IP | 是真实客户端 IP | ☐ |
 | A6 | `app.debug_endpoints: false` | `curl -s -o /dev/null -w '%{http_code}' $BASE/debug/fingerprint-check` | 404 | ☐ |
 | A7 | compose 已提供 `ADMIN_PASSWORD` | `docker compose config` | 解析通过（缺失时明确报错） | ☑（E28：必需变量已实测；缺值 exit 1） |
 | A8 | `.env` / `config-*.yaml` 未入库 | `git ls-files | grep -E '^\.env$\|config-audit'` | 空 | ☑（`.env` 已进 `.gitignore` 与 `.dockerignore`） |
-| A7 | `metrics_token` 已设或仅本机采集 | 从外部 `curl $BASE/metrics` | 401 | ☐ |
+| A9 | `metrics_token` 已设或仅本机采集 | 从外部 `curl $BASE/metrics` | 401 | ☐ |
 
 ## B. 鉴权与权限（阻塞项）
 
 | # | 检查 | 通过标准 | 结果 |
 | --- | --- | --- | --- |
-| B1 | 数据面无 Key → 401 | 401 | ☐ |
-| B2 | 数据面错误 Key → 401 | 401 | ☐ |
-| B3 | 管理面无 JWT → 401 | 401 | ☐ |
-| B4 | 任务端点跨 Key 越权 → 404 | 用 Key B 读 Key A 的任务 = 404 | ☐ |
-| B5 | 静态目录不可穿越 | `/console/../config.yaml`、`%2e%2e%2f` = 404 | ☐ |
-| B6 | 登录爆破被锁 | 连续 5 次错误密码 → 429 + Retry-After；**换 IP 不能重置计数** | ☐ |
-| B7 | 配额生效 | `daily_quota=1` 的 Key 第 2 次调用 → 429 | ☐ |
-| B8 | 限流生效 | 单 Key 高频调用 → 429 `rate_limited` | ☐ |
+| B1 | 数据面无 Key → 401 | 401 | ☑（`TestAPIKeyGuardAuthAndQuota`，E51） |
+| B2 | 数据面错误 Key → 401 | 401 | ☑（`TestAPIKeyGuardAuthAndQuota`，E51） |
+| B3 | 管理面无 JWT → 401 | 401 | ☑（受保护端点无 JWT/编码路径回归，E51） |
+| B4 | 任务端点跨 Key 越权 → 404 | 用 Key B 读 Key A 的任务 = 404 | ☑（实际平台装配中验证状态、结果、取消均 404，列表隐藏任务，E51） |
+| B5 | 静态目录不可穿越 | `/console/../config.yaml`、编码穿越 = 404 | ☑（E49：当前生产路由装配的 4 种穿越路径均 404，无配置内容泄露；部署反代仍须上线验证） |
+| B6 | 登录爆破被锁 | 连续 5 次错误密码 → 429 + Retry-After；**换 IP 不能重置计数** | ☑（同 IP 与轮换 IP 登录锁定契约测试，E51） |
+| B7 | 配额生效 | `daily_quota=1` 的 Key 第 2 次调用 → 429 | ☑（超配额 429/Retry-After 契约测试，E51） |
+| B8 | 限流生效 | 单 Key 高频调用 → 429 `rate_limited` | ☑（per-key limiter 真实路由测试，E51） |
 
 ## C. 核心业务（阻塞项）
 
 | # | 检查 | 通过标准 | 结果 |
 | --- | --- | --- | --- |
-| C1 | 单 URL 判定可用 | 返回 `indexed` + `match`，非 error | ☐ |
-| C2 | 已知收录 URL 判为 true | 抽查 3 条，与人工百度搜索一致 | ☐ |
-| C3 | 已知未收录 URL 判为 false | 抽查 3 条一致 | ☐ |
-| C4 | 批量 ≤20 同步 | 返回 200 完整信封 | ☐ |
-| C5 | 批量 >20 转异步 | 202 + `job_id`，轮询到 `done` | ☐ |
-| C6 | 结果 CSV 可打开 | UTF-8 BOM，Excel 无乱码 | ☐ |
-| C7 | 重复 URL 去重 | 重复提交时 `total` 为去重后数量 | ☐ |
-| C8 | 非法 URL 报错清晰 | 400 `INVALID_PARAM` 且带具体 URL | ☐ |
-| C9 | 引擎冷却有降级 | 冷却时 `503 engine_cooldown` + `Retry-After`，或任务转 `waiting` | ☐ |
-| C10 | 结果时效性已告知用户 | 文档/控制台明确"结果为搜索引擎视角快照" | ☐ |
+| C1 | 单 URL 判定可用 | 返回 `indexed` + `match`，非 error | ☑（真实部署单条查询及 strict live smoke，见 E32/E33/E37） |
+| C2 | 已知收录 URL 判为 true | 抽查 3 条，与人工百度搜索一致 | ☐（已有历史 2 条正样本；E56 当前复核 1 条为第 1 名，但同一口径的人工三样本对照尚未完整） |
+| C3 | 已知未收录 URL 判为 false | 抽查 3 条一致 | ☐（昨日第 1 条负样本已在 E56 中翻正为第 4 名；需重新凑齐 3 条当前人工负样本） |
+| C4 | 批量 ≤20 同步 | 返回 200 完整信封 | ☑（`TestIndexCheckSmallBatchStaysSynchronous`，E50） |
+| C5 | 批量 >20 转异步 | 202 + `job_id`，轮询到 `done` | ☑（`TestIndexCheckLargeBatchReturnsJob`，E50；真实走查见 E32/E33） |
+| C6 | 结果 CSV 可打开 | UTF-8 BOM，Excel 无乱码 | ☑（E50 已证端点内容类型与序列化；E55 用本机 Microsoft Excel 实际打开同格式临时导出，中文、BOM、逗号引号及 2 行 × 6 列解析均精确） |
+| C7 | 重复 URL 去重 | 重复提交时 `total` 为去重后数量 | ☑（同步/异步去重回归与真实 3→1 实测，见 E33/E50） |
+| C8 | 非法 URL 报错清晰 | 400 `INVALID_PARAM` 且带具体 URL | ☑（解析器按错误类型回显具体 URL；HTTP POST/GET 回归通过，见 E54） |
+| C9 | 引擎冷却有降级 | 冷却时 `503 engine_cooldown` + `Retry-After`，或任务转 `waiting` | ☑（`TestCooldownManagementThroughAssembly` 与核心冷却语义回归，E50；当前 `cmd` 全包通过） |
+| C10 | 结果时效性已告知用户 | API 文档说明搜索引擎视角、非官方状态和复查间隔 | ☑（`docs/API.md` §2.1 已明确搜索视角和复查建议；API 无 checked_at 字段） |
 
 ## D. 稳定性与容量
 
@@ -85,11 +87,11 @@ KEY=<新签发的 API Key>
 
 | # | 检查 | 通过标准 | 结果 |
 | --- | --- | --- | --- |
-| F1 | 备份命令可用 | `admin-backup` 产出文件 | ☐ |
-| F2 | **恢复实测** | 恢复后能登录、Key 数量正确、用量计数一致 | ☐（本次审计已实测通过） |
-| F3 | 备份含 `secret.key` 与 `index_jobs/` | 归档里存在 | ☐ |
+| F1 | 备份命令可用 | `admin-backup` 产出文件且不能覆盖源数据库 | ☑（快照生成见 E35；F-50 同路径/硬链接保护与全量回归见 E48） |
+| F2 | **恢复实测** | 恢复后能登录、Key 数量正确、用量计数一致 | ☑（2026-11-25；隔离临时目录执行 restore、重启并重新登录；1 个快照内 Key 恢复，快照后新增 Key 不存在，见 E35） |
+| F3 | 完整恢复点含 `secret.key`、`index_jobs/` 与配置 | 隔离恢复后关键状态可用 | ☑（`admin-backup --full` 生成带清单/checksum 的完整数据目录+配置归档；E59 验证本地逐项恢复、留档与篡改拒绝，E60 完成 Docker named volume 原地恢复、管理员登录和 Key 恢复。干净 Linux/systemd 切换仍由 H1/H2/H4 验收） |
 | F4 | 备份保留策略 | ≥ 7 天，异地一份 | ☐ |
-| F5 | 审计日志可读 | `/api/audit` 有登录与密钥操作记录 | ☐ |
+| F5 | 审计日志可读 | `/api/audit` 有登录与密钥操作记录 | ☑（当前树 `TestAuditTrail` 端到端通过，含 JWT 读取与 Key 脱敏，E41） |
 
 ## G. 监控与告警
 
@@ -110,31 +112,31 @@ KEY=<新签发的 API Key>
 | H1 | `docs/INSTALL.md` 按步骤在干净机器走通 | ☐ |
 | H2 | `docs/DEPLOYMENT.md` 的 compose/systemd/反代配置可用 | ☐ |
 | H3 | `docs/ENVIRONMENT.md` 与 `cmd/root.go` 默认值一致（自动生成） | ☑ |
-| H4 | `docs/OPERATIONS.md` 的备份/恢复/冷却命令实测可用 | ☑（备份恢复已实测） |
+| H4 | `docs/OPERATIONS.md` 的备份/恢复/冷却命令实测可用 | ☐（E35/E59 验证本地数据库与完整恢复点，E60 验证 Docker named volume 流程；systemd 全目录归档及隔离 unit 恢复仍未在干净 Linux 实跑，冷却重置见历史证据） |
 | H5 | `docs/API.md` 与实现一致（本会话已逐条核对） | ☑ |
 | H6 | `docs/audit/FINDINGS.md` 中 P0/P1 全部关闭 | ☐ |
-| H7 | **改了语义必须改说法**：安全策略/限额/计费口径变更后，面板文案、API 文档页、markdown 文档三处同步 | 全仓 `grep` 旧说法无残留（F-34、F-37 两次踩坑） |
+| H7 | **改了语义必须改说法**：安全策略/限额/计费口径变更后，面板文案、API 文档页、markdown 文档三处同步 | ☑（F-43–F-46 本轮同步已核对；最终发布树需再检） |
 | H8 | 控制台指标口径无歧义（调用次数 vs 计费次数、失败可见） | ☑（E29：总览 + 使用日志已修） |
 
 ## I. 回归
 
 | # | 检查 | 命令 | 通过标准 | 结果 |
 | --- | --- | --- | --- | --- |
-| I1 | 单元/集成测试 | `go test -count=1 ./...` | 全绿 | ☑ |
-| I2 | 静态检查 | `go vet ./...` | 无输出 | ☑ |
-| I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 ./...` 与 `-race -tags=integration` | 全绿、无 DATA RACE | ☑（E26/E30：两个口径各 11 包全绿；Windows 需 mingw + ASCII 的 gcc 路径与 GOTMPDIR，见 TESTING.md） |
-| I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux go build` | 成功 | ☑ |
-| I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☐（本机无容器引擎；build 前因已静态排除，见 E28。**仍需在有 Docker 权限的机器实跑**） |
-| I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☐（本机已装并读配置；完整运行受 Windows 分页/Go1.27 导出数据限制，交由 CI） |
-| I6a | **静态分析（本机替代）** | `staticcheck ./...` | 0 条 | ☑（E24：14 → 0） |
-| I9 | 依赖版本复核 | `go list -m all` 中 HTTP/S 解析层无已知漏洞 | 与 govulncheck 结论一致 | ☑（fasthttp v1.70.0） |
-| I7 | 依赖漏洞扫描 | `govulncheck ./...` | 0 个可达漏洞 | ☑（本机实机跑通；据此修复 fasthttp GO-2026-4950 → v1.70.0） |
-| I8 | 严格集成测试 | `WEB2API_INTEGRATION_STRICT=1 go test -tags=integration ./...` | 全绿 | ☑（11 包全过；`TestSearch*` 属 live 用例，外部站点抖动时会偶发失败，重跑判定） |
+| I1 | 单元/集成测试 | `go test -p 1 -count=1 ./...` | 全绿 | ☑（2026-11-25 当前树以 Go 1.27.4 低内存配置完整重跑，所有有测试的包通过，见 E57） |
+| I2 | 静态检查 | `go vet -p 1 ./...` | 无输出 | ☑（2026-11-25 当前树全量 vet 通过，见 E57；GitHub CI 独立复跑仍待确认） |
+| I3 | 竞态检测 | `CGO_ENABLED=1 go test -race -count=1 -p 1 ./...` 与 `-race -tags=integration` | 全绿、无 DATA RACE | ☑（当前树 11 个单元包本轮均已分进程跑通且无 DATA RACE，见 E58；严格集成 race 沿用 E37，当前百度验证码状态下未重跑 live 部分） |
+| I4 | 交叉编译 | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build` | 成功 | ☑（2026-11-25；最终修订树 Linux/amd64 ELF 23,290,018 bytes（E38）） |
+| I5 | 镜像构建 | `docker build .` + `docker run` 冒烟 | 健康检查通过 | ☑（E60：Linux engine 构建成功；fresh named volume、非 root、最小权限、health、bbolt、HTTPS、完整恢复与容器重建均通过。远端 workflow 仍需在推送后执行一次） |
+| I6 | golangci-lint v2 | CI `v2.13.2` + v2 schema | 0 issues | ☑（2026-11-25；F-49 修复后 Go 1.26.11 当前树复跑 0 issues、exit 0，见 E45） |
+| I6a | **静态分析（本机替代）** | `staticcheck ./...` | 0 条 | ☑（2026-11-25 当前树复跑 0 条，见 E39；E24 为历史修复记录） |
+| I9 | 依赖版本复核 | `go list -m all` 中 HTTP/S 解析层无已知漏洞 | 与 govulncheck 结论一致 | ☑（fasthttp v1.70.0；2026-11-24 历史证据） |
+| I7 | 依赖漏洞扫描 | `govulncheck ./...` | 0 个可达漏洞 | ☑（2026-11-25；F-49 修复后 Go 1.26.11 govulncheck exit 0、0 可达；1 条未调用 OpenPGP 模块公告 GO-2026-5932，见 E45） |
+| I8 | 严格集成测试 | `WEB2API_INTEGRATION_TESTS=1 WEB2API_INTEGRATION_STRICT=1 go test -race -tags=integration ./...` | 全绿 | ☑（2026-11-25；百度/必应 live smoke 与集成包全绿，见 E37） |
 
 ---
 
 ## 上线判定
 
-**只有在 A–H 全部 ☑、I 段（含 I3 竞态、I5 镜像）全部 ☑ 时才能上线。**
-当前唯一未闭环的强制项是 **I5 镜像构建**（本机 Docker daemon 需管理员权限）。
+**只有在 A–H 全部 ☑、I 段全部 ☑ 时才能上线。**
+当前仍有多项未闭环：F-46 代理 DNS 重绑定端到端演练、H1/H2/H4 干净 Linux 与 systemd/反代部署走查、C2/C3 三组同口径人工百度正负样本，以及 A–G 中未完成的生产环境凭据、监控告警和容量规划人工项。I3、I5、I6、I7、I8 已有当前树证据；远端 workflow 仍需在推送后复跑。以各表当前勾选状态为准，不得据历史证据直接放行。
 当前状态见 `docs/audit/REPORT.md` 的"准入结论"一节。

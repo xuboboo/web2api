@@ -43,6 +43,16 @@ func TestFetchPageTitleEmptyURL(t *testing.T) {
 	}
 }
 
+func TestGuardedTitleProbeDoesNotUseRemoteProxy(t *testing.T) {
+	q := guardedTitleProbeQuery(Query{
+		ProxyURL: "http://proxy.example:8080",
+		Text:     "must not leak into the target GET",
+	})
+	if q.ProxyURL != "" || !q.GuardPrivateNetworks || q.Text != "" {
+		t.Fatalf("unsafe title-probe query: proxy=%q guarded=%v text=%q", q.ProxyURL, q.GuardPrivateNetworks, q.Text)
+	}
+}
+
 // The title probe target comes from the API caller, so the probe must refuse
 // loopback/private/link-local destinations (SSRF). Without this the server would
 // happily GET its own admin API or a cloud metadata endpoint on the caller's

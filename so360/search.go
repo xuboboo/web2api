@@ -107,7 +107,7 @@ func (eng *So360) Name() string {
 // back to the plain-HTTP path, which 360 gates far less aggressively.
 func (eng *So360) Search(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
 	rawQuery := query
-	rawQuery.Insecure = rawQuery.Insecure || eng.Browser.Insecure
+	rawQuery.Insecure = rawQuery.Insecure || eng.Insecure
 
 	// While the browser path is known to be challenged, try the plain-HTTP path
 	// first: it stays usable much longer on a shared exit IP.
@@ -140,8 +140,8 @@ func (eng *So360) searchBrowser(ctx context.Context, query core.Query) (results 
 	}
 	scoped := *eng
 	scoped.logger = eng.logger.WithRequest(ctx)
-	if scoped.Browser.WaitLoadTime == 0 || scoped.Browser.WaitLoadTime > 250*time.Millisecond {
-		scoped.Browser.WaitLoadTime = 250 * time.Millisecond
+	if scoped.WaitLoadTime == 0 || scoped.WaitLoadTime > 250*time.Millisecond {
+		scoped.WaitLoadTime = 250 * time.Millisecond
 	}
 	eng = &scoped
 
@@ -325,7 +325,7 @@ func countOrganic(results []core.SearchResult) int {
 // resolveRedirects unwraps 360's /link?m= redirects for cards that expose no
 // data-mdurl destination.
 func (eng *So360) resolveRedirects(ctx context.Context, results []core.SearchResult, query core.Query) []core.SearchResult {
-	query.Insecure = query.Insecure || eng.Browser.Insecure
+	query.Insecure = query.Insecure || eng.Insecure
 	targets := make([]int, 0, len(results))
 	for i, result := range results {
 		if result.Ad || result.URL == "" {

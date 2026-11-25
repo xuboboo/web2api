@@ -22,7 +22,7 @@ func TestInitLoggerSaveLog(t *testing.T) {
 		logger.SetOutput(out)
 		if logFile != nil {
 			// Close ./logs.txt so the temp dir can be removed on Windows.
-			logFile.Close()
+			closeTestResource(t, logFile)
 			logFile = nil
 		}
 		_, err := os.Stat("logs.txt")

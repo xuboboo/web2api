@@ -13,7 +13,7 @@ server:
   debug: false # Enable debug logs and force browser UI mode
   verbose: false # Enable debug-level request logs
   raw_requests: false # true = 纯 HTTP 模式(无浏览器):结果不稳定、无 bing、收录判定一律 not_implemented(README「raw 模式」节),生产勿开
-  insecure: true # Allow insecure TLS connections(容器/内网缺根证书时需要)
+  insecure: false # Verify outbound TLS certificates; set true only for controlled diagnostics
 
 app:
   log_format: "text" # json|text

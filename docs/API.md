@@ -103,7 +103,7 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 
 批量收录判定：每个 (URL × 引擎) 单元在引擎内检索前 10 条结果并做归一化匹配。
 
-> **判定口径（baidu）**：百度开启 `baidu.index_title_probe`（默认开启）后，检索词是目标页面的 `<title>`（同域 HTTP 抓取，不经过百度），结果按标题相似度匹配（阈值 0.72，已归一化标点/空格/来源后缀/截断省略号），并校验命中结果的主机与目标一致（同标题转载不算本页）。之所以不用 `wd=<URL>`：实测已收录文章用 URL 当检索词也常返回空结果，会把"已收录"判成"未收录"。标题抓取失败时自动回退到 URL 短语检索。
+> **判定口径（baidu）**：百度开启 `baidu.index_title_probe`（默认开启）后，检索词是目标页面的 `<title>`（直接 HTTP 抓取，不经过百度；为防 SSRF 与 DNS 重绑定，不使用搜索代理；目标站无法直连时会回退），结果按标题相似度匹配（阈值 0.72，已归一化标点/空格/来源后缀/截断省略号），并校验命中结果的主机与目标一致（同标题转载不算本页）。之所以不用 `wd=<URL>`：实测已收录文章用 URL 当检索词也常返回空结果，会把"已收录"判成"未收录"。标题抓取失败时自动回退到 URL 短语检索。
 >
 > 百度明确返回"没有相关结果"（`div.content_none`）时本单元判 `indexed:false`，不再按超时重试；收录单元默认只重试 1 次（`stability.index_check.max_retries`）。
 
@@ -985,7 +985,8 @@ Agent 平面
   GET  /web-tool/metrics                        OpenMetrics 指标（security.metrics_token Bearer 或仅 loopback, S4）
 
 CLI（停服态, S4）
-  web2api admin-backup   --out <file>     备份 bbolt 快照
-  web2api admin-restore  --in <file>      校验并恢复快照
+  web2api admin-backup   --full --out <bundle.tar.gz>   备份完整恢复点
+  web2api admin-restore  --in <bundle.tar.gz> [--preserve-in <外部目录>]
+                                                         校验并恢复；挂载卷根目录使用原地模式
   web2api admin-reset                     停服重置管理员密码
 ```

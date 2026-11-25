@@ -257,7 +257,7 @@ Cooldown and circuit breaking are two independent mechanisms; the cooldown check
 ## 8. Security Model
 
 - **Credential storage**: admin password stored as a bcrypt hash (settings bucket, overwriting the config default once changed); API keys stored as SHA-256 hashes only, the full key returned exactly once at creation; JWT signing key is 32 random bytes stored at `<data_dir>/secret.key` (0600).
-- **Login brute-force protection**: 5 consecutive failures for the same username+IP lock it for 15 minutes (`security.login_lockout.{fails:5,minutes:15}`); during the lockout every attempt gets `429 {"error":"too_many_attempts"}` + `Retry-After`.
+- **Login brute-force protection**: 5 consecutive failures for the same username across source IPs lock it for 15 minutes (`security.login_lockout.{fails:5,minutes:15}`); during the lockout every attempt gets `429 {"error":"too_many_attempts"}` + `Retry-After`.
 - **Admin API rate limit**: 60 req/min by default (`security.admin_rate_per_minute`), exceeding it returns 429 + `Retry-After`.
 - **Token versioning**: changing the password (`POST /web-tool/api/auth/password`, new password ≥ 8 chars) bumps `token_version`, **immediately invalidating all old JWTs (console sessions and MCP Bearer sessions alike)**.
 - **Transport**: CORS is open by default, but non-loopback binding combined with no-auth configurations emit startup warnings; in production bind to loopback, tighten `cors.allow_origins`, or put nginx + TLS in front.
@@ -314,7 +314,7 @@ stability:                # engine cooldown state machine
 
 security:                 # control-plane hardening
   login_lockout:
-    fails: 5              # failure threshold per username+IP
+    fails: 5              # failure threshold per username across IPs
     minutes: 15           # lockout duration
   admin_rate_per_minute: 60  # global admin API rate limit (429 rate_limited beyond)
   data_plane_auth: true      # true also requires X-API-Key on /{engine}/search and /stats/* (bundled template default; the in-code default stays false for existing deployments)

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
 	"github.com/gofiber/fiber/v2"
+	bolt "go.etcd.io/bbolt"
 	"os"
 )
 
@@ -419,7 +419,7 @@ func TestBackupSnapshotRestorable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("snapshot does not open as bbolt: %v", err)
 	}
-	defer probe.Close()
+	defer closeTestResource(t, probe)
 	found := map[string]bool{}
 	_ = probe.View(func(tx *bolt.Tx) error {
 		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
@@ -440,7 +440,7 @@ func TestBoltUsageIndexAccuracy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open bolt: %v", err)
 	}
-	defer s.Close()
+	defer closeTestResource(t, s)
 
 	base := time.Now().Add(-2 * time.Hour)
 	keyA, keyB := "key-a", "key-b"
@@ -458,7 +458,7 @@ func TestBoltUsageIndexAccuracy(t *testing.T) {
 			status = fiber.StatusBadRequest
 		}
 		rec := &UsageRecord{
-			Time: base.Add(time.Duration(i) * time.Minute),
+			Time:  base.Add(time.Duration(i) * time.Minute),
 			KeyID: key, KeyName: key, Endpoint: "/v1/index/check",
 			URLs: 1, Units: units, Status: status, Outcome: outcome,
 			EngineStats: map[string]EngineStat{"baidu": {Calls: 1, OK: 1}},
@@ -478,7 +478,7 @@ func TestBoltUsageIndexAccuracy(t *testing.T) {
 	today := localDate(time.Now())
 	wantTodayAll, wantTodayReached := 0, 0
 	for i := 0; i < 120; i++ {
-		if localDate(base.Add(time.Duration(i) * time.Minute)) == today {
+		if localDate(base.Add(time.Duration(i)*time.Minute)) == today {
 			wantTodayAll++
 			if i%5 != 0 {
 				wantTodayReached++

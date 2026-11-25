@@ -129,11 +129,12 @@ func fetchPageTitle(ctx context.Context, targetURL string, q Query) (string, err
 	// The probe target is caller-supplied (anyone holding an API key picks the
 	// URL), so it must never reach loopback/private/link-local addresses or a
 	// cloud metadata endpoint: without the guard the server itself becomes the
-	// SSRF request source. GuardedDialContext also pins the resolved IP, which
-	// closes the DNS-rebinding window, and every redirect hop is re-validated.
-	q.GuardPrivateNetworks = true
-	// The title probe must not inherit the SERP phrase; it is a plain page GET.
-	q.Text = ""
+	// SSRF request source. A remote proxy resolves the target independently
+	// after our validation, reopening a DNS-rebinding window, so guarded title
+	// probes always dial directly. GuardedDialContext pins the resolved IP and
+	// every redirect hop is re-validated. If direct egress is unavailable, the
+	// caller falls back to the URL-as-phrase SERP query (which may use a proxy).
+	q = guardedTitleProbeQuery(q)
 	resp, err := RawSearchRequest(ctx, targetURL, q)
 	if err != nil {
 		return "", err
@@ -152,6 +153,13 @@ func fetchPageTitle(ctx context.Context, targetURL string, q Query) (string, err
 		return "", err
 	}
 	return normalizePageTitle(doc.Find("title").First().Text()), nil
+}
+
+func guardedTitleProbeQuery(q Query) Query {
+	q.ProxyURL = ""
+	q.GuardPrivateNetworks = true
+	q.Text = ""
+	return q
 }
 
 type titleProbeError struct{ status int }

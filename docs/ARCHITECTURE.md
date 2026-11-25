@@ -100,7 +100,7 @@ APIKeyGuard（key 校验/配额预检） → IndexCheckHandler
 RunIndexCheckUnits：每个引擎一个协程串行推进（同引擎同时只有一个在途请求，
   避免多 worker 抢令牌形成突发）；跨引擎并行，经 ResilientSearcher 的限流/熔断/冷却/代理
  ├─ engine.CheckIndexed
- │    ├─ baidu：先抓目标页 <title>（同域 HTTP，1h 缓存）再以标题为检索词；
+ │    ├─ baidu：直连抓目标页 <title>（私网/DNS 重绑定防护，1h 缓存）再以标题为检索词；
  │    │           取不到标题则回退 URL 短语
  │    └─ 其余引擎：仍以 URL 为查询词
  └─ EvaluateIndexSERP

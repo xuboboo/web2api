@@ -1177,8 +1177,15 @@ func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
 		return nil, nil, errEmptyQuery()
 	}
 	for i, u := range urls {
-		if _, ok := indexURLKeyFrom(u); !ok {
+		if _, bad := unsupportedScheme(u); bad {
+			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q uses an unsupported scheme", i, u))
+		}
+		key, ok := indexURLKeyFrom(u)
+		if !ok {
 			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q is not a valid absolute URL", i, u))
+		}
+		if !strings.Contains(strings.SplitN(key.host, ":", 2)[0], ".") {
+			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q has no public domain (a dot-separated host is required)", i, u))
 		}
 	}
 	return urls, rawEngines, nil

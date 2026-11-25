@@ -22,7 +22,7 @@ func TestServeReturnsStartupErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer listener.Close()
+			defer closeTestResource(t, listener)
 			config.Server.Host = "127.0.0.1"
 			config.Server.Port = listener.Addr().(*net.TCPAddr).Port
 			config.Server.IsRawRequests = raw
@@ -38,7 +38,7 @@ func TestListenFailureClosesResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer closeTestResource(t, listener)
 	serv := core.NewServer("127.0.0.1", listener.Addr().(*net.TCPAddr).Port)
 	cleanupErr := errors.New("cleanup failed")
 	calls := 0

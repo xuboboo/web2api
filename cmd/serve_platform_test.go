@@ -86,7 +86,7 @@ func platformRequest(t *testing.T, app *fiber.App, method, path, body string, he
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(resp.Body); err != nil {
 		t.Fatalf("%s %s: read body: %v", method, path, err)
@@ -438,13 +438,13 @@ func TestPlatformAssemblyContract(t *testing.T) {
 	}
 	sawUnlimited, sawQuota := false, false
 	for _, k := range keys {
-		switch {
-		case k.Name == "unlimited":
+		switch k.Name {
+		case "unlimited":
 			sawUnlimited = true
 			if k.ID != unlimitedID || k.Status != "active" {
 				t.Fatalf("unlimited key row wrong: %+v", k)
 			}
-		case k.Name == "quota-1":
+		case "quota-1":
 			sawQuota = true
 			if k.ID != quotaKeyID || k.DailyQuota != 1 {
 				t.Fatalf("quota-1 key row wrong: %+v", k)
@@ -542,7 +542,9 @@ func TestPanelAddressLogUnwrapsWildcardHost(t *testing.T) {
 // answers not_implemented for every browser-mode engine (regression guard for
 // the assembly bug found in live smoke testing).
 func TestPooledBrowserEngineForwardsCheckIndexed(t *testing.T) {
-	pool := newBrowserPool(core.BrowserOpts{}, "", nil, 1, 0)
+	// This is a capability-forwarding test; it has no UI assertions and must
+	// also run on Linux CI runners without X11/$DISPLAY.
+	pool := newBrowserPool(core.BrowserOpts{IsHeadless: true}, "", nil, 1, 0)
 	wrapper := &pooledBrowserEngine{
 		name: "baidu",
 		factory: func(b core.Browser, opts core.SearchEngineOptions) core.SearchEngine {

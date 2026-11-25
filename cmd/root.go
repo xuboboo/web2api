@@ -152,7 +152,10 @@ type CaptchaConfig struct {
 	SolverEnabled bool `mapstructure:"solver_enabled"`
 }
 
-var config = Config{}
+var (
+	config                 = Config{}
+	resolvedConfigFilePath string
+)
 
 var flagToConfigKey = map[string]string{
 	"host":                    "server.host",
@@ -338,6 +341,7 @@ func parseFlagValue(flg *pflag.Flag) (interface{}, error) {
 
 // Initialize Viper
 func initializeConfig(cmd *cobra.Command) error {
+	resolvedConfigFilePath = ""
 	v := viper.New()
 	setConfigDefaults(v)
 
@@ -365,6 +369,9 @@ func initializeConfig(cmd *cobra.Command) error {
 		if !errors.As(err, &notFound) {
 			return fmt.Errorf("cannot read config: %w", err)
 		}
+	}
+	if used := strings.TrimSpace(v.ConfigFileUsed()); used != "" {
+		resolvedConfigFilePath = used
 	}
 
 	// 2. Environment variables (medium priority). Bind environment variables to their equivalent keys with underscores
@@ -456,6 +463,7 @@ var knownConfigKeys = map[string]bool{
 	// admin-backup / admin-restore / admin-reset CLI flags (not file-config
 	// keys; bindFlags maps them into app.* the same way).
 	"app.out": true, "app.in": true, "app.backup-current": true,
+	"app.full": true, "app.config-out": true, "app.preserve-in": true,
 	"app.data-dir": true, "app.password": true, "app.username": true,
 	"app.head": true, "app.leave_head": true, "app.leakless": true,
 	"app.block_resources": true, "app.block_resorces": true, "app.block_trackers": true,
@@ -656,7 +664,8 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("baidu.index_title_probe", true)
 	v.SetDefault("baidu.cookie_rotate_every", 8)
 	v.SetDefault("baidu.homepage_warm_on_rotate", true)
-	// Security (契约 B + S4) defaults mirror platform.DefaultSecurityConfig.
+	// Security (契约 B + S4) defaults mirror platform helpers, except the
+	// serve command deliberately requires auth on the dedicated data plane.
 	v.SetDefault("security.admin_rate_per_minute", 60)
 	v.SetDefault("security.admin_rate_per_ip", 30)
 	v.SetDefault("security.api_rate_per_minute", 120)

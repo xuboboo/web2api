@@ -31,7 +31,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `verbose` | `false` | `false` | 请求级 debug 日志 |
 | `quiet` | `false` | — | 抑制 stderr 的 info 日志（CLI 默认安静） |
 | `raw_requests` | `false` | `false` | 全局纯 HTTP 模式（跳过浏览器，仅限支持 raw 的引擎） |
-| `insecure` | `false` | `true` | 允许不安全 TLS（容器/Linux 缺根证书时需要） |
+| `insecure` | `false` | `false` | 跳过出站 TLS 证书校验；仅在受控排障时临时开启。容器安装 `ca-certificates` |
 
 ## app
 
@@ -132,7 +132,7 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `admin_rate_per_ip` | `30` | `30` | S4-B-05: `/api/*` 按 IP 分桶限速（0=关） |
 | `api_rate_per_minute` | `120` | `120` | S4-B-02: `/v1/*` 与 MCP 每 key 限速（0=关） |
 | `unauth_rate_per_minute` | `30` | `30` | S4-B-02: 无有效凭据请求按 IP 前置限速（0=关） |
-| `data_plane_auth` | `false` | `true` | S4-B-03: 数据面鉴权开关（本仓库模板已翻转；代码默认仍 false 兼容既有部署） |
+| `data_plane_auth` | `false` | `true` | S4-B-03: `serve` 的 Viper 默认与本仓库模板均为 true；只有显式设为 false 才开放匿名专用数据面。`platform.DefaultSecurityConfig()` 保留 false 兼容直接构造 |
 | `trust_proxy_headers` | `false` | `false` | S4-B-14: TLS 反代场景开启后按 `X-Forwarded-Proto=https` 下发 HSTS |
 | `mcp_allowed_origins` | 空 | 空 | S4-B-10: MCP Origin 白名单（空=仅同源；空 Origin 始终放行） |
 | `metrics_token` | 空 | 空 | S4: `/web-tool/metrics` Bearer 令牌（空=仅 loopback 抓取） |
@@ -226,7 +226,7 @@ stability:
     max_retries: 1
 ```
 
-`index_title_probe` 需要目标页可取标题（同域 HTTP GET，不经过百度）；取不到时自动回退到 URL 短语检索。
+`index_title_probe` 需要目标页可直连取标题（HTTP GET，不经过百度或搜索代理；为避免远端代理 DNS 解析绕过私网防护）。取不到或服务器不能直连时自动回退到 URL 短语检索，搜索引擎 SERP 请求仍按引擎代理配置发送。
 
 ### Bing 额外项
 

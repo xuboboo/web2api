@@ -3,7 +3,7 @@ package platform
 // 契约 B: platform security hardening.
 //
 //   - Login brute-force lockout: 5 consecutive failures for the same
-//     username+IP lock the pair for 15 minutes; during the window every login
+//     username across source IPs lock the account for 15 minutes; during the window every login
 //     attempt answers 429 {"error":"too_many_attempts"} + Retry-After — even
 //     with correct credentials. Configured by security.login_lockout.
 //   - Admin API global rate limit: security.admin_rate_per_minute (default 60)
@@ -59,8 +59,8 @@ type SecurityConfig struct {
 	// default 30).
 	UnauthRatePerMinute int `mapstructure:"unauth_rate_per_minute"`
 	// DataPlaneAuth, when true, requires X-API-Key on the data plane
-	// (dedicated /{engine}/search and /stats/*). Default false keeps the
-	// historical behavior.
+	// (dedicated /{engine}/search and /stats/*). The Platform helper default is
+	// false for compatibility; serve's Viper production default is true.
 	DataPlaneAuth bool `mapstructure:"data_plane_auth"`
 	// TrustProxyHeaders (S4-B-14): when true and X-Forwarded-Proto=https, the
 	// serve command issues Strict-Transport-Security. Only for TLS-terminating
@@ -80,7 +80,7 @@ type SecurityConfig struct {
 
 // LoginLockoutConfig maps security.login_lockout.
 type LoginLockoutConfig struct {
-	// Fails is the consecutive-failure count that locks the username+IP pair.
+	// Fails is the consecutive-failure count that locks the username across IPs.
 	Fails int `mapstructure:"fails"`
 	// Minutes is the lock window in minutes.
 	Minutes int `mapstructure:"minutes"`

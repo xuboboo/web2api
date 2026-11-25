@@ -616,6 +616,30 @@ func TestUsageAndStats(t *testing.T) {
 	}
 }
 
+func TestDailyQuotaOneAllowsFirstCallAndRejectsSecond(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	token := loginToken(t, env.app)
+	_, key := createKey(t, env, token, "single-unit", 1)
+	body := map[string]any{
+		"urls":    []string{"https://example.com/quota-check"},
+		"engines": []string{"baidu"},
+	}
+
+	status, _ := doJSON(t, env.app, http.MethodPost, "/v1/index/check", body, keyHeaders(key))
+	if status != http.StatusOK {
+		t.Fatalf("first one-unit call: status=%d, want 200", status)
+	}
+	status, response := doJSON(t, env.app, http.MethodPost, "/v1/index/check", body, keyHeaders(key))
+	if status != http.StatusTooManyRequests || response["error"] != "quota_exceeded" {
+		t.Fatalf("second one-unit call: status=%d body=%v, want 429 quota_exceeded", status, response)
+	}
+
+	status, quota := doJSON(t, env.app, http.MethodGet, "/v1/quota", nil, keyHeaders(key))
+	if status != http.StatusOK || quota["used_today"] != float64(1) || quota["daily_quota"] != float64(1) {
+		t.Fatalf("quota after rejected second call: status=%d body=%v", status, quota)
+	}
+}
+
 func TestQuotaNotConsumedOnBadRequest(t *testing.T) {
 	// Stub always answers 400; quota must stay untouched.
 	env := newTestEnv(t, 400, false)

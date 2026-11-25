@@ -49,7 +49,7 @@ func AssertSequentialRanks(t *testing.T, results any) {
 
 	for i := 0; i < v.Len(); i++ {
 		item := v.Index(i)
-		if item.Kind() == reflect.Ptr {
+		if item.Kind() == reflect.Pointer {
 			item = item.Elem()
 		}
 		rank := int(item.FieldByName("Rank").Int())
@@ -73,7 +73,7 @@ func AssertFirstResultFilled(t *testing.T, results any) {
 	}
 
 	first := v.Index(0)
-	if first.Kind() == reflect.Ptr {
+	if first.Kind() == reflect.Pointer {
 		first = first.Elem()
 	}
 

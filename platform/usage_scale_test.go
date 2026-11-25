@@ -90,7 +90,7 @@ func TestUsageScaleQueryPushdown(t *testing.T) {
 	now := time.Now()
 	base := time.Date(now.Year(), now.Month(), now.Day()-7, 0, 0, 0, 0, now.Location())
 	s := newBulkJSONStore(t, filepath.Join(dir, "web2api.json"), 10000, base)
-	defer s.Close()
+	defer closeTestResource(t, s)
 
 	const total = 10000
 
@@ -163,7 +163,7 @@ func TestBoltUsageScale10k(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open bolt: %v", err)
 	}
-	defer s.Close()
+	defer closeTestResource(t, s)
 
 	baseTime := time.Now().Add(-time.Hour)
 	fillStart := time.Now()
@@ -232,7 +232,7 @@ func TestAdminEndpointsStayFastWithLargeJournal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer p.Close()
+	defer closeTestResource(t, p)
 
 	// Swap in a store pre-filled with 10k records (built in one save so the
 	// fixture itself stays fast; the subject is the read path). The store the

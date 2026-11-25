@@ -10,11 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/xuboboo/web2api/core"
@@ -403,7 +405,7 @@ func requestWithLocation(t *testing.T, app *fiber.App, method, path string) (int
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(resp.Body); err != nil {
 		t.Fatalf("%s %s: read body: %v", method, path, err)
@@ -455,5 +457,151 @@ func TestStaticMountContract(t *testing.T) {
 	status, _ = platformRequest(t, app, http.MethodGet, "/console/assets/app.js", "", nil)
 	if status != http.StatusNotFound {
 		t.Fatalf("bare /console/assets/app.js status=%d, want 404", status)
+	}
+}
+
+func TestStaticMountRejectsConfigPathTraversal(t *testing.T) {
+	serv, _, _ := assembleCooldownTest(t)
+	app := serv.FiberApp()
+	paths := []string{
+		core.BasePath + "/console/../config.yaml",
+		core.BasePath + "/console/%2e%2e/config.yaml",
+		core.BasePath + "/console/%2e%2e%2fconfig.yaml",
+		core.BasePath + "/%2e%2e/config.yaml",
+	}
+	for _, path := range paths {
+		status, body := platformRequest(t, app, http.MethodGet, path, "", nil)
+		if status != http.StatusNotFound {
+			t.Errorf("GET %s returned %d, want 404", path, status)
+		}
+		if strings.Contains(body, "admin_password:") || strings.Contains(body, "platform:") {
+			t.Errorf("GET %s exposed configuration content", path)
+		}
+	}
+}
+
+func TestIndexJobEndpointsAreScopedAcrossAPIKeysThroughAssembly(t *testing.T) {
+	previous := config
+	t.Cleanup(func() { config = previous })
+
+	dataDir := t.TempDir()
+	jobDir := t.TempDir()
+	config.Platform.Enabled = true
+	config.Platform.DataDir = dataDir
+	config.Platform.AdminUsername = "admin"
+	config.Platform.AdminPassword = "admin123"
+	config.Platform.JWTExpireHours = 24
+	config.Platform.UsageRetentionDays = 30
+	config.Security = platform.SecurityConfig{
+		AdminRatePerMinute: 600,
+		DataPlaneAuth:      true,
+		LoginLockout:       platform.LoginLockoutConfig{Fails: 5, Minutes: 15},
+	}
+	config.IndexJobs = IndexJobsConfig{Enabled: true, Dir: jobDir, MaxURLs: 100, Chunk: 1, MaxUnitRetries: 1}
+
+	opts := core.DefaultServerOptions()
+	opts.IndexJobDir = jobDir
+	opts.IndexJobMaxURLs = 100
+	opts.IndexJobChunk = 1
+	opts.IndexJobMaxRetries = 1
+	baidu := &countingEngineMock{name: "baidu"}
+	sogou := &countingEngineMock{name: "sogou"}
+	serv := core.NewServerWithOptions("127.0.0.1", 7000, opts, baidu, sogou)
+	closePlatform, err := mountPlatformAndPanel(serv)
+	if err != nil {
+		t.Fatalf("mount platform: %v", err)
+	}
+	t.Cleanup(func() {
+		if closePlatform != nil {
+			if err := closePlatform(); err != nil {
+				t.Errorf("close platform: %v", err)
+			}
+		}
+		if err := serv.Shutdown(); err != nil {
+			t.Errorf("shutdown server: %v", err)
+		}
+	})
+	app := serv.FiberApp()
+	token := adminLoginToken(t, app)
+	newKey := func(name string) string {
+		t.Helper()
+		status, body := platformRequest(t, app, http.MethodPost, core.BasePath+"/api/keys",
+			`{"name":"`+name+`","daily_quota":0}`, map[string]string{"Authorization": "Bearer " + token})
+		if status != http.StatusCreated && status != http.StatusOK {
+			t.Fatalf("create key %s: status=%d body=%s", name, status, body)
+		}
+		var created struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal([]byte(body), &created); err != nil || created.Key == "" {
+			t.Fatalf("create key %s returned no key: body=%s err=%v", name, body, err)
+		}
+		return created.Key
+	}
+	keyA := newKey("tenant-a")
+	keyB := newKey("tenant-b")
+	keyAHeaders := map[string]string{"X-API-Key": keyA}
+	keyBHeaders := map[string]string{"X-API-Key": keyB}
+
+	urls := make([]string, 21)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://example.test/tenant-a/%d", i)
+	}
+	bodyBytes, err := json.Marshal(map[string]any{"urls": urls, "engines": []string{"baidu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, body := platformRequest(t, app, http.MethodPost, core.BasePath+"/v1/index/check", string(bodyBytes), keyAHeaders)
+	if status != http.StatusAccepted {
+		t.Fatalf("submit tenant A job: status=%d body=%s", status, body)
+	}
+	var accepted struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &accepted); err != nil || accepted.JobID == "" {
+		t.Fatalf("submit returned no job id: body=%s err=%v", body, err)
+	}
+	jobPath := core.BasePath + "/v1/index/check/jobs/" + accepted.JobID
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status, body = platformRequest(t, app, http.MethodGet, jobPath, "", keyAHeaders)
+		if status != http.StatusOK {
+			t.Fatalf("owning key cannot read job: status=%d body=%s", status, body)
+		}
+		var view struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(body), &view); err != nil {
+			t.Fatalf("decode own job status: %v", err)
+		}
+		if view.Status == "done" {
+			break
+		}
+		if view.Status == "failed" || time.Now().After(deadline) {
+			t.Fatalf("tenant A job did not complete: status=%s body=%s", view.Status, body)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, jobPath},
+		{http.MethodGet, jobPath + "/results"},
+		{http.MethodDelete, jobPath},
+	} {
+		status, body = platformRequest(t, app, route.method, route.path, "", keyBHeaders)
+		if status != http.StatusNotFound {
+			t.Errorf("tenant B %s %s returned %d, want 404 (body=%s)", route.method, route.path, status, body)
+		}
+		if strings.Contains(body, "tenant-a/") || strings.Contains(body, accepted.JobID) {
+			t.Errorf("tenant B %s %s leaked job data: %s", route.method, route.path, body)
+		}
+	}
+	status, body = platformRequest(t, app, http.MethodGet, core.BasePath+"/v1/index/check/jobs", "", keyBHeaders)
+	if status != http.StatusOK || strings.Contains(body, accepted.JobID) {
+		t.Fatalf("tenant B list exposed tenant A job: status=%d body=%s", status, body)
 	}
 }

@@ -597,7 +597,8 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		},
 	}
 	// 数据面可选鉴权(契约): security.data_plane_auth=true 时 dedicated
-	// /{engine}/search 与 /stats/* 需要 X-API-Key。默认关闭,行为与现状一致。
+	// /{engine}/search 与 /stats/* 需要 X-API-Key。serve 的默认配置开启；
+	// 依赖旧匿名行为的部署必须显式设置 false。
 	if config.Security.DataPlaneAuth {
 		opts.RequestAuth = dataPlaneAuthGuard()
 	}
