@@ -170,7 +170,7 @@ sudo systemctl daemon-reload
 sudo systemctl start web2api
 ```
 
-确认正式实例正常后，再按变更流程切换正式数据目录。保留旧数据目录和原 unit，直到观察期结束，回滚时切回原路径。此流程尚未在干净 Linux 主机实跑，生产发布前仍须按 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) 验收。
+确认正式实例正常后，再按变更流程切换正式数据目录。保留旧数据目录和原 unit，直到观察期结束，回滚时切回原路径。该流程已在干净 Debian 12 systemd 容器实测：7001 隔离实例健康、管理员登录和 Key 数量与备份前一致（E63）；外部云主机重启、正式域名/CA 和生产凭据仍按 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) 验收。
 
 ### Docker named volume
 
@@ -248,7 +248,7 @@ curl -fsS http://127.0.0.1:17001/web-tool/health
 | `index_jobs/` | 异步任务元数据与结果 JSONL | 任务历史丢失（进行中的任务无法续跑） |
 | `config.yaml` | 全部配置 | 需重建配置 |
 
-> **实测结论（本次审计）**：不带 `--full` 的 `admin-backup` 只导出 `web2api.db`，恢复后登录与 API Key 计数完好（恢复后 `acc-sample` 的 `used_today` 仍为 4）。`--full` 已在隔离临时目录完成往返验证：数据库、`secret.key`、任务 JSONL、审计日志和配置逐项恢复；路径穿越、未列入清单的条目和校验和篡改均在替换目标前被拒绝（E59）。Docker named volume 的原地恢复、容器重建持久性、管理员登录和 Key 恢复也已实测（E60）；干净 Linux 主机与 systemd 路径仍须按 H1/H2/H4 验收。
+> **实测结论（本次审计）**：不带 `--full` 的 `admin-backup` 只导出 `web2api.db`，恢复后登录与 API Key 计数完好（恢复后 `acc-sample` 的 `used_today` 仍为 4）。`--full` 已在隔离临时目录完成往返验证：数据库、`secret.key`、任务 JSONL、审计日志和配置逐项恢复；路径穿越、未列入清单的条目和校验和篡改均在替换目标前被拒绝（E59）。Docker named volume 的原地恢复、容器重建持久性、管理员登录和 Key 恢复也已实测（E60）；Debian systemd 全目录归档、7001 隔离 unit 恢复与升级/回滚见 E63。
 
 ## 4. 恢复
 

@@ -66,6 +66,17 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7000/web-tool/console/
 
 ## 4. 部署方式 B：systemd + 二进制
 
+```bash
+sudo useradd --system --home /var/lib/web2api --shell /usr/sbin/nologin web2api
+sudo install -d -m 0755 /opt/web2api
+sudo install -d -m 0750 -o root -g web2api /etc/web2api
+sudo install -d -m 0750 -o web2api -g web2api /var/lib/web2api
+sudo install -m 0640 -o root -g web2api config.yaml /etc/web2api/config.yaml
+sudo install -m 0600 -o root -g root /dev/null /etc/web2api/web2api.env
+```
+
+运行用户必须能穿越 `/etc/web2api` 并读取 `config.yaml`；目录置为 `0700 root:root` 会导致 `serve` 启动后立即以 `permission denied` 退出。`web2api.env` 只在 root 读取阶段使用，保持 `0600 root:root`，不要把它改成全局可读。
+
 ```ini
 # /etc/systemd/system/web2api.service
 [Unit]
@@ -120,6 +131,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:7000;
         proxy_set_header Host              $host;
+        # Overwrite, not append: client-supplied forwarding headers are untrusted.
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -127,7 +139,7 @@ server {
 }
 ```
 
-> 开了反代后必须设 `security.trust_proxy_headers: true`，否则限速与登录锁定看到的是反代的 IP，等于所有人共用一个额度。
+> 开了反代后必须设 `security.trust_proxy_headers: true`，并把实际反代地址/CIDR 写入 `security.trusted_proxies`（默认只信任本机 `127.0.0.1/32` 与 `::1/128`）。应用只从受信来源读取被 Nginx 覆盖的 `X-Real-IP`；否则限速、登录审计和来源限制看到的是反代地址。不要把客户端传来的转发头直接当作真实 IP。
 
 ## 6. 服务启停与升级
 

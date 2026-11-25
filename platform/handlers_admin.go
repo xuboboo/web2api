@@ -192,9 +192,10 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 
 // setSessionCookie writes the httpOnly admin session cookie (S4-B-12):
 // HttpOnly; SameSite=Strict; Path=/web-tool; Max-Age=expires_in; Secure when
-// the request arrived over https per X-Forwarded-Proto (反代 TLS 场景).
+// the request arrived over https, using Fiber's trusted-proxy-aware protocol
+// detection (反代 TLS 场景).
 func (p *Platform) setSessionCookie(c *fiber.Ctx, token string, ttl time.Duration) {
-	secure := strings.EqualFold(strings.TrimSpace(c.Get("X-Forwarded-Proto")), "https")
+	secure := strings.EqualFold(strings.TrimSpace(c.Protocol()), "https")
 	parts := []string{
 		adminSessionCookie + "=" + token,
 		"Path=" + core.BasePath,

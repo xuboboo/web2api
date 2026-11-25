@@ -62,10 +62,13 @@ type SecurityConfig struct {
 	// (dedicated /{engine}/search and /stats/*). The Platform helper default is
 	// false for compatibility; serve's Viper production default is true.
 	DataPlaneAuth bool `mapstructure:"data_plane_auth"`
-	// TrustProxyHeaders (S4-B-14): when true and X-Forwarded-Proto=https, the
-	// serve command issues Strict-Transport-Security. Only for TLS-terminating
-	// reverse-proxy deployments.
+	// TrustProxyHeaders enables trusted-proxy client-IP extraction and, for a
+	// trusted HTTPS proxy, Strict-Transport-Security. Only for deployments
+	// behind a reverse proxy.
 	TrustProxyHeaders bool `mapstructure:"trust_proxy_headers"`
+	// TrustedProxies lists the proxy peer IPs/CIDRs allowed to supply
+	// X-Real-IP. Empty means no peer is trusted.
+	TrustedProxies []string `mapstructure:"trusted_proxies"`
 	// MCPAllowedOrigins (S4-B-10) extends the MCP Origin allowlist beyond the
 	// request's own origin. Empty = same-origin only (empty Origin / curl 放行).
 	MCPAllowedOrigins []string `mapstructure:"mcp_allowed_origins"`

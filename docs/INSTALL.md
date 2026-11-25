@@ -31,12 +31,17 @@ go version            # 需要 >= 1.26
 git clone <repo> web2api && cd web2api
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o web2api .
 
-# 3) 准备配置与数据目录
-sudo mkdir -p /etc/web2api /var/lib/web2api
+# 3) 准备运行用户、配置与数据目录
+sudo useradd --system --home /var/lib/web2api --shell /usr/sbin/nologin web2api
+sudo install -d -m 0750 -o root -g web2api /etc/web2api
+sudo install -d -m 0750 -o web2api -g web2api /var/lib/web2api
 sudo cp config.yaml /etc/web2api/config.yaml
+sudo chown root:web2api /etc/web2api/config.yaml
+sudo chmod 0640 /etc/web2api/config.yaml   # 运行用户可读；root 之外不可写
 # Edit /etc/web2api/config.yaml: set platform.data_dir to /var/lib/web2api.
 # Keep server.host loopback for this local-only startup; public deployments need a TLS proxy.
-sudo chown -R web2api:web2api /var/lib/web2api    # 数据目录必须可写
+# 敏感环境文件必须 root 可写；systemd 以 root 读取后再降权运行，权限 0600。
+sudo install -m 0600 -o root -g root /dev/null /etc/web2api/web2api.env
 ```
 
 ## 3. 首次启动（最小可用）
@@ -143,6 +148,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 | --- | --- | --- |
 | `listen tcp 127.0.0.1:7000: bind: address already in use` | 端口被占 | 改 `server.port` 或 `lsof -i:7000` 找到占用者 |
 | 启动即退出，日志 `bbolt: open ... permission denied` | `platform.data_dir` 不可写 | `chown` 给运行用户 |
+| 启动即退出，日志 `cannot read config ... permission denied` | `/etc/web2api` 父目录不允许运行用户穿越，或配置文件不可读 | `chown root:web2api /etc/web2api && chmod 0750 /etc/web2api && chmod 0640 /etc/web2api/config.yaml` |
 | `/ready` 返回非 200，日志 `chromium not found` | 没有浏览器或路径不对 | 装 Chrome，或设 `app.browser_path` |
 | 查询返回 `engine_internal` + 日志 `captcha` | 出口 IP 被抓 | 降低 `rate_requests`（百度 5/分钟），配代理，等冷却 |
 | 管理面 401，确认密码正确 | 密码环境变量没生效 | `WEB2API_PLATFORM_ADMIN_PASSWORD` 拼写；或容器内没传进去 |

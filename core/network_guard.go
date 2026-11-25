@@ -17,6 +17,27 @@ var ErrTargetNotAllowed = errors.New("target not allowed")
 
 var carrierGradeNATPrefix = netip.MustParsePrefix("100.64.0.0/10")
 
+type netIPResolver interface {
+	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
+}
+
+type guardedNetworkHooks struct {
+	resolver netIPResolver
+	dial     func(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+type guardedNetworkHooksKey struct{}
+
+func guardedNetworkFor(ctx context.Context) guardedNetworkHooks {
+	if hooks, ok := ctx.Value(guardedNetworkHooksKey{}).(guardedNetworkHooks); ok {
+		return hooks
+	}
+	return guardedNetworkHooks{
+		resolver: net.DefaultResolver,
+		dial:     (&net.Dialer{}).DialContext,
+	}
+}
+
 // GuardedDialContext dials only public IP targets. Hostnames are resolved first
 // and the returned connection is made to the vetted IP, so DNS rebinding cannot
 // swap in a private address between validation and dial.
@@ -25,18 +46,18 @@ func GuardedDialContext(ctx context.Context, network, addr string) (net.Conn, er
 	if err != nil {
 		return nil, err
 	}
-	ips, err := resolvePublicDialTargets(ctx, host)
+	hooks := guardedNetworkFor(ctx)
+	ips, err := resolvePublicDialTargets(ctx, host, hooks.resolver)
 	if err != nil {
 		return nil, err
 	}
 
-	dialer := &net.Dialer{}
 	var lastErr error
 	for _, ip := range ips {
 		if !ipMatchesNetwork(ip, network) {
 			continue
 		}
-		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		conn, err := hooks.dial(ctx, network, net.JoinHostPort(ip.String(), port))
 		if err == nil {
 			return conn, nil
 		}
@@ -53,7 +74,7 @@ func ValidatePublicHTTPURL(ctx context.Context, rawURL string) error {
 	if err != nil {
 		return err
 	}
-	return validatePublicHost(ctx, parsed.Hostname())
+	return validatePublicHost(ctx, parsed.Hostname(), guardedNetworkFor(ctx).resolver)
 }
 
 func validateHTTPURL(rawURL string) (*url.URL, error) {
@@ -72,7 +93,7 @@ func validateHTTPURL(rawURL string) (*url.URL, error) {
 
 // resolveHostIPs resolves host (or parses a literal IP) and partitions the
 // addresses by the public-IP policy.
-func resolveHostIPs(ctx context.Context, host string) (public, blocked []netip.Addr, err error) {
+func resolveHostIPs(ctx context.Context, host string, resolver netIPResolver) (public, blocked []netip.Addr, err error) {
 	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
 		ip = ip.Unmap()
 		if isPublicIP(ip) {
@@ -80,7 +101,7 @@ func resolveHostIPs(ctx context.Context, host string) (public, blocked []netip.A
 		}
 		return nil, []netip.Addr{ip}, nil
 	}
-	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	ips, err := resolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -95,8 +116,8 @@ func resolveHostIPs(ctx context.Context, host string) (public, blocked []netip.A
 	return public, blocked, nil
 }
 
-func resolvePublicDialTargets(ctx context.Context, host string) ([]netip.Addr, error) {
-	public, blocked, err := resolveHostIPs(ctx, host)
+func resolvePublicDialTargets(ctx context.Context, host string, resolver netIPResolver) ([]netip.Addr, error) {
+	public, blocked, err := resolveHostIPs(ctx, host, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +134,8 @@ func resolvePublicDialTargets(ctx context.Context, host string) ([]netip.Addr, e
 // stricter than the dial guard on purpose. The rendered path hands the URL to
 // Chrome, which resolves DNS on its own, so a mixed public/private record set
 // must fail closed here rather than rely on dial-time pinning.
-func validatePublicHost(ctx context.Context, host string) error {
-	public, blocked, err := resolveHostIPs(ctx, host)
+func validatePublicHost(ctx context.Context, host string, resolver netIPResolver) error {
+	public, blocked, err := resolveHostIPs(ctx, host, resolver)
 	if err != nil {
 		return err
 	}

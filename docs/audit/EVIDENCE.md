@@ -933,3 +933,50 @@ C2/C3 仍缺“各 3 条”的完整人工百度对照，现有报告样本是 2
 - 第一次远端 CI 在新增 commit 上暴露了真实流水线缺陷：runner 未安装 `govulncheck`，步骤以 127 失败。修复为固定安装 `golang.org/x/vuln/cmd/govulncheck@v1.10.0`，再从 `$(go env GOPATH)/bin` 执行；修复后的同 SHA 运行通过。
 - Docker run [45540860782](https://github.com/xuboboo/web2api/actions/runs/45540860782) 的 `build` 通过（1m30s），覆盖最终镜像构建、非 root/无烘焙运行态断言、fresh named volume、health、CapDrop/ALL、no-new-privileges 与容器内 HTTPS。
 - 这说明自动构建与容器门禁已经在最终代码上闭环；C2/C3 人工百度对照、F-46 隔离代理演练、H1/H2/H4 干净 Linux/systemd/反代和生产监控凭据仍是独立上线门槛。
+
+## E62 F-46 DNS 重绑定端到端回归（2026-11-25）
+
+标题探测现在通过 context 注入测试 resolver 和 dialer，生产默认仍是 `net.DefaultResolver` 与 `net.Dialer`。Windows/amd64 Go 1.26.11 下执行：
+
+```text
+go test -count=1 ./core -run 'TestFetchPageTitleDNSRebindingCannotReachPrivateTargetOrProxy|TestGuardedTitleProbePublicPathAndFallbackRemainUsable|TestGuardedTitleProbeDoesNotUseRemoteProxy|TestFetchPageTitleRejectsPrivateTargets' -v
+```
+
+退出码 0。重绑定用例第一次解析返回公网 `203.0.113.10`，第二次返回 loopback `127.0.0.1`；guarded transport 在 dial 前拒绝，dials、公网 fixture、私网 fixture 和远端代理命中数均为 0。另一个用例证明 DNS 持续公网时标题探测成功取到 `public article title`，代理仍未收到标题探测，调用方原 Query 的 `ProxyURL` 保持不变，后续 URL 短语回退仍可走原代理。由此 F-46 的“验证后重绑定到私网”端到端路径已闭环，不再只依赖清除代理字段的静态断言。
+
+## E63 干净 Linux systemd、NGINX TLS、可信 IP 与升级恢复（2026-11-25）
+
+**环境**：全新 `jrei/systemd-debian:12`、privileged systemd 容器、Debian 12、NGINX 1.22.1、Chromium 156、OpenSSL 3、linux/amd64 静态二进制；服务以 `web2api:web2api` 非 root 用户运行，监听 `127.0.0.1:7000`。
+
+**干净安装与权限**：
+
+- 首次按 `/etc/web2api` 默认 `0700 root:root` 放置配置时，systemd 以 `cannot read config ... permission denied` 反复重启。这是真实安装文档缺口，不是测试夹具；已把 INSTALL/DEPLOYMENT 改为 `0750 root:web2api` 目录、`0640 root:web2api` 配置、`0600 root:root` EnvironmentFile。
+- 修正后 `/health` 与 `/ready` 均 200，官网 44,360 bytes、控制台 13,684 bytes 均 200；进程以 `web2api` 用户运行；NGINX 在本机 443 终结 TLS，上游仅监听 loopback 7000。
+- 自签名临时证书 `CN=web2api-audit.invalid` 有效，实际协商 `TLSv1.3 / TLS_AES_256_GCM_SHA384`；`/health`、`/ready`、官网、控制台经 HTTPS 均 200，响应带 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。
+
+**可信客户端 IP**：从另一个 bridge 容器（真实地址 `172.17.0.2`）经 HTTPS 登录，同时伪造 `X-Real-IP: 203.0.113.250` 和 `X-Forwarded-Proto: http`。NGINX 覆盖转发头后，`/api/audit` 记录的 `login.success.ip` 是 `172.17.0.2`，既不是伪造值，也不是上游看到的代理 `127.0.0.1`。同轮 `TestTrustedProxyClientIP` 与 `TestUntrustedPeerCannotSpoofClientIP` 通过，覆盖受信 peer 接受合法头和不受信 peer 忽略伪造头。
+
+**重启、崩溃与数据**：
+
+- `systemctl restart` 后 MainPID 6305 → 6450，服务 active、health 200。
+- 对进程执行 `kill -9` 后 systemd 在 5 秒重启，MainPID 6450 → 6479，active 且 health 恢复 200。
+- 停服生成 `admin-backup --full`：9,791 bytes、4 个普通文件，manifest 格式 `web2api-full-backup` v1，含 `data/web2api.db`、`data/secret.key`、`data/audit.log`、`data/index_jobs/` 与 `config/config.yaml`，归档权限 0600。
+- `admin-restore` 恢复到隔离 `/var/lib/web2api-restore` 与 `/etc/web2api-restore/config.yaml`；隔离端口 7001 上 `/health`、`/ready`、官网、控制台均 200，管理员登录成功，Key 数量 1、`total_units=0`，与备份前一致。
+- 用停服前的旧提交 `27ab1c4` 与当前树分别构建 Linux/amd64 二进制：旧 SHA-256 `73d32c...7515d`、当前 `aee13a...f23`。按旧版启动 → 升级当前版 → 回滚旧版 → 再部署当前版的顺序执行，每一步 health 均 200、管理员可登录、Key 始终为 1，验证了二进制升级/回滚不破坏 bbolt 与 `secret.key`。
+
+**边界**：该证据在干净 Debian 12 systemd 容器中完成，覆盖真实目录权限、systemd unit、NGINX TLS、可信来源、服务重启/崩溃和离线恢复；自签名证书与容器内单机路径不能替代生产域名、正式 CA、云主机重启或异地备份 provider 的验收。
+
+## E64 C2/C3 同口径桌面百度三组正负样本（2026-11-25）
+
+批量低频采样共完成 69 条当前页面，0 次 captcha；随后使用用户本机 Chrome、已登录的桌面百度、相同 `site:www.onlinedown.net` 范围逐条人工复核。查询词取目标页实际 `<title>`，而不是移动页或后台分类器结果。
+
+| 结果 | 样本 | 人工桌面百度现场 |
+| --- | --- | --- |
+| true | `10049053` CloudFormation 新增 206 个资源类型，涉 88 个服务 | 精确标题结果第 1 项，域名华军软件园 |
+| true | `10049051` qBittorrent 5.3.1 修 14 处缺陷，锁文件与磁力链同改 | 精确标题结果第 1 项 |
+| true | `10049048` Humanity's First Exam 544 题，测 18 个模型一致性 | 精确标题结果第 1 项 |
+| false | `10049057` Win11 内存占用降了 900MB，自带应用与 Office 减负 | 百度明确显示“抱歉，未找到相关结果” |
+| false | `10049055` 业余爱好者用 Codex 筛 10 万颗恒星，200 多个信号待核验 | 百度明确显示无结果 |
+| false | `10049054` Claude Artifacts 装成桌面应用，三档权限逐项可选 | 百度明确显示无结果 |
+
+采样时判为 false 的 `10049071`（LibreOffice 收紧 AI 写代码）在约 30 分钟后的人工复核中已返回精确标题结果，说明本功能是时间敏感搜索引擎视角，不能把单次 false 当成永久官方状态。C2/C3 在当前同一时点的三正三负对照均通过；证据截图见 [c23-positive-20261125.png](c23-positive-20261125.png) 与 [c23-negative-20261125.png](c23-negative-20261125.png)。这仍不代表百度官方收录接口，结论时效性与已知漏判边界继续按 API 文档对外说明。

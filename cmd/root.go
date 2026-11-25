@@ -506,6 +506,7 @@ var knownConfigKeys = map[string]bool{
 	"security.admin_rate_per_minute": true, "security.admin_rate_per_ip": true,
 	"security.api_rate_per_minute": true, "security.unauth_rate_per_minute": true,
 	"security.data_plane_auth": true, "security.trust_proxy_headers": true,
+	"security.trusted_proxies":     true,
 	"security.mcp_allowed_origins": true, "security.metrics_token": true,
 	"security.login_lockout.fails": true, "security.login_lockout.minutes": true,
 	"security.password_policy.min_length": true, "security.password_policy.min_classes": true,
@@ -676,6 +677,7 @@ func setConfigDefaults(v *viper.Viper) {
 	// 依赖匿名访问, 需显式设置 security.data_plane_auth: false。
 	v.SetDefault("security.data_plane_auth", true)
 	v.SetDefault("security.trust_proxy_headers", false)
+	v.SetDefault("security.trusted_proxies", []string{"127.0.0.1/32", "::1/128"})
 	v.SetDefault("security.mcp_allowed_origins", []string{})
 	v.SetDefault("security.metrics_token", "")
 	v.SetDefault("security.login_lockout.fails", 5)

@@ -51,12 +51,13 @@
 | F-43 | **P1** | 仓库容器配置跳过出站 TLS 证书校验，影响搜索结果与目标标题可信度 | 已修复（恢复证书校验 + 镜像安装 CA；E60 容器 HTTPS 通过） |
 | F-44 | P2 | Dockerfile 包安装失败可能被后续 `|| useradd` 分支掩盖 | 已修复（分组 shell 条件 + 回归检查；E60 最终镜像实构通过） |
 | F-45 | P2 | 安装/安全文档与当前磁盘静态资源、登录锁定语义不一致 | 已修复（INSTALL、ENVIRONMENT 与安全注释对齐） |
-| F-46 | **P1** | 百度标题探测经远端代理时，代理重新解析目标 DNS，可能绕过本机 SSRF/DNS 重绑定校验 | 已修复（标题探测固定直连 + 单测；代理端到端复测待做） |
+| F-46 | **P1** | 百度标题探测经远端代理时，代理重新解析目标 DNS，可能绕过本机 SSRF/DNS 重绑定校验 | 已修复（固定直连；DNS 重绑定、零代理访问与公开路径回归均通过，E62） |
 | F-47 | P2 | 备份、任务结果与审计读取忽略 I/O 关闭/同步错误；成功状态可能掩盖未完整落盘 | 已修复（错误显式返回；当前树 lint、单测与 race 通过） |
 | F-48 | P2 | Compose 缺少一致的最小权限和日志轮转基线 | 已修复（静态配置/契约测试与 E60 容器运行检查通过） |
 | F-49 | P2 | Linux CI 浏览器 wrapper 测试用有头 Chrome，导致无 DISPLAY runner 全量测试失败 | 已修复（fixture 改 headless；本机回归通过，GitHub 复跑待完成） |
 | F-50 | **P1** | `admin-backup --out` 指向源数据库或其硬链接时会截断平台数据库 | 已修复（拒绝同一文件；同路径/硬链接回归通过，E48） |
 | F-51 | **P1** | Docker named-volume 根目录不能 rename，完整恢复在最后切换阶段失败 | 已修复（挂载点原地恢复 + 外部 preserve；单测/真实卷往返通过，E60） |
+| F-52 | **P1** | `trust_proxy_headers` 只控制 HSTS，TLS 反代后的限速、登录锁定和审计仍看到反代 IP | 已修复（仅受信 peer 的 `X-Real-IP` 生效；单测、跨容器 HTTPS 与审计实测通过，E63） |
 
 ---
 
@@ -809,13 +810,13 @@ q.GuardPrivateNetworks = true   // 调用方给的 URL 一律走私有网段防�
 
 **证据**：`docs/INSTALL.md` 同时声称静态页面已编译入单二进制、又要求单独带 `web/`；启动说明把非 loopback 默认密码描述成告警，但 `cmd/serve.go` 对该组合拒绝启动。首次验证示例请求 7070，而随文复制的 `config.yaml` 监听 7000；创建的 `/var/lib/web2api` 数据目录也没有在 systemd 环境里实际配置。`docs/ENVIRONMENT.md` 与 README 仍写登录锁定按“用户名+IP”，而 `platform/security.go` 的键只有 username，失败次数跨 IP 聚合。
 
-**修复**：纠正 INSTALL 的磁盘资源、启动安全说明、验证端口和数据目录步骤；systemd 配置显式设置 `/var/lib/web2api`；更正 ENVIRONMENT、README 登录锁定说明，并更新过期的 `platform/security.go` 注释。
+**修复**：纠正 INSTALL 的磁盘资源、启动安全说明、验证端口和数据目录步骤；systemd 配置显式设置 `/var/lib/web2api`；更正 ENVIRONMENT、README 登录锁定说明，并更新过期的 `platform/security.go` 注释。2026-11-25 的干净 Linux 走查又发现 `/etc/web2api` 若为 `0700 root:root`，运行用户无法穿越并读取配置；INSTALL/DEPLOYMENT 已改为 `0750 root:web2api` + `0640 root:web2api`，并增加对应常见错误。
 
-**验证**：逐项对照 `cmd/serve.go`、`platform/security.go`、`cmd/serve.go` 的静态目录装配与当前 Dockerfile/发行打包内容。文档改动未运行自动化测试。
+**验证**：逐项对照 `cmd/serve.go`、`platform/security.go`、`cmd/serve.go` 的静态目录装配与当前 Dockerfile/发行打包内容；随后按修正后的权限在 Debian 12 systemd 容器跑通启动、站点、健康与恢复（E63）。
 
 ---
 
-## F-46 标题探测代理绕过本机 DNS 固定（P1，代码已修复，代理端到端待验证）
+## F-46 标题探测代理绕过本机 DNS 固定（P1，已修复）
 
 **证据**：`core/title_fetch.go` 从 `runtime Query` 继承 `ProxyURL` 后调用 `RawSearchRequest`；`core/http_client.go:newRawTLSClient` 使用代理时只设置 `WithProxyUrl`，不会把 `GuardedDialContext` 用于目标主机。`doGuardedRawRequest` 在本机校验目标 DNS 后，把原始域名交给代理；代理会独立解析域名，攻击者控制的重绑定域名可在验证与代理请求之间改解析结果。
 
@@ -825,9 +826,23 @@ q.GuardPrivateNetworks = true   // 调用方给的 URL 一律走私有网段防�
 
 **修复**：`guardedTitleProbeQuery` 清空 `ProxyURL`，保留 `GuardPrivateNetworks=true`，使用本机 guarded dial 固定已验证 IP，并对每个 redirect hop 继续校验。搜索引擎 SERP 仍使用原代理；目标页不能直连时，标题探测失败并回退 URL 短语，不会把私网目标交给代理。
 
-**验证**：新增 `TestGuardedTitleProbeDoesNotUseRemoteProxy`；本轮 Go 1.26.11 下 `go test -p 1 -count=1 ./...` 全包通过，既有 `TestFetchPageTitleRejectsPrivateTargets` 也包含其中。尚未对专用远端代理执行 DNS 重绑定实机演练。
+**验证**：新增 `TestGuardedTitleProbeDoesNotUseRemoteProxy`。随后把 resolver/dialer 做成仅测试注入点，并新增 `TestFetchPageTitleDNSRebindingCannotReachPrivateTargetOrProxy`：第一次 DNS 返回公网、第二次重绑定 loopback，传输层在 dial 前拒绝，公网、私网 fixture 和代理命中均为 0；`TestGuardedTitleProbePublicPathAndFallbackRemainUsable` 同时证明正常公网标题、代理隔离和 URL 短语回退没有被破坏。定向测试及当前树全包回归通过，E62 记录命令与结果。
 
 **兼容性/回滚**：启用搜索代理但服务不能直连目标站的部署，百度标题查询可能转为 URL 短语，漏判率会高于标题模式；API 仍正常返回。回滚可恢复代理使用，但会重新打开 SSRF 边界，不建议在公网部署这样回滚。
+
+---
+
+## F-52 反向代理后的真实客户端 IP 未生效（P1，已修复并实测）
+
+**证据**：`security.trust_proxy_headers` 原来只影响 HSTS 下发；Fiber 配置没有启用 trusted-proxy IP 解析，`c.IP()` 在 TLS 反代后始终得到上游 socket 地址。于是按 IP 的管理面/未鉴权限速、登录锁定审计和来源判断会把所有用户合并到反代地址。
+
+**影响**：公网反代是推荐部署形态。该缺陷会让单个用户消耗所有用户共享的 IP 配额，审计无法定位真实来源，并削弱按 IP 的防爆破与滥用隔离。
+
+**修复**：服务端只在 `security.trust_proxy_headers=true` 时启用 Fiber trusted-proxy 校验，`ProxyHeader` 固定为 `X-Real-IP`，并启用 IP 验证；只有 `security.trusted_proxies` 中的 peer 才能提供该头。默认只信任 loopback 的 `127.0.0.1/32` 与 `::1/128`。NGINX 示例明确用 `$remote_addr` 覆盖 `X-Real-IP`。HSTS 与管理会话 `Secure` 属性统一使用 trusted-proxy-aware 的 `c.Protocol()`。
+
+**验证**：`TestTrustedProxyClientIP` 与 `TestUntrustedPeerCannotSpoofClientIP` 通过。干净 Linux + systemd + NGINX HTTPS 中，从另一个容器 `172.17.0.2` 发起登录并伪造 `X-Real-IP: 203.0.113.250`，登录审计记录为 `172.17.0.2`，不是伪造值也不是代理地址；HTTPS/HSTS、服务重启、崩溃自恢复与恢复点验证见 E63。
+
+**兼容性/回滚**：直连部署保持 `trust_proxy_headers=false` 即可维持原行为。反向代理若不在默认 loopback peer 上，必须把实际代理 IP/CIDR 写入 `trusted_proxies`；不要为了省配置信任任意网段。
 
 ---
 
@@ -867,7 +882,7 @@ q.GuardPrivateNetworks = true   // 调用方给的 URL 一律走私有网段防�
 
 **验证**：E59 的往返测试验证了数据库、secret、任务 JSONL、审计日志和配置逐项一致，目标旧目录和旧配置可留档回滚；路径穿越与 manifest checksum 篡改均在替换前失败。兼容性方面，原 `.db` 的 F1/F2 路径未改变；新归档只由新命令生成。全量 regression/vet 将在本轮修改完成后复跑。
 
-**剩余边界**：Docker named volume 的根目录 rename 限制已由 F-51/E60 处理并实机验证；干净 Linux 主机权限布局、systemd 隔离 unit 和真实生产目录切换仍保持 H1/H2/H4 未勾选。
+**剩余边界**：Docker named volume 的根目录 rename 限制已由 F-51/E60 处理并实机验证；Debian 12 systemd 干净安装、隔离 unit 恢复、HTTPS 与升级/回滚已由 E63 完成。外部云主机重启、正式域名/CA 与异地备份 provider 仍属于部署环境验收。
 
 ## F-51 Docker named-volume 根目录无法原子替换（P1，已修复）
 

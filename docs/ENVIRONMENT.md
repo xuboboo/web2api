@@ -163,7 +163,8 @@ environment:
 | `security.api_rate_per_minute` | `WEB2API_SECURITY_API_RATE_PER_MINUTE` | 120 | 是 | 单个 API Key 每分钟查询上限 |
 | `security.unauth_rate_per_minute` | `WEB2API_SECURITY_UNAUTH_RATE_PER_MINUTE` | 30 | 是 | 未通过鉴权请求的单 IP 上限 |
 | `security.data_plane_auth` | `WEB2API_SECURITY_DATA_PLANE_AUTH` | true | 是 | 数据面是否强制 X-API-Key。**默认 true；裸启也不匿名开放** |
-| `security.trust_proxy_headers` | `WEB2API_SECURITY_TRUST_PROXY_HEADERS` | false | 条件 | 反代场景下信任 X-Forwarded-For 取真实 IP，直连时保持 false |
+| `security.trust_proxy_headers` | `WEB2API_SECURITY_TRUST_PROXY_HEADERS` | false | 条件 | 仅供受信 TLS 反代场景；启用后按受信来源的 X-Real-IP 取客户端 IP |
+| `security.trusted_proxies` | `WEB2API_SECURITY_TRUSTED_PROXIES` | `["127.0.0.1/32","::1/128"]` | 条件 | 允许提供 X-Real-IP 的反代 IP/CIDR；跨容器反代需显式加入其 CIDR |
 | `security.mcp_allowed_origins` | `WEB2API_SECURITY_MCP_ALLOWED_ORIGINS` | []string{} | 否 | MCP 允许的跨域 Origin 列表 |
 | `security.metrics_token` | `WEB2API_SECURITY_METRICS_TOKEN` | "" | 条件 | /metrics 的 Bearer；空=仅 loopback 可抓 |
 | `security.login_lockout.fails` | `WEB2API_SECURITY_LOGIN_LOCKOUT_FAILS` | 5 | 是 | 同一用户名跨 IP 连续失败多少次后锁定 |

@@ -133,7 +133,8 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `api_rate_per_minute` | `120` | `120` | S4-B-02: `/v1/*` 与 MCP 每 key 限速（0=关） |
 | `unauth_rate_per_minute` | `30` | `30` | S4-B-02: 无有效凭据请求按 IP 前置限速（0=关） |
 | `data_plane_auth` | `false` | `true` | S4-B-03: `serve` 的 Viper 默认与本仓库模板均为 true；只有显式设为 false 才开放匿名专用数据面。`platform.DefaultSecurityConfig()` 保留 false 兼容直接构造 |
-| `trust_proxy_headers` | `false` | `false` | S4-B-14: TLS 反代场景开启后按 `X-Forwarded-Proto=https` 下发 HSTS |
+| `trust_proxy_headers` | `false` | `false` | TLS 反代场景开启；仅受信代理来源可按 `X-Real-IP` 取得客户端 IP，受信 HTTPS 请求下发 HSTS |
+| `trusted_proxies` | `["127.0.0.1/32","::1/128"]` | `["127.0.0.1/32","::1/128"]` | 允许提供 `X-Real-IP` 的反代 IP/CIDR；Nginx 必须用 `$remote_addr` 覆盖该头。跨容器反代要显式加入其地址/CIDR |
 | `mcp_allowed_origins` | 空 | 空 | S4-B-10: MCP Origin 白名单（空=仅同源；空 Origin 始终放行） |
 | `metrics_token` | 空 | 空 | S4: `/web-tool/metrics` Bearer 令牌（空=仅 loopback 抓取） |
 | `login_lockout.fails` | `5` | `5` | 登录锁定阈值 |
