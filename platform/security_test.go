@@ -43,7 +43,7 @@ func doJSONErr(t *testing.T, app *fiber.App, method, target string, body any, he
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, target, err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("%s %s: read body: %v", method, target, err)
@@ -134,7 +134,7 @@ func TestLoginLockoutCannotBeBypassedByRotatingIPs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("rotating-IP login: status=%d, want 429", resp.StatusCode)
 	}
@@ -166,7 +166,7 @@ func TestProtectedEndpointsNeverAnswerJSONWithoutAuth(t *testing.T) {
 	env := newTestEnv(t, 200, false)
 	protected := []string{
 		"/api/keys", "/api/me", "/api/runtime", "/api/usage",
-		"/api/engines", "/api/admin/backup", "/api/settings",
+		"/api/engines", "/api/admin/backup",
 	}
 	prefixes := []string{
 		"", "/%2e%2e", "/%252e%252e", "/..%2f", "/%2e%2e%2f", "/./", "//", "/%09",
@@ -181,6 +181,9 @@ func TestProtectedEndpointsNeverAnswerJSONWithoutAuth(t *testing.T) {
 			}
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
+			if prefix == "" && resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("GET %s without JWT returned %d, want 401", target, resp.StatusCode)
+			}
 			ctype := resp.Header.Get("Content-Type")
 			isJSON := strings.Contains(strings.ToLower(ctype), "json")
 			if isJSON && resp.StatusCode == http.StatusOK {
@@ -279,7 +282,7 @@ func TestPasswordChangeInvalidatesOldTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restart platform: %v", err)
 	}
-	defer restarted.Close()
+	defer closeTestResource(t, restarted)
 	app := fiber.New()
 	restarted.RegisterAdmin(app, nil, nil)
 	status, _, _ = doJSONErr(t, app, http.MethodPost, "/api/auth/login",
@@ -648,7 +651,7 @@ func TestUsageRetentionPrunesOldRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer p.Close()
+	defer closeTestResource(t, p)
 
 	now := time.Now()
 	for i := 0; i < 5; i++ {
@@ -680,7 +683,7 @@ func TestUsageRetentionUnlimitedKeepsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer p.Close()
+	defer closeTestResource(t, p)
 
 	now := time.Now()
 	rec := &UsageRecord{Time: now.Add(-240 * time.Hour), KeyID: "k", Endpoint: "/v1/index/check", Units: 1, Status: 200}

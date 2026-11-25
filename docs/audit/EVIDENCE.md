@@ -706,12 +706,277 @@ http lane    : {"engines":{"baidu":{"error":{"code":"captcha_detected","message"
 
 **结论**：无代理池时单 IP 约 20+ 次/小时即进入验证码状态——**这是业务规模的硬约束，不是 bug**。生产必须配代理池（`docs/DEPLOYMENT.md` 已写），单机自用则接受这个频率上限。
 
-## E11 受环境限制未执行的验证（禁止当作已通过）
+## E11 初始环境受限验证（2026-11-25；后续进展见 E35–E38）
 
 | 项 | 原因 | 影响 |
 | --- | --- | --- |
-| `docker build` / 容器冒烟 | Docker 服务需管理员权限，`Start-Service com.docker.service` 被拒 | 镜像构建未实机验证；已用同参数交叉编译替代 |
+| `docker build` / 容器冒烟 | Docker CLI 存在，但 Linux engine named pipe `//./pipe/dockerDesktopLinuxEngine` 不存在 | 镜像层、容器健康检查和 TLS 实网访问未实机验证；Linux 交叉构建不能替代镜像运行 |
+| 当前树 race detector | 初次验证时本机缺少可用 CGO 编译器 | 初始未重跑；后续安装/配置 MinGW 工具链后的当前树结果见 E37 |
+| TLS 收紧后的严格集成/百度 live query | 初始阶段尚未执行；后续在当前树以严格集成 race 对固定公开查询做低频验证（E37） | Baidu/Bing 请求通过；未覆盖 Docker 容器网络路径，容器 HTTPS 仍由 I5 阻塞 |
 | 真正写满磁盘 | 无独立测试盘，填盘有风险 | 未做（但"运行期目录不可写"已实测，见 E25） |
 
-> `-race` 与"业务端点并发"已于本轮补齐，见 E26 / E27，不再属于"未验证"。
+> E26/E27 的 race 与业务并发结果是 2026-11-24 的先前证据；race 已由当前树 E37 更新。E27 业务并发与历史容量数据未在当前树重跑。
 
+## E34 初始构建与回归（2026-11-25；race 结论已由 E37 更新）
+
+**环境与工具链**：Go 1.26.11 Windows/amd64 官方 archive 下载至系统临时目录，SHA-256 校验为 `71ae086f0137e665f855a811cc119152b6a783e0bbc1b906e709f46d80141eb0`（[Go 官方下载页](https://go.dev/dl/)）。设置 `GOENV=off` 避免继承本机旧配置，使用 `GOMAXPROCS=2`、`-p 1` 控制内存。
+
+| 检查 | 结果 |
+| --- | --- |
+| `go test -p 1 -count=1 ./...` | **通过**；所有有测试的包全绿，包含 F-43/F-44/F-46 新增回归 |
+| `go vet -p 1 ./...` | **通过**，无输出 |
+| `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w'` | **通过**；临时 Linux ELF 23,277,730 bytes |
+| 根/部署 Compose `config --quiet` | **均通过** |
+| `git diff --check` | **通过**；未发现 whitespace error |
+| Docker daemon | **不可用**；named pipe 缺失 |
+| `go test -race` | **初始未执行**；当时缺少可用 gcc/clang，后续当前树 race 结果见 E37 |
+
+## E35 本地控制台走查与备份恢复（2026-11-25）
+
+**隔离方式**：按当前源码构建 Windows/amd64 临时二进制；复制配置到 `%TEMP%\web2api-ux-audit`，监听 `127.0.0.1:17891`，数据库、密钥、日志、任务目录和备份均处于同一临时目录。临时管理员口令仅用于该隔离实例；未使用现有 `data/`，未触碰 `baidu_check/`。
+
+**控制台走查**：本地健康端点返回 200 / `storage=bbolt`；通过登录页进入总览并检查引擎状态、API 密钥、使用日志、在线调试说明、Agent 集成、API 文档、系统设置。在线调试页提示会真实访问引擎，因此没有提交查询。窄视图截图为浏览器工具提供的 608×480；导航和宽表可横向滚动。当前 in-app browser 不提供 viewport override，因此这次不能声称覆盖 390×844 或桌面完整视口；页面可读性/交互覆盖限于上述实测视图和路由。
+
+**备份与恢复步骤/结果**：
+
+1. 在隔离服务内创建 `audit-restore-check`，服务停止后执行 `admin-backup --data-dir <temp>/data --out <temp>/restore-check.db`，成功生成 24,576 字节快照。
+2. 重启服务，在快照之后再创建 `restore-after-snapshot`；停止服务并执行 `admin-restore --data-dir <temp>/data --in <temp>/restore-check.db`。退出码 0，工具生成 `web2api.db.pre-restore-20261125-041220` 回滚副本。
+3. 再次启动后退出并重新登录，登录成功；总览显示 1 个活跃 Key，密钥列表仅保留快照中的 `audit-restore-check`，快照后创建的 `restore-after-snapshot` 不存在。健康检查重新返回 healthy / bbolt。
+
+**结论**：临时环境里的 CLI 快照、恢复、自动留档、服务重启和登录/Key 状态一致性均通过。该结果验证功能行为，不覆盖生产目录权限、异地备份保留或生产恢复窗口流程。
+
+**清理状态**：本轮临时服务进程已停止。Windows 执行环境拒绝删除该临时目录，因此测试配置、快照和隔离数据库仍留在 `%TEMP%\web2api-ux-audit`；其中不含工作区生产数据，用户可在确认后手动删除。
+
+## E36 依赖漏洞扫描（2026-11-25）
+
+**工具/范围**：govulncheck v1.10.0；Go 1.26.11；漏洞数据库更新至 2026-11-24；扫描当前树 15 个根包、49 个模块及标准库。`govulncheck ./...` 退出码 0。
+
+**结果**：Symbol Results 为 0 个可达漏洞。模块结果包含一条 `GO-2026-5932`：`golang.org/x/crypto/openpgp` 被 Go 漏洞库标记为不维护且不应使用；项目使用同一模块的 bcrypt，但当前代码没有导入/调用 OpenPGP 包。官方条目：[GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932)。按任务书的可达性口径 I7 通过；该模块级发现已在 F-28 保留，不把它误报成 0 条数据库记录。
+
+## E37 当前树回归、race、集成与 lint（2026-11-25）
+
+| 检查 | 命令/配置 | 结果 |
+| --- | --- | --- |
+| 全量测试 | Go 1.26.11；`go test -count=1 -p 1 ./...` | **通过**，全部测试包绿 |
+| vet | `go vet ./...`（`GOFLAGS=-p=1`） | **通过** |
+| race 单测 | `CGO_ENABLED=1 go test -race -count=1 -p 1 ./...`；MinGW UCRT POSIX；`GOTMPDIR=TMP=TEMP=D:\gotmp` | **通过**，无 DATA RACE |
+| 严格集成 race | `WEB2API_INTEGRATION_TESTS=1 WEB2API_INTEGRATION_STRICT=1 go test -race -p 1 -count=1 -timeout=900s -tags=integration ./...`；系统 Chrome；固定公开查询 | **通过**；Baidu、Bing live smoke 与全包均绿，退出码 0 |
+| lint | golangci-lint v2.13.2，`run --concurrency=1 --config .golangci.yml ./...` | 修复前 71 项（55 errcheck、2 govet、14 staticcheck）；修复后 **0 issues** |
+
+lint 修复不仅是降噪：补上 CLI 备份/恢复与管理员重置的文件同步、关闭和输出错误处理；任务结果 append/sync、审计日志读取也检查关闭/读取错误。测试夹具与 HTTP 测试资源清理现在显式校验 Close；两处 `ForceCooldown` 错误不再被忽略。其余静态提示按 linter quick-fix 简化嵌入字段访问、布尔条件及 `reflect.Pointer` 常量。
+
+
+## E39 当前树 staticcheck 复核（2026-11-25）
+
+使用 Go 1.26.11、`GOENV=off`、`GOFLAGS=-p=1` 执行 `staticcheck ./...`，退出码 0、无诊断。E24 保留为历史修复记录；当前树结果以 E39 为准。
+
+## E40 Docker Compose 静态安全基线（2026-11-25）
+
+- 根 `docker-compose.yaml` 与 `deploy/docker-compose.yml` 均解析通过：设置隔离占位 `ADMIN_PASSWORD` 后，分别执行 `docker compose config --quiet` 与 `docker compose -f deploy/docker-compose.yml config --quiet`，退出码均为 0。
+- 新增 `TestComposeManifestsShareContainerSecurityBaseline` 并通过（`go test ./cmd -run 'Test(ComposeManifestsShareContainerSecurityBaseline|DockerfileEnvContract|ContainerConfigShipsDefaults|DockerfilePackageInstallFailureCannotBeMasked)'`）。该测试锁定 healthcheck 路径、`cap_drop: ALL`、`no-new-privileges` 与 json-file 日志轮转（20MB × 3）。
+- 静态审查确认两种 Compose 均继续将 7000 仅发布到 loopback、只读挂载配置并保留持久数据卷；未启用只读根文件系统，因为服务会在工作目录创建轮转日志。
+- 当时 Docker engine 不可用，故本证据只覆盖静态基线；后续真实镜像/容器结果见 E60。
+
+## E41 审计日志端到端读取（2026-11-25）
+
+使用 Go 1.26.11 在当前树运行 `go test -count=1 ./platform -run '^TestAuditTrail$'`，通过。测试隔离创建平台存储，执行管理员登录和 API Key 创建，验证审计 JSONL 至少写入登录与密钥操作、JWT 保护的 `GET /api/audit` 返回完整字段，并断言 target/result 不泄露 `sk-w2a-` 密钥材料。
+
+## E42 当前树全量回归（2026-11-25）
+
+在 F-48 Compose 和 F5 审计日志文档更新后，使用 Go 1.26.11、`GOENV=off`、`GOMAXPROCS=2`、`GOFLAGS=-p=1` 执行 `go test -count=1 ./...` 与 `go vet ./...`，两条命令均退出码 0。全量测试覆盖新增 Compose 契约测试和 `TestAuditTrail`。
+
+## E43 Docker CI 运行时冒烟门禁已配置（2026-11-25）
+
+- `.github/workflows/docker.yml` 的 PR/main Docker job 现通过 Buildx 构建并 `load: true` 加载 linux/amd64 镜像，随后启动容器、等待 Docker healthcheck healthy、请求宿主映射的 `/web-tool/health`，检查 `CapDrop` 包含 `ALL`、`SecurityOpt` 包含 `no-new-privileges:true`，并在容器内用 wget 验证 `https://example.com/` 的证书链。
+- 冒烟管理员密码由 runner 的 `openssl rand -hex 32` 临时生成，不使用 secrets、不写入仓库；容器由 shell trap 清理。
+- 使用 PyYAML BaseLoader 解析 workflow，确认 Buildx load 和 smoke step 存在；提取内嵌脚本用 Git Bash `bash -n` 校验通过；`git diff --check` 通过。Docker 官方 action 文档将 `load` 定义为 Buildx `--output=type=docker` 的简写（[build-push-action README](https://github.com/docker/build-push-action/blob/master/README.md)）。
+- 该条记录只证明 workflow 配置/脚本可解析；本机真实 Docker runtime 已由 E60 补充。GitHub runner 仍须在推送后执行最终提交，才能确认远端门禁本身生效。
+
+## E44 GitHub Actions 远端运行核验（2026-11-25）
+
+只读检查 `gh run view`：当前 HEAD/远端 main SHA `5ceb33f9e2d5f579c4efdbc63dd8b0135ac268fa` 的 Docker workflow run [45470748893](https://github.com/xuboboo/web2api/actions/runs/45470748893) 成功，步骤只有旧版 `Build (no push)`，没有容器启动/HTTPS smoke。相同 SHA 的 CI run [45470748718](https://github.com/xuboboo/web2api/actions/runs/45470748718) 失败于 `TestPooledBrowserEngineForwardsCheckIndexed`，Chrome 报 `Missing X server or $DISPLAY`；失败后 vet、build、lint、govulncheck 均跳过。检查日志后未发现其他 `--- FAIL` 项。
+
+这两次远端运行对应未修改的 Git HEAD，不含本地工作树改动；不能证明当前 F-49 修复或 E43 Docker smoke workflow 已通过。
+
+## E45 F-49 修复后的 Go 1.26.11 全量验证（2026-11-25）
+
+将 `TestPooledBrowserEngineForwardsCheckIndexed` fixture 显式设为 `IsHeadless:true` 后，先单独运行该测试通过，再用 Go 1.26.11、`GOENV=off`、`GOMAXPROCS=2`、`GOFLAGS=-p=1` 执行 `go test -count=1 ./...` 和 `go vet ./...`；全包测试与 vet 均退出码 0。此为本地证据，GitHub CI 仍须在改动进入远端后复跑。
+
+E45 补充：按远端 CI 后续步骤顺序在同一 Go 1.26.11 环境执行 `go build .`（exit 0）、`golangci-lint run --concurrency=1 --config .golangci.yml ./...`（exit 0，0 issues）、`govulncheck ./...`（exit 0，0 reachable、1 条未调用模块公告）。这仍是本机验证；GitHub CI 同 SHA 需要在修订进入远端后重新运行。
+
+- F-49 的 headless wrapper 测试随后以 `CGO_ENABLED=1 go test -race -count=1 ./cmd -run '^TestPooledBrowserEngineForwardsCheckIndexed$' -v` 再通过（exit 0，无 race 报告；MinGW UCRT POSIX、ASCII GOTMPDIR）。
+
+## E46 F-46 定向回归复核（2026-11-25）
+
+使用本机 `D:\go-toolchain\go\bin\go.exe`（Go 1.27.4 windows/amd64，`GOENV=off`）执行：
+
+`go test -count=1 ./core -run 'TestGuardedTitleProbeDoesNotUseRemoteProxy|TestFetchPageTitleRejectsPrivateTargets' -v`
+
+两个测试均通过：标题探测查询会清除远端代理并启用私网防护；loopback、link-local、RFC1918 和 IPv6 loopback 目标被拒绝。本次仅为定向回归复核，不含 DNS 记录切换模拟或隔离代理端到端演练；F-46 的 DNS 重绑定实机演练仍未完成。Go 1.27.4 的本次结果不替代 E45 中 Go 1.26.11 全量测试证据。
+
+## E47 当前工作树 Go 1.27.4 全量回归（2026-11-25）
+
+使用 `D:\go-toolchain\go\bin\go.exe`、`GOENV=off`、`GOMAXPROCS=2`、`GOFLAGS=-p=1` 执行 `go test -count=1 ./...`，全部有测试的包通过；随后执行 `go vet ./...`，退出码 0、无诊断。该复核是当前工作树的 Windows/amd64 Go 1.27.4 证据；不覆盖 Linux/Docker runtime，也不替代 CI 目标 Go 1.26.11 和远端 CI 状态确认。
+
+## E48 admin-backup 输出别名保护（2026-11-25）
+
+新增 `TestAdminBackupRejectsOutputThatAliasesSourceDatabase`，在 Windows/amd64 覆盖输出路径等于源 `web2api.db` 和输出为源文件硬链接两种情况。两种情况下备份均在打开源 bbolt/创建输出文件前拒绝；测试随后确认源文件大小与修改时间不变，且 bbolt 数据库仍可打开并读到原值。使用 Go 1.27.4 执行该定向测试通过；随后当前工作树 `go test -count=1 ./...` 全包通过，`go vet ./...` 退出码 0。该测试验证本地文件别名防护，不覆盖完整数据目录备份/恢复方案（F-14/F3 仍待完成）。
+
+## E49 静态资源路径穿越回归（2026-11-25）
+
+新增 `TestStaticMountRejectsConfigPathTraversal`，通过当前生产 Fiber 路由装配和 `app.Test` HTTP 请求覆盖普通 `..`、`%2e%2e`、编码斜杠以及固定前缀目录穿越到根目录的 4 种路径。四种请求均返回 404，响应体不包含 `admin_password:` 或 `platform:` 配置段。Go 1.27.4 下定向测试通过。此为当前代码的 HTTP 路由集成测试，不替代上线后对部署反代和真实监听端口的验证。
+
+## E50 静态路径穿越修复后的完整回归（2026-11-25）
+
+加入 E49 回归后，使用 Go 1.27.4 Windows/amd64、`GOENV=off`、`GOMAXPROCS=2`、`GOFLAGS=-p=1` 执行当前树 `go test -count=1 ./...`，所有有测试的包通过；`go vet ./...` 退出码 0、无诊断。
+
+## E51 数据面认证、租户隔离与限额安全回归（2026-11-25）
+
+定向命令 `go test -count=1 ./cmd ./platform ./core -run '^(TestIndexJobEndpointsAreScopedAcrossAPIKeysThroughAssembly|TestStaticMountRejectsConfigPathTraversal|TestAPIKeyGuardAuthAndQuota|TestDailyQuotaOneAllowsFirstCallAndRejectsSecond|TestProtectedEndpointsNeverAnswerJSONWithoutAuth|TestLoginAndAdminAuth|TestLoginLockoutAfterConsecutiveFailures|TestLoginLockoutCannotBeBypassedByRotatingIPs|TestAdminRateLimit429WithRetryAfter|TestQuotaExceededCarriesRetryAfter|TestPerKeyRateLimit|TestIndexJobIsScopedToOwner)$'` 在 Go 1.27.4 下通过。
+
+新增的 `TestIndexJobEndpointsAreScopedAcrossAPIKeysThroughAssembly` 经过与服务一致的 `mountPlatformAndPanel` 装配，Key A 提交并完成 21 URL 异步任务后，Key B 读取状态、读取结果和取消均得到 404，任务列表不包含 A 的任务；Key A 自身读取成功。另新增 `TestDailyQuotaOneAllowsFirstCallAndRejectsSecond`，quota=1 的 Key 首次单单位调用返回 200，第二次返回 `429 quota_exceeded`，且账本仍为 1。定向回归同时覆盖无/错误 API Key、无 JWT、锁定与跨 IP 聚合、Retry-After、per-key rate limit 和静态目录 traversal。`go vet ./cmd ./platform ./core` 同样退出码 0。以上均为本地 HTTP 应用/组装层测试，不代替真实部署反向代理与生产配置验收。
+
+## E52 当前树全量回归的 Windows 提交内存限制（2026-11-25）
+
+E51 加入测试后，重新执行 `go test -count=1 ./...` 两次（第二次设置 `GOMAXPROCS=1`、`GOGC=20`、`GOMEMLIMIT=512MiB`、`GOFLAGS=-p=1`）均在 Go 测试二进制链接阶段因 `VirtualAlloc ... errno=1455` 失败；未出现测试断言失败。同期系统物理可用内存约 5.8 GiB，但 Windows 可用提交内存约 0.37–0.49 GiB，未发现残留 Go/link 进程。独立的 `go test -count=1 ./cmd` 全包通过；平台/核心安全定向用例通过，相关三包 vet 通过。当前整仓全量回归需在 Windows 提交内存恢复后重跑，因此当前树 I1 暂不视为已验证；E50 是新增 E51 测试前最近一次全仓通过证据。
+
+## E53 核心业务验收项证据映射（2026-11-25）
+
+- C1：E32/E33 有真实百度单条查询，返回 `indexed=true` 与 `match=exact`；E37 有较新 strict live smoke。
+- C4/C5：E50 的 Go 全量测试包含 `TestIndexCheckSmallBatchStaysSynchronous`、`TestIndexCheckLargeBatchReturnsJob`；E32/E33 还记录真实 21 URL → 202/轮询。
+- C7：E50 含同步 URL 校验与异步任务去重测试；E33 的真实流程记录 3 个重复 URL 去重为 1 个计费单元。
+- C9：E50 含核心冷却语义测试；本轮单独的 `go test -count=1 ./cmd` 全包通过，包含 `TestCooldownManagementThroughAssembly`。
+
+C2/C3 仍缺“各 3 条”的完整人工百度对照，现有报告样本是 2 条正样本与 2 条负样本；C6 已用本机 Microsoft Excel 实际打开同格式导出并精确读取中文与引号字段（E55）；C8 的 POST/GET 错误消息回显断言已补入，但编译阶段受 Windows 提交内存不足阻断（E54）。C2/C3/C8 继续保持未通过。
+
+## E54 C8 非法 URL 错误消息回显回归（2026-11-25）
+
+- 代码检查发现 `parseIndexCheckRequest` 的直接 HTTP 校验早于 `validateIndexCheckURLs`，原先只检查绝对 URL 形状；因此某些不支持 scheme 或单标签主机请求可能先走另一条消息路径。现已在解析阶段加入明确 scheme、绝对 URL 和公开域名校验，错误 `APIError.Message` 包含对应的 `urls[i]` 输入值。既有 core `JSONErrorMiddleware` 将该消息序列化为 `message` 字段，保留 `INVALID_PARAM` reason。
+- `TestIndexCheckHandlerValidation` 已增加 POST 和 GET 非法 URL 的 HTTP 响应断言，要求 `message` 含输入 `not a url`，并要求 `INVALID_PARAM` 均带非空消息。
+- 早先两次验证在编译阶段因 Windows `VirtualAlloc errno=1455`/内存分配失败，测试没有启动。2026-11-25 08:49 在提交内存恢复到约 880 MiB 余量后，以 Go 1.27.4、`GOMAXPROCS=1`、`GOGC=20`、`GOMEMLIMIT=512MiB`、`GOFLAGS=-p=1` 重跑：`TestIndexCheckHandlerValidation` 通过（`ok .../core 2.267s`），POST/GET 的具体 URL 回显与 `INVALID_PARAM` 断言均通过。因此 C8 通过。
+
+## E55 C6 结果 CSV 经 Microsoft Excel 实际打开（2026-11-25）
+
+- 本机 Office16 Excel 已通过 COM 实际打开临时 CSV。文件按 `WriteCSV` 的格式生成：UTF-8 BOM、CRLF、表头 `url,baidu_indexed,baidu_match,baidu_matched_result_url,baidu_total_results,baidu_error`，并包含中文 URL 与带逗号的匹配 URL。
+- Excel 读取结果为 2 行 × 6 列；`Url` 精确等于 `https://example.test/路径?x=中文`，`MatchedResultURL` 精确等于 `https://example.test/a,b`，`Indexed=True`、`Match=exact`、`TotalResults=9`。中文无乱码，BOM 未进入首列表头，逗号字段未被拆列。
+- E50 已覆盖真实结果端点返回 `text/csv`、BOM、CRLF 和序列化结构；E55 补足“Excel 实际打开”这一人工验收要求。因此 C6 通过。
+
+## E56 C2/C3 当前百度排名复核尝试（2026-11-25）
+
+- 用当前 `web2api.exe search baidu ... --raw` 对历史样本重新查询。`10048979`（`http://www.onlinedown.net/article/10048979.html`，微软 Win11 驱动路线）在该 URL 对应的标题查询中当前为百度第 1 名，结果域名为 `onlinedown.net`，标题与目标高度一致。
+- 昨日保存的第 1 条负样本 `10048980`（`http://www.onlinedown.net/article/10048980.html`，KB5132057 安装失败）当前已翻转：同一百度查询返回目标标题 `...含 28 项改动_华军软件园` 于第 4 名。该现象再次证明收录结论是时间敏感快照，不能沿用昨日状态做上线验收。
+- 随后尝试补充更多负样本时，百度对本机出口返回 `captcha detected`；验证立即停止，没有重试或把验证码失败伪造成“未收录”。移动版 `m.baidu.com` 虽有结果页且无验证码，但排序与产品桌面查询不同，例如同一正样本未在前三条出现，因此没有用它替代同一口径的人工对照。
+- 移动页现场截图：[10048979](c23-live-20261125-1.png)、[10048980](c23-live-20261125-2.png)。截图仅用于证明查询词与页面状态，不据此宣称桌面排名。
+- 结论：本轮新增了当前正样本与“负样本翻正”证据，但 C2/C3 要求的各 3 条同一口径人工百度对照仍未完成，继续保持未通过。
+
+## E57 当前树完整 Go 回归恢复通过（2026-11-25）
+
+- Windows 提交内存恢复到约 880 MiB 余量后，使用 Go 1.27.4 执行 `GOENV=off GOMAXPROCS=1 GOGC=20 GOMEMLIMIT=768MiB GOFLAGS=-p=1 go test -p 1 -count=1 ./...`，退出码 0。
+- 所有有测试的包均通过：`baidu`、`bing`、`cmd`、`core`、`core/browser`、`core/fpcheck/detectors`、`core/region`、`mcp`、`platform`、`so360`、`sogou`；其余包无测试文件。
+- 同一环境随后执行 `go vet -p 1 ./...`，退出码 0 且无输出。
+- 此前 E52 记录了提交内存不足导致的链接失败；本次同树完整运行成功，I1 由未验证更新为通过。E54 的 C8 定向回归也在同轮通过。
+
+## E58 当前树单元 race 复核（2026-11-25）
+
+- 使用 Go 1.27.4、MinGW-W64、`CGO_ENABLED=1`、ASCII `GOTMPDIR=D:\gotmp` 重跑当前树 `go test -race -count=1 -p 1 ./...`。
+- 一次全仓进程在 Windows 提交内存不足时于 `baidu`/`bing`/`cmd`/`core` 的链接阶段失败；其他 7 个包（`core/browser`、`core/fpcheck/detectors`、`core/region`、`mcp`、`platform`、`so360`、`sogou`）已通过。
+- 为释放链接器内存，将失败包拆成独立 Go 进程重跑：`baidu`、`bing`、`cmd` 均通过；`core` 最终以 `GOGC=5 GOMEMLIMIT=256MiB` 单独运行通过（`ok .../core 8.065s`）。
+- 汇总结果：当前树 11 个有测试的单元包均完成 race 检测且无 `DATA RACE`。这是同一树、同一检测器、不同进程的等价覆盖，不是把一次失败运行记成全绿。
+- 严格集成 race 的完整结果仍沿用 E37；本轮因百度出口已触发验证码，没有再次发送 live 引擎请求。
+
+## E59 内置完整恢复点往返与防篡改验证（2026-11-25）
+
+新增 `admin-backup --full` 和完整归档自动识别的 `admin-restore`。完整恢复点包含 `platform.data_dir` 的全部普通文件/目录（数据库、`secret.key`、`index_jobs/`、审计日志等）和当前解析出的配置文件；清单记录每个条目的类型、大小、权限与 SHA-256。输出拒绝位于数据目录或已存在的路径，自定义 `index_jobs.dir` 位于数据目录外时拒绝生成以免静默漏掉任务状态。恢复先在目标父目录的隔离 staging 目录解包并验证路径、条目集合、类型、大小、checksum 以及 bbolt 的 `keys`/`usage`/`settings` contract bucket，全部通过后才替换目标目录与原配置，默认保留 `*.pre-restore-<时间戳>`。
+
+在 Windows/amd64 Go 1.27.4 下执行：
+
+`go test ./cmd -run 'TestAdminFullBackupAndRestoreRoundTrip|TestAdminFullRestoreRejectsPathTraversal|TestAdminFullRestoreRejectsManifestChecksumMismatch' -count=1 -v`
+
+三个测试均通过：
+
+- 往返测试从隔离源目录生成 1,827 字节完整恢复点，清单含 7 个文件；恢复后 `web2api.db` contract bucket、`secret.key`、任务 `job.json`/`results.jsonl`、`audit.log`/轮转日志与 `config.yaml` 内容均逐项一致。
+- 目标目录原有的不同数据库、secret、独有文件与配置均完整留档为 `*.pre-restore-*`；恢复后的独有文件不再存在，证明不是简单覆盖合并。
+- `../escaped.txt` tar 条目在写入 staging 前返回“路径越界”，隔离目录外未产生文件。
+- 把 `audit.log` 清单 SHA-256 改为全零后，恢复在 staging 校验阶段返回“校验和不一致”。
+- 另用当前源码构建的真实 `web2api.exe` 走通完整流程：启动隔离源实例创建真实 bbolt 数据库和 1 个 API Key，停服后加入任务文件并生成 2,510 字节完整归档（6 个普通文件，另含目录与 `manifest.json`）；归档列表包含 `data/web2api.db`、`data/secret.key`、任务 JSON/JSONL、`data/audit.log` 和 `config/config.yaml`。恢复后 secret、config、任务文件字节一致，目标实例重新启动返回 `healthy`/`bbolt`，管理员重新登录成功且 `keys_count=1`、Key 名称仍为 `bundle-audit-key`。
+
+以 `go vet ./cmd` 同轮复测，退出码 0。该证据覆盖本机文件系统上的完整恢复点逻辑；Docker named volume 的实际限制和修复结果由 E60 补充，但干净 Linux 主机安装与 systemd 隔离 unit（H1/H2/H4）仍需独立验收。
+
+## E60 Docker 镜像、最小权限与 named volume 完整恢复（2026-11-25）
+
+**环境**：Docker Desktop 4.99.0，Linux engine 29.9.3，linux/amd64；镜像从当前工作树执行 `docker build` 成功，最终 manifest list SHA-256 为 `a37351b6fa56dc3e4cf3df7dab9ed946b61da0c67d22d0c530bf0cf573e1154c`。
+
+**镜像与运行基线**：
+
+- 最终镜像以 UID/GID 1001 `chrome` 运行；`/usr/src/app/data` 是空的初始化目录，镜像内没有 `web2api.db`、`secret.key`、审计日志或任务文件。
+- 新建 named volume 挂载到 `/usr/src/app/data` 后，容器健康检查转为 healthy；`/web-tool/health` 返回 `storage=bbolt` 和四个引擎 `ready`。
+- 运行容器 inspect 得到 `Config.User=chrome`、`HostConfig.CapDrop=["ALL"]`、`HostConfig.SecurityOpt=["no-new-privileges:true"]`。
+- 在最终镜像内执行 `wget --spider https://example.com/` 成功，证明镜像的 CA bundle 与出站 TLS 证书链可用。
+- fresh named volume 从启动到创建 API Key 均成功，证明镜像构建阶段的 `/usr/src/app/data` 所有权修复有效。
+
+**named volume 完整恢复**：
+
+- 首次按普通 path swap 恢复时，挂载点根目录返回 `device or resource busy`，因为 Linux 不允许 `rename` 一个 named-volume mount root。为此新增 `admin-restore --preserve-in <外部目录>`：先把旧卷内容复制到独立 preserve volume，再清空挂载点内子项、写回已校验 staging，写入失败时尝试从 preserve 回滚。
+- 新增 `TestApplyStagedAdminBundleInPlacePreservesMountedVolumeContents`：在目标数据目录内先放旧 bbolt 和旧独有文件，恢复后新数据库、secret、任务文件与配置均替换成功；旧数据库和 `old-volume-only.txt` 完整保存在 preserve 目录。
+- 定向执行 `go test ./cmd -run 'TestAdmin|TestApplyStaged' -count=1` 与 `go vet ./cmd`，均通过。
+- 使用真实 9,052 字节完整归档恢复到全新 `web2api-audit-inplace-*` named volumes，退出码 0，旧卷标记 `old-volume-only` 出现在 `/preserve/restored-data.pre-restore-20261125-031332`。
+- 恢复实例启动后返回 `healthy`/`bbolt`；管理员登录成功，`keys_count=1`，恢复出的 Key 名称是 `docker-volume-audit-key`；`secret.key` 与 `web2api.db` 的真实卷权限均为 0600。
+- 删除并重建运行容器，继续挂载同一恢复数据卷和配置卷；health 仍为 healthy，登录仍成功，`keys_count=1` 且 Key 名不变，验证了容器重建持久性。
+- 最终修订树复跑 `go test -p 1 -count=1 ./...`、`go vet -p 1 ./...`、Linux/amd64 构建、定向 `-race`、golangci-lint v2.13.2、staticcheck 与 govulncheck，均退出码 0；lint/staticcheck 为 0 条，govulncheck 为 0 个可达漏洞。
+
+**边界**：该证据关闭本机 Docker 镜像构建、容器 HTTPS、最小权限、fresh volume、named-volume 完整恢复和重建持久性检查（I5/A2，Docker 部分的 F3）。远端 workflow 的独立结果见 E61；干净 Linux 主机、systemd unit 与 TLS 反代仍由 H1/H2/H4 和生产部署验收，不能用本证据替代。
+
+## E61 最终代码 SHA 的远端 CI 与 Docker 门禁（2026-11-25）
+
+- 分支 `codex/release-readiness-20261125` 已推送，PR #1 使用最终代码 SHA `628daff` 重跑门禁。
+- CI run [45540860716](https://github.com/xuboboo/web2api/actions/runs/45540860716) 的 `test-build-lint` 通过（2m46s），覆盖 race 单测、vet、build、golangci-lint 与 govulncheck。
+- 第一次远端 CI 在新增 commit 上暴露了真实流水线缺陷：runner 未安装 `govulncheck`，步骤以 127 失败。修复为固定安装 `golang.org/x/vuln/cmd/govulncheck@v1.10.0`，再从 `$(go env GOPATH)/bin` 执行；修复后的同 SHA 运行通过。
+- Docker run [45540860782](https://github.com/xuboboo/web2api/actions/runs/45540860782) 的 `build` 通过（1m30s），覆盖最终镜像构建、非 root/无烘焙运行态断言、fresh named volume、health、CapDrop/ALL、no-new-privileges 与容器内 HTTPS。
+- 这说明自动构建与容器门禁已经在最终代码上闭环；C2/C3 人工百度对照、F-46 隔离代理演练、H1/H2/H4 干净 Linux/systemd/反代和生产监控凭据仍是独立上线门槛。
+
+## E62 F-46 DNS 重绑定端到端回归（2026-11-25）
+
+标题探测现在通过 context 注入测试 resolver 和 dialer，生产默认仍是 `net.DefaultResolver` 与 `net.Dialer`。Windows/amd64 Go 1.26.11 下执行：
+
+```text
+go test -count=1 ./core -run 'TestFetchPageTitleDNSRebindingCannotReachPrivateTargetOrProxy|TestGuardedTitleProbePublicPathAndFallbackRemainUsable|TestGuardedTitleProbeDoesNotUseRemoteProxy|TestFetchPageTitleRejectsPrivateTargets' -v
+```
+
+退出码 0。重绑定用例第一次解析返回公网 `203.0.113.10`，第二次返回 loopback `127.0.0.1`；guarded transport 在 dial 前拒绝，dials、公网 fixture、私网 fixture 和远端代理命中数均为 0。另一个用例证明 DNS 持续公网时标题探测成功取到 `public article title`，代理仍未收到标题探测，调用方原 Query 的 `ProxyURL` 保持不变，后续 URL 短语回退仍可走原代理。由此 F-46 的“验证后重绑定到私网”端到端路径已闭环，不再只依赖清除代理字段的静态断言。
+
+## E63 干净 Linux systemd、NGINX TLS、可信 IP 与升级恢复（2026-11-25）
+
+**环境**：全新 `jrei/systemd-debian:12`、privileged systemd 容器、Debian 12、NGINX 1.22.1、Chromium 156、OpenSSL 3、linux/amd64 静态二进制；服务以 `web2api:web2api` 非 root 用户运行，监听 `127.0.0.1:7000`。
+
+**干净安装与权限**：
+
+- 首次按 `/etc/web2api` 默认 `0700 root:root` 放置配置时，systemd 以 `cannot read config ... permission denied` 反复重启。这是真实安装文档缺口，不是测试夹具；已把 INSTALL/DEPLOYMENT 改为 `0750 root:web2api` 目录、`0640 root:web2api` 配置、`0600 root:root` EnvironmentFile。
+- 修正后 `/health` 与 `/ready` 均 200，官网 44,360 bytes、控制台 13,684 bytes 均 200；进程以 `web2api` 用户运行；NGINX 在本机 443 终结 TLS，上游仅监听 loopback 7000。
+- 自签名临时证书 `CN=web2api-audit.invalid` 有效，实际协商 `TLSv1.3 / TLS_AES_256_GCM_SHA384`；`/health`、`/ready`、官网、控制台经 HTTPS 均 200，响应带 `Strict-Transport-Security: max-age=31536000; includeSubDomains`。
+
+**可信客户端 IP**：从另一个 bridge 容器（真实地址 `172.17.0.2`）经 HTTPS 登录，同时伪造 `X-Real-IP: 203.0.113.250` 和 `X-Forwarded-Proto: http`。NGINX 覆盖转发头后，`/api/audit` 记录的 `login.success.ip` 是 `172.17.0.2`，既不是伪造值，也不是上游看到的代理 `127.0.0.1`。同轮 `TestTrustedProxyClientIP` 与 `TestUntrustedPeerCannotSpoofClientIP` 通过，覆盖受信 peer 接受合法头和不受信 peer 忽略伪造头。
+
+**重启、崩溃与数据**：
+
+- `systemctl restart` 后 MainPID 6305 → 6450，服务 active、health 200。
+- 对进程执行 `kill -9` 后 systemd 在 5 秒重启，MainPID 6450 → 6479，active 且 health 恢复 200。
+- 停服生成 `admin-backup --full`：9,791 bytes、4 个普通文件，manifest 格式 `web2api-full-backup` v1，含 `data/web2api.db`、`data/secret.key`、`data/audit.log`、`data/index_jobs/` 与 `config/config.yaml`，归档权限 0600。
+- `admin-restore` 恢复到隔离 `/var/lib/web2api-restore` 与 `/etc/web2api-restore/config.yaml`；隔离端口 7001 上 `/health`、`/ready`、官网、控制台均 200，管理员登录成功，Key 数量 1、`total_units=0`，与备份前一致。
+- 用停服前的旧提交 `27ab1c4` 与当前树分别构建 Linux/amd64 二进制：旧 SHA-256 `73d32c...7515d`、当前 `aee13a...f23`。按旧版启动 → 升级当前版 → 回滚旧版 → 再部署当前版的顺序执行，每一步 health 均 200、管理员可登录、Key 始终为 1，验证了二进制升级/回滚不破坏 bbolt 与 `secret.key`。
+
+**边界**：该证据在干净 Debian 12 systemd 容器中完成，覆盖真实目录权限、systemd unit、NGINX TLS、可信来源、服务重启/崩溃和离线恢复；自签名证书与容器内单机路径不能替代生产域名、正式 CA、云主机重启或异地备份 provider 的验收。
+
+## E64 C2/C3 同口径桌面百度三组正负样本（2026-11-25）
+
+批量低频采样共完成 69 条当前页面，0 次 captcha；随后使用用户本机 Chrome、已登录的桌面百度、相同 `site:www.onlinedown.net` 范围逐条人工复核。查询词取目标页实际 `<title>`，而不是移动页或后台分类器结果。
+
+| 结果 | 样本 | 人工桌面百度现场 |
+| --- | --- | --- |
+| true | `10049053` CloudFormation 新增 206 个资源类型，涉 88 个服务 | 精确标题结果第 1 项，域名华军软件园 |
+| true | `10049051` qBittorrent 5.3.1 修 14 处缺陷，锁文件与磁力链同改 | 精确标题结果第 1 项 |
+| true | `10049048` Humanity's First Exam 544 题，测 18 个模型一致性 | 精确标题结果第 1 项 |
+| false | `10049057` Win11 内存占用降了 900MB，自带应用与 Office 减负 | 百度明确显示“抱歉，未找到相关结果” |
+| false | `10049055` 业余爱好者用 Codex 筛 10 万颗恒星，200 多个信号待核验 | 百度明确显示无结果 |
+| false | `10049054` Claude Artifacts 装成桌面应用，三档权限逐项可选 | 百度明确显示无结果 |
+
+采样时判为 false 的 `10049071`（LibreOffice 收紧 AI 写代码）在约 30 分钟后的人工复核中已返回精确标题结果，说明本功能是时间敏感搜索引擎视角，不能把单次 false 当成永久官方状态。C2/C3 在当前同一时点的三正三负对照均通过；证据截图见 [c23-positive-20261125.png](c23-positive-20261125.png) 与 [c23-negative-20261125.png](c23-negative-20261125.png)。这仍不代表百度官方收录接口，结论时效性与已知漏判边界继续按 API 文档对外说明。

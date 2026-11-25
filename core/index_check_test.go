@@ -530,7 +530,7 @@ func indexCheckDo(t *testing.T, srv *Server, req *http.Request) (int, string) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	var buf bytes.Buffer
 	if _, err := buf.ReadFrom(resp.Body); err != nil {
 		t.Fatalf("read body: %v", err)
@@ -674,9 +674,10 @@ func TestIndexCheckHandlerValidation(t *testing.T) {
 			t.Fatalf("%s: status=%d body=%s", tc.name, status, body)
 		}
 		var errPayload struct {
-			Error  string `json:"error"`
-			Code   int    `json:"code"`
-			Reason string `json:"reason"`
+			Error   string `json:"error"`
+			Code    int    `json:"code"`
+			Reason  string `json:"reason"`
+			Message string `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(body), &errPayload); err != nil {
 			t.Fatalf("%s: decode error body: %v\n%s", tc.name, err, body)
@@ -686,6 +687,15 @@ func TestIndexCheckHandlerValidation(t *testing.T) {
 		}
 		if errPayload.Code != tc.status {
 			t.Fatalf("%s: code=%d, want %d", tc.name, errPayload.Code, tc.status)
+		}
+		if tc.reason == ReasonInvalidParam && errPayload.Message == "" {
+			t.Fatalf("%s: expected helpful validation message, body=%s", tc.name, body)
+		}
+		if tc.name == "POST with invalid url" && !strings.Contains(errPayload.Message, "not a url") {
+			t.Fatalf("%s: message should identify offending URL, got %q", tc.name, errPayload.Message)
+		}
+		if tc.name == "GET with invalid url" && !strings.Contains(errPayload.Message, "not a url") {
+			t.Fatalf("%s: message should identify offending URL, got %q", tc.name, errPayload.Message)
 		}
 	}
 }

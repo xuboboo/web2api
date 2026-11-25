@@ -531,16 +531,16 @@ const contentSecurityPolicy = "default-src 'self'; " +
 // response (审计 A-19). S4-B-12: the console CSP graduates from Report-Only to
 // enforcement — the theme pre-boot script was externalized to
 // assets/theme-boot.js (S3), so the console no longer ships inline scripts.
-// S4-B-14: when security.trust_proxy_headers=true and the request arrived via
-// https (X-Forwarded-Proto), Strict-Transport-Security is issued — only for
-// TLS-terminating reverse-proxy deployments, never for plain HTTP.
+// S4-B-14: when security.trust_proxy_headers=true and a trusted proxy reports
+// HTTPS, Strict-Transport-Security is issued. Fiber only honors the forwarded
+// protocol for peers listed in security.trusted_proxies.
 func securityHeadersHandler() fiber.Handler {
 	trustProxy := config.Security.TrustProxyHeaders
 	return func(c *fiber.Ctx) error {
 		c.Set(fiber.HeaderXContentTypeOptions, "nosniff")
 		c.Set(fiber.HeaderReferrerPolicy, "strict-origin-when-cross-origin")
 		c.Set(fiber.HeaderXFrameOptions, "DENY")
-		if trustProxy && strings.EqualFold(strings.TrimSpace(c.Get("X-Forwarded-Proto")), "https") {
+		if trustProxy && strings.EqualFold(c.Protocol(), "https") {
 			c.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		c.Set("Content-Security-Policy", contentSecurityPolicy)
@@ -568,6 +568,8 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		EnableDebugEndpoints:   config.App.DebugEndpoints,
 		FingerprintArtifactDir: core.DefaultFingerprintArtifactDir,
 		FingerprintBrowserOpts: fingerprintBrowserOpts,
+		TrustProxyHeaders:      config.Security.TrustProxyHeaders,
+		TrustedProxies:         append([]string(nil), config.Security.TrustedProxies...),
 		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
 		// 收录批量(≤20 条 URL)的限流排队时间随单元数线性增长,基础
 		// 重试预算盖不住 20 条的尾部;批量路由放宽到独立上限,再由
@@ -597,7 +599,8 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		},
 	}
 	// 数据面可选鉴权(契约): security.data_plane_auth=true 时 dedicated
-	// /{engine}/search 与 /stats/* 需要 X-API-Key。默认关闭,行为与现状一致。
+	// /{engine}/search 与 /stats/* 需要 X-API-Key。serve 的默认配置开启；
+	// 依赖旧匿名行为的部署必须显式设置 false。
 	if config.Security.DataPlaneAuth {
 		opts.RequestAuth = dataPlaneAuthGuard()
 	}

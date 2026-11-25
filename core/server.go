@@ -129,6 +129,11 @@ type ServerOptions struct {
 	// for site-wide security headers (审计 A-19) so even the API routes core
 	// registers at construction time carry them.
 	ExtraMiddleware []fiber.Handler
+	// TrustProxyHeaders enables client-IP extraction from X-Real-IP only when
+	// the TCP peer is listed in TrustedProxies. The reverse proxy must overwrite
+	// X-Real-IP with the client address; untrusted peers cannot spoof it.
+	TrustProxyHeaders bool
+	TrustedProxies    []string
 	// IndexJobDir enables the asynchronous index-check job queue when non-empty:
 	// batches larger than MaxIndexCheckURLs are accepted with 202 + job id and
 	// drained at the engine's rate, with their state persisted under this
@@ -177,7 +182,7 @@ func NewServer(host string, port int, searchEngines ...SearchEngine) *Server {
 // stop.
 func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngines ...SearchEngine) *Server {
 	addr := fmt.Sprintf("%s:%d", host, port)
-	app := fiber.New(fiber.Config{
+	fiberConfig := fiber.Config{
 		ErrorHandler: JSONErrorMiddleware(),
 		BodyLimit:    10 * 1024 * 1024,
 		// Bounded server defaults: without these fasthttp accepts unbounded
@@ -193,7 +198,14 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: writeTimeoutFor(opts),
 		IdleTimeout:  120 * time.Second,
-	})
+	}
+	if opts.TrustProxyHeaders {
+		fiberConfig.ProxyHeader = "X-Real-IP"
+		fiberConfig.EnableTrustedProxyCheck = true
+		fiberConfig.TrustedProxies = append([]string(nil), opts.TrustedProxies...)
+		fiberConfig.EnableIPValidation = true
+	}
+	app := fiber.New(fiberConfig)
 
 	serv := Server{
 		app:           app,
@@ -1177,8 +1189,15 @@ func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
 		return nil, nil, errEmptyQuery()
 	}
 	for i, u := range urls {
-		if _, ok := indexURLKeyFrom(u); !ok {
+		if _, bad := unsupportedScheme(u); bad {
+			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q uses an unsupported scheme", i, u))
+		}
+		key, ok := indexURLKeyFrom(u)
+		if !ok {
 			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q is not a valid absolute URL", i, u))
+		}
+		if !strings.Contains(strings.SplitN(key.host, ":", 2)[0], ".") {
+			return nil, nil, errInvalidParam(fmt.Sprintf("urls[%d]: %q has no public domain (a dot-separated host is required)", i, u))
 		}
 	}
 	return urls, rawEngines, nil

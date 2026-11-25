@@ -517,7 +517,7 @@ func TestDedicatedSearchCooldownFastFailAndZeroEngineContact(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("healthy search status=%d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	closeTestResource(t, resp.Body)
 	if got := baidu.searchCalls; got != 1 {
 		t.Fatalf("search calls after healthy request=%d, want 1", got)
 	}
@@ -528,7 +528,7 @@ func TestDedicatedSearchCooldownFastFailAndZeroEngineContact(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		resp := request(t, srv, "/baidu/search?text=golang")
-		defer resp.Body.Close()
+		defer closeTestResource(t, resp.Body)
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("cooled search status=%d, want 503", resp.StatusCode)
 		}
@@ -583,7 +583,7 @@ func TestDedicatedSearchCooldownFastFailAndZeroEngineContact(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post-reset search status=%d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	closeTestResource(t, resp.Body)
 	if got := baidu.searchCalls; got != 2 {
 		t.Fatalf("search calls after reset=%d, want 2", got)
 	}
@@ -595,7 +595,7 @@ func TestCooldownDedicatedSearchTriggeredByInterception(t *testing.T) {
 	srv, baidu, _ := newCooldownTestServer(t, ErrCaptcha)
 
 	resp := request(t, srv, "/baidu/search?text=golang")
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("first (trigger) request status=%d, want 429 captcha_detected", resp.StatusCode)
 	}
@@ -604,7 +604,7 @@ func TestCooldownDedicatedSearchTriggeredByInterception(t *testing.T) {
 	}
 
 	resp = request(t, srv, "/baidu/search?text=golang")
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("second request status=%d, want 503 engine_cooldown", resp.StatusCode)
 	}
@@ -684,7 +684,7 @@ func TestIndexCheckBatchCooldownSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("mixed batch over HTTP status=%d", resp.StatusCode)
 	}
@@ -718,7 +718,7 @@ func TestIndexCheckBatchCooldownSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("all-cooldown batch status=%d, want 503", resp.StatusCode)
 	}
@@ -899,10 +899,12 @@ func TestEnginesStatusWithCooldownFields(t *testing.T) {
 // meta.engines_cooldown for the engines that are cooling.
 func TestEnginesCooldownMetaOnSearchEnvelope(t *testing.T) {
 	srv, _, sogou := newCooldownTestServer(t, nil)
-	srv.ForceCooldown("sogou", 10)
+	if err := srv.ForceCooldown("sogou", 10); err != nil {
+		t.Fatalf("force sogou cooldown: %v", err)
+	}
 
 	resp := request(t, srv, "/baidu/search?text=golang")
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -938,10 +940,12 @@ func TestIsEngineCooldownErrorDetection(t *testing.T) {
 // never blocks baidu.
 func TestCooldownDoesNotFreezeOtherEngines(t *testing.T) {
 	srv, baidu, _ := newCooldownTestServer(t, nil)
-	srv.ForceCooldown("sogou", 10)
+	if err := srv.ForceCooldown("sogou", 10); err != nil {
+		t.Fatalf("force sogou cooldown: %v", err)
+	}
 
 	resp := request(t, srv, "/baidu/search?text=golang")
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("other engine blocked by unrelated cooldown: status=%d", resp.StatusCode)
 	}
@@ -967,7 +971,7 @@ func TestCooldownEnginesStatusCircuitOpenState(t *testing.T) {
 
 	for i := 0; i < 4; i++ {
 		resp := request(t, srv, "/baidu/search?text=golang")
-		resp.Body.Close()
+		closeTestResource(t, resp.Body)
 	}
 	// The engine is failing via the circuit breaker now — no cooldown was
 	// recorded (parser failures are not interception).

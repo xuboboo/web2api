@@ -221,7 +221,7 @@ func TestRenderersIncludeSerpFeatures(t *testing.T) {
 		t.Fatalf("markdown missing related searches section:\n%s", markdown)
 	}
 	// Spec order: AI summary -> ... -> Results -> Related searches.
-	if aiIdx, resIdx, relIdx := strings.Index(markdown, "## AI summary"), strings.Index(markdown, "## Results"), strings.Index(markdown, "## Related searches"); !(aiIdx < resIdx && resIdx < relIdx) {
+	if aiIdx, resIdx, relIdx := strings.Index(markdown, "## AI summary"), strings.Index(markdown, "## Results"), strings.Index(markdown, "## Related searches"); aiIdx >= resIdx || resIdx >= relIdx {
 		t.Fatalf("markdown section order wrong: ai=%d results=%d related=%d\n%s", aiIdx, resIdx, relIdx, markdown)
 	}
 

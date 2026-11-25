@@ -13,7 +13,7 @@ server:
   debug: false # Enable debug logs and force browser UI mode
   verbose: false # Enable debug-level request logs
   raw_requests: false # true = 纯 HTTP 模式(无浏览器):结果不稳定、无 bing、收录判定一律 not_implemented(README「raw 模式」节),生产勿开
-  insecure: true # Allow insecure TLS connections(容器/内网缺根证书时需要)
+  insecure: false # Verify outbound TLS certificates; set true only for controlled diagnostics
 
 app:
   log_format: "text" # json|text
@@ -137,7 +137,8 @@ security:
   api_rate_per_minute: 120 # S4-B-02: 公网 /v1/* 与 MCP 每 key 限速,防单 key 吃光引擎预算(0=关)
   unauth_rate_per_minute: 30 # S4-B-02: /v1/* 与 MCP 无有效凭据请求按 IP 前置限速,防 key 爆破(0=关)
   data_plane_auth: true # B-03 出厂安全姿态(默认翻转): true 时 /{engine}/search 与 /stats/* 需 X-API-Key;既有部署如依赖匿名访问需显式改回 false
-  trust_proxy_headers: false # S4-B-14: 仅 TLS 反代场景开启 — 开启且 X-Forwarded-Proto=https 时下发 HSTS
+  trust_proxy_headers: false # 仅 TLS 反代场景开启: 受信来源的 X-Real-IP 作为客户端 IP,受信 HTTPS 请求下发 HSTS
+  trusted_proxies: ["127.0.0.1/32", "::1/128"] # trust_proxy_headers=true 时仅这些反代来源可按覆盖后的 X-Real-IP 取得客户端 IP
   mcp_allowed_origins: [] # S4-B-10: MCP Origin 白名单,除请求同源外额外放行的来源(如 "https://panel.example.com");空=仅同源,空 Origin(curl/Agent)始终放行
   metrics_token: "" # S4 指标端点 /web-tool/metrics 的 Bearer 令牌;空=仅本机(loopback)可抓取
   login_lockout:

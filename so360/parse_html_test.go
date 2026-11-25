@@ -15,7 +15,7 @@ func loadFixture(t *testing.T) *os.File {
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
-	t.Cleanup(func() { file.Close() })
+	t.Cleanup(func() { closeTestResource(t, file) })
 	return file
 }
 

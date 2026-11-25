@@ -14,7 +14,7 @@ func TestParseHTMLFixtureExtractsRealFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
-	defer f.Close()
+	defer closeTestResource(t, f)
 
 	results, err := ParseHTML(f)
 	if err != nil {

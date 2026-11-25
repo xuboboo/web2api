@@ -17,13 +17,14 @@ FROM chromedp/headless-shell:stable@sha256:f7e7ac721b023cb8717f8108aef8b3e49995f
 
 WORKDIR /usr/src/app
 
-# wget: used by HEALTHCHECK (localhost, no TLS, so ca-certificates not required).
+# wget: used by HEALTHCHECK; ca-certificates validate outbound TLS requests.
 # tini: reaps orphaned Chrome children, which would otherwise pile up as zombies when web2api is PID 1.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends wget tini \
+  && apt-get install -y --no-install-recommends ca-certificates wget tini \
   && rm -rf /var/lib/apt/lists/* \
-  && getent passwd chrome >/dev/null 2>&1 || useradd --create-home --uid 1001 --shell /bin/bash chrome \
-  && chown chrome:chrome /usr/src/app
+  && (getent passwd chrome >/dev/null 2>&1 || useradd --create-home --uid 1001 --shell /bin/bash chrome)
+RUN mkdir -p /usr/src/app/data \
+  && chown chrome:chrome /usr/src/app /usr/src/app/data
 
 COPY --from=builder /app/web2api /usr/local/bin/web2api
 COPY --chown=chrome:chrome config.yaml ./config.yaml

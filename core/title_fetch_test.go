@@ -1,10 +1,22 @@
 package core
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
+	"sync/atomic"
 	"testing"
 )
+
+type testNetIPResolver func(context.Context, string, string) ([]netip.Addr, error)
+
+func (f testNetIPResolver) LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	return f(ctx, network, host)
+}
 
 func TestNormalizePageTitle(t *testing.T) {
 	cases := []struct{ in, want string }{
@@ -40,6 +52,153 @@ func TestPageTitleCacheRespectsTTLAndNegatives(t *testing.T) {
 func TestFetchPageTitleEmptyURL(t *testing.T) {
 	if _, ok := FetchPageTitle(t.Context(), "   ", Query{}); ok {
 		t.Fatal("empty target URL must not produce a title")
+	}
+}
+
+func TestGuardedTitleProbeDoesNotUseRemoteProxy(t *testing.T) {
+	q := guardedTitleProbeQuery(Query{
+		ProxyURL: "http://proxy.example:8080",
+		Text:     "must not leak into the target GET",
+	})
+	if q.ProxyURL != "" || !q.GuardPrivateNetworks || q.Text != "" {
+		t.Fatalf("unsafe title-probe query: proxy=%q guarded=%v text=%q", q.ProxyURL, q.GuardPrivateNetworks, q.Text)
+	}
+}
+
+// Exercise the full title-probe path with an isolated DNS answer, HTTP target,
+// and proxy. The first lookup passes validation as public; the second lookup
+// rebinds to loopback. The guarded transport must refuse before dialing, and
+// neither the private target nor the configured proxy may receive a request.
+func TestFetchPageTitleDNSRebindingCannotReachPrivateTargetOrProxy(t *testing.T) {
+	ResetPageTitleCache()
+	t.Cleanup(ResetPageTitleCache)
+
+	var publicHits, privateHits, proxyHits atomic.Int32
+	publicTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		publicHits.Add(1)
+		_, _ = w.Write([]byte("<html><head><title>public article title</title></head></html>"))
+	}))
+	defer publicTarget.Close()
+	privateTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		privateHits.Add(1)
+		_, _ = w.Write([]byte("<html><head><title>internal admin title</title></head></html>"))
+	}))
+	defer privateTarget.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyHits.Add(1)
+		_, _ = w.Write([]byte("<html><head><title>proxy response must not be used</title></head></html>"))
+	}))
+	defer proxy.Close()
+
+	publicURL, err := url.Parse(publicTarget.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetURL := "http://rebind.web2api.test:" + publicURL.Port() + "/article"
+	publicIP := netip.MustParseAddr("203.0.113.10")
+	privateIP := netip.MustParseAddr("127.0.0.1")
+	var lookups atomic.Int32
+	resolver := testNetIPResolver(func(context.Context, string, string) ([]netip.Addr, error) {
+		if lookups.Add(1) == 1 {
+			return []netip.Addr{publicIP}, nil
+		}
+		return []netip.Addr{privateIP}, nil
+	})
+
+	var dials atomic.Int32
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dials.Add(1)
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if host != publicIP.String() {
+			return nil, fmt.Errorf("transport tried to dial unvetted address %q", addr)
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, publicTarget.Listener.Addr().String())
+	}
+	ctx := context.WithValue(t.Context(), guardedNetworkHooksKey{}, guardedNetworkHooks{
+		resolver: resolver,
+		dial:     dial,
+	})
+	if title, ok := FetchPageTitle(ctx, targetURL, Query{ProxyURL: proxy.URL}); ok {
+		t.Fatalf("DNS rebinding probe returned title %q; it must fail closed", title)
+	}
+	if got := lookups.Load(); got < 2 {
+		t.Fatalf("expected validation and dial-time DNS lookups, got %d", got)
+	}
+	if got := dials.Load(); got != 0 {
+		t.Fatalf("transport dialed %d time(s) after the address rebound to loopback", got)
+	}
+	if got := publicHits.Load(); got != 0 {
+		t.Fatalf("public fixture received %d request(s) after rebinding", got)
+	}
+	if got := privateHits.Load(); got != 0 {
+		t.Fatalf("private fixture received %d guarded request(s)", got)
+	}
+	if got := proxyHits.Load(); got != 0 {
+		t.Fatalf("remote proxy received %d title-probe request(s)", got)
+	}
+}
+
+// The same isolated transport must still fetch a title when DNS remains
+// public, proving the rebinding protection does not disable normal probes.
+// The original query keeps its proxy for the URL-phrase SERP fallback.
+func TestGuardedTitleProbePublicPathAndFallbackRemainUsable(t *testing.T) {
+	ResetPageTitleCache()
+	t.Cleanup(ResetPageTitleCache)
+
+	var publicHits, proxyHits atomic.Int32
+	publicTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		publicHits.Add(1)
+		_, _ = w.Write([]byte("<html><head><title>public article title</title></head></html>"))
+	}))
+	defer publicTarget.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyHits.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	publicURL, err := url.Parse(publicTarget.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetURL := "http://public.web2api.test:" + publicURL.Port() + "/article"
+	publicIP := netip.MustParseAddr("203.0.113.11")
+	resolver := testNetIPResolver(func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{publicIP}, nil
+	})
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		if host != publicIP.String() {
+			return nil, fmt.Errorf("transport tried to dial %q, want the validated public IP", addr)
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, publicTarget.Listener.Addr().String())
+	}
+	ctx := context.WithValue(t.Context(), guardedNetworkHooksKey{}, guardedNetworkHooks{
+		resolver: resolver,
+		dial:     dial,
+	})
+	runtime := Query{ProxyURL: proxy.URL}
+	if title, ok := FetchPageTitle(ctx, targetURL, runtime); !ok || title != "public article title" {
+		t.Fatalf("public path title = %q, ok=%v", title, ok)
+	}
+	if got := publicHits.Load(); got != 1 {
+		t.Fatalf("public fixture hits = %d, want 1", got)
+	}
+	if got := proxyHits.Load(); got != 0 {
+		t.Fatalf("proxy hits = %d, want 0 for title probe", got)
+	}
+	if runtime.ProxyURL != proxy.URL {
+		t.Fatalf("FetchPageTitle mutated the caller query proxy to %q", runtime.ProxyURL)
+	}
+	fallback := IndexCheckQuery(targetURL, runtime)
+	if fallback.ProxyURL != proxy.URL || fallback.Text != targetURL {
+		t.Fatalf("URL-phrase fallback query lost its proxy or target: %+v", fallback)
 	}
 }
 

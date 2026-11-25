@@ -199,11 +199,13 @@ func (s *IndexJobStore) AppendResult(jobID string, row IndexCheckURLResult) erro
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	if _, err := f.Write(append(payload, '\n')); err != nil {
-		return err
+		return errors.Join(err, f.Close())
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 // LoadResults returns every finished row in completion order.
@@ -217,7 +219,6 @@ func (s *IndexJobStore) LoadResults(jobID string) ([]IndexCheckURLResult, error)
 		}
 		return nil, err
 	}
-	defer f.Close()
 	rows := make([]IndexCheckURLResult, 0, 64)
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -233,7 +234,7 @@ func (s *IndexJobStore) LoadResults(jobID string) ([]IndexCheckURLResult, error)
 		}
 		rows = append(rows, row)
 	}
-	return rows, scanner.Err()
+	return rows, errors.Join(scanner.Err(), f.Close())
 }
 
 // LoadMeta reads one job's metadata.

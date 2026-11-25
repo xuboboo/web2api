@@ -193,7 +193,7 @@ func TestPlaygroundKeepsSynchronousCeiling(t *testing.T) {
 
 func readAll(t *testing.T, resp *http.Response) string {
 	t.Helper()
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	var b strings.Builder
 	buf := make([]byte, 4096)
 	for {

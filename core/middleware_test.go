@@ -43,7 +43,7 @@ func TestConcurrencyLimitMiddleware(t *testing.T) {
 			defer wg.Done()
 			r, e := app2.Test(httptest.NewRequest("GET", "/", nil))
 			if e == nil {
-				r.Body.Close()
+				closeTestResource(t, r.Body)
 			}
 		}()
 	}
@@ -210,7 +210,7 @@ func TestRequestContextMiddleware_GeneratesRequestID(t *testing.T) {
 
 func readBody(t *testing.T, resp *http.Response) string {
 	t.Helper()
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body failed: %v", err)

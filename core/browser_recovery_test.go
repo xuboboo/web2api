@@ -50,7 +50,7 @@ func TestBrowserRelaunchesOnlyAfterDisconnect(t *testing.T) {
 				if tc.canceled {
 					cancel()
 				}
-				conn.Close()
+				closeTestResource(t, conn)
 			}))
 			defer server.Close()
 			// An invalid binary path detects relaunch without starting Chrome.

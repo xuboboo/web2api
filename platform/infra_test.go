@@ -244,7 +244,7 @@ func TestBoltStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open bolt store: %v", err)
 	}
-	defer s.Close()
+	defer closeTestResource(t, s)
 	exerciseStore(t, s)
 }
 
@@ -263,7 +263,7 @@ func TestJSONStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen json store: %v", err)
 	}
-	defer s2.Close()
+	defer closeTestResource(t, s2)
 	keys, err := s2.ListKeys()
 	if err != nil || len(keys) != 1 || keys[0].ID != "id-1" || keys[0].UsedTotal != 5 {
 		t.Fatalf("reopen persistence: keys=%+v err=%v", keys, err)
@@ -301,7 +301,7 @@ func TestNewReusesSecretAndHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New again: %v", err)
 	}
-	defer p2.Close()
+	defer closeTestResource(t, p2)
 	if _, err := verifyJWT(p2.secret, token); err != nil {
 		t.Fatalf("token from p1 must verify under p2 (secret reuse): %v", err)
 	}
@@ -331,7 +331,7 @@ func TestNewFallsBackToJSONWhenBoltBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New with blocked bbolt: %v", err)
 	}
-	defer p.Close()
+	defer closeTestResource(t, p)
 	if p.storeKind != "json" {
 		t.Fatalf("store kind: want json got %s", p.storeKind)
 	}

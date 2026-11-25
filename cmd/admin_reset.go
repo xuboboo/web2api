@@ -12,6 +12,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,12 +52,16 @@ func runAdminReset(cmd *cobra.Command, args []string) error {
 		// Interactive prompt with a confirmation round. 不引新依赖(单二进制
 		// 纪律):终端回显未关闭;需要无回显输入时可改用管道:
 		//   printf '新密码' | web2api admin-reset
-		fmt.Fprint(cmd.OutOrStdout(), "请输入新密码(提示:回显未关闭,可改用管道输入): ")
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), "请输入新密码(提示:回显未关闭,可改用管道输入): "); err != nil {
+			return fmt.Errorf("输出密码提示失败: %w", err)
+		}
 		first, err := readPasswordLine()
 		if err != nil {
 			return fmt.Errorf("读取密码失败: %w", err)
 		}
-		fmt.Fprint(cmd.OutOrStdout(), "请再次输入确认: ")
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), "请再次输入确认: "); err != nil {
+			return fmt.Errorf("输出确认提示失败: %w", err)
+		}
 		second, err := readPasswordLine()
 		if err != nil {
 			return fmt.Errorf("读取密码失败: %w", err)
@@ -81,8 +86,6 @@ func runAdminReset(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("打开 %s 失败(请先停止 serve 实例): %w", dbPath, err)
 	}
-	defer db.Close()
-
 	err = db.Update(func(tx *bolt.Tx) error {
 		settings := tx.Bucket([]byte("settings"))
 		if settings == nil {
@@ -93,12 +96,18 @@ func runAdminReset(cmd *cobra.Command, args []string) error {
 		}
 		return settings.Put([]byte("admin_password_custom"), []byte("1"))
 	})
+	closeErr := db.Close()
 	if err != nil {
-		return fmt.Errorf("写入新哈希失败: %w", err)
+		return errors.Join(fmt.Errorf("写入新哈希失败: %w", err), wrapIfError("关闭数据库失败", closeErr))
+	}
+	if closeErr != nil {
+		return fmt.Errorf("关闭数据库失败: %w", closeErr)
 	}
 
 	logrus.WithField("username", username).Info("管理员密码已在停服态重置")
-	fmt.Fprintf(cmd.OutOrStdout(), "管理员 %s 的密码已重置(数据库 %s)。重启服务后生效。\n", username, dbPath)
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "管理员 %s 的密码已重置(数据库 %s)。重启服务后生效。\n", username, dbPath); err != nil {
+		return fmt.Errorf("输出密码重置结果失败: %w", err)
+	}
 	return nil
 }
 

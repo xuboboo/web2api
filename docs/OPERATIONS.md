@@ -63,15 +63,181 @@ grep -i "登录失败" /var/lib/web2api/audit.log | tail -20
 ## 3. 备份
 
 ```bash
-# 方式 A：停服备份（最稳，bbolt 一致性有保证）
+# 数据库快照：只包含 web2api.db，不是完整灾备包
 systemctl stop web2api
 ./web2api admin-backup --data-dir /var/lib/web2api --out /backup/web2api-$(date +%F-%H%M).db
 systemctl start web2api
 
-# 方式 B：在线快照（管理 API，JWT）
+# 在线数据库快照（管理 API，JWT；仍不是完整灾备包）
 curl -s -H "Authorization: Bearer $TOKEN" -o /backup/live-$(date +%F).db \
   $BASE/api/admin/backup
 ```
+
+### 内置完整恢复点
+
+`--full` 在停服态生成一个校验和保护的 `tar.gz`，包含整个 `platform.data_dir`（其中通常有 `web2api.db`、`secret.key`、`index_jobs/`、`audit.log*`），并包含当前服务实际使用的配置文件。归档和配置文件都会以敏感数据对待；输出必须在数据目录外，命令不会覆盖既有文件。
+
+```bash
+sudo systemctl stop web2api
+sudo install -d -m 0700 /backup/web2api
+sudo ./web2api admin-backup \
+  -c /etc/web2api/config.yaml \
+  --full \
+  --data-dir /var/lib/web2api \
+  --out /backup/web2api/full-$(date +%F-%H%M%S).tar.gz
+sudo systemctl start web2api
+```
+
+若 `index_jobs.enabled=true`，`index_jobs.dir` 必须存在且位于 `platform.data_dir` 内，否则命令会失败并要求额外备份该目录，避免产生看似完整、实际缺少任务状态的恢复点。使用 `EnvironmentFile` 或纯环境变量注入的凭据不会被写入 `config.yaml`，必须和归档一起加密保管。
+
+完整恢复到隔离路径时：
+
+```bash
+sudo systemctl stop web2api
+sudo ./web2api admin-restore \
+  --in /backup/web2api/full-2026-11-25-153000.tar.gz \
+  --data-dir /var/lib/web2api-restore \
+  --config-out /etc/web2api-restore/config.yaml
+```
+
+恢复器先在目标父目录中解包并逐文件核对清单、大小、SHA-256 和数据库契约，全部通过后才替换目标目录与配置文件。默认把原数据和原配置留档为 `*.pre-restore-<时间戳>`；确认恢复成功后再按保留策略清理。`--backup-current=false` 会在恢复成功后删除这些留档，仅应在目标本来就是空隔离目录时使用。
+
+当 `--data-dir` 本身就是 Docker named volume、bind mount 或其他挂载点根目录时，Linux 不允许把该挂载根 `rename` 走。此时加 `--preserve-in /volume/outside-data`：恢复器先把旧数据完整复制到该外部保留目录，再清空挂载点内的子项并写回已验证数据；复制或写入失败会尝试从保留目录回滚。`--preserve-in` 必须位于被恢复的数据目录之外，普通目录恢复仍应使用上面的原子目录替换路径。
+
+### systemd 目录部署：完整离线备份
+
+没有 `web2api` 二进制、或需要额外包含环境文件与自定义路径时，可使用下面的通用离线归档。下例适用于 [DEPLOYMENT.md](DEPLOYMENT.md) 的 systemd 布局；先停服，使 bbolt、`secret.key`、审计日志和异步任务文件来自同一静止时点。归档包含管理员环境文件时会含敏感凭据，备份目录与归档必须仅管理员可读，并应加密后异地保存。
+
+```bash
+set -e
+sudo install -d -m 0700 /backup/web2api
+sudo systemctl stop web2api
+trap 'sudo systemctl start web2api' EXIT
+stamp=$(date +%F-%H%M%S)
+tmp=/backup/web2api/.web2api-$stamp.tar.gz.tmp
+archive=/backup/web2api/web2api-$stamp.tar.gz
+# 如果 web2api.env 不存在，删除最后一个 `web2api.env` 参数。
+sudo tar -czf "$tmp" \
+  -C /var/lib web2api \
+  -C /etc/web2api config.yaml web2api.env
+sudo chmod 0600 "$tmp"
+sudo mv "$tmp" "$archive"
+sudo systemctl start web2api
+trap - EXIT
+```
+
+归档应包含 `web2api/web2api.db`、`web2api/secret.key`、`web2api/index_jobs/`、`web2api/audit.log*`、`config.yaml`；若使用 EnvironmentFile，还应包含 `web2api.env`。定期用 `tar -tzf "$archive"` 检查清单，并把归档复制到独立故障域；同机备份和保留少于 7 天不满足发布准入。
+
+恢复时先解到全新的隔离目录，确认清单与关键文件存在：
+
+```bash
+restore=/var/lib/web2api-restore
+sudo install -d -m 0700 "$restore"
+sudo tar -xzf "$archive" -C "$restore"
+sudo test -s "$restore/web2api/web2api.db"
+sudo test -s "$restore/web2api/secret.key"
+sudo test -f "$restore/web2api/index_jobs" || sudo test -d "$restore/web2api/index_jobs"
+sudo test -s "$restore/config.yaml"
+```
+
+先停止正式实例，再创建临时 drop-in（如备份含 `web2api.env`，沿用它以验证相同管理员密码）：
+
+```bash
+sudo systemctl stop web2api
+sudo install -d -m 0755 /etc/systemd/system/web2api.service.d
+sudo tee /etc/systemd/system/web2api.service.d/90-restore-test.conf >/dev/null <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/opt/web2api/web2api serve -c /var/lib/web2api-restore/config.yaml
+Environment=WEB2API_PLATFORM_DATA_DIR=/var/lib/web2api-restore/web2api
+Environment=WEB2API_SERVER_HOST=127.0.0.1
+Environment=WEB2API_SERVER_PORT=7001
+EnvironmentFile=
+EnvironmentFile=-/var/lib/web2api-restore/web2api.env
+EOF
+sudo chown -R web2api:web2api /var/lib/web2api-restore
+sudo systemctl daemon-reload
+sudo systemctl start web2api
+curl -fsS http://127.0.0.1:7001/web-tool/health
+```
+
+在端口 7001 的隔离实例验证登录、Key 数量、`total_units` 和任务历史；检查后停止服务并仅移除本次创建的 drop-in：
+
+```bash
+sudo systemctl stop web2api
+sudo rm /etc/systemd/system/web2api.service.d/90-restore-test.conf
+sudo systemctl daemon-reload
+sudo systemctl start web2api
+```
+
+确认正式实例正常后，再按变更流程切换正式数据目录。保留旧数据目录和原 unit，直到观察期结束，回滚时切回原路径。该流程已在干净 Debian 12 systemd 容器实测：7001 隔离实例健康、管理员登录和 Key 数量与备份前一致（E63）；外部云主机重启、正式域名/CA 和生产凭据仍按 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) 验收。
+
+### Docker named volume
+
+两份 Compose 使用 `web2api-data` named volume，不能直接把上面的 `/var/lib/web2api` 路径照搬成宿主机目录命令。下列流程已在 Docker Desktop Linux engine 29.9.3、非 root `chrome` 用户、`cap_drop=ALL` 与 `no-new-privileges` 下实测（E60）。卷名和配置文件路径按实际 Compose project 替换；先停服，所有辅助容器都只在停服态运行。
+
+```bash
+DATA_VOLUME=web2api-data
+BACKUP_VOLUME=web2api-backup
+RESTORE_DATA_VOLUME=web2api-restore-data
+RESTORE_CONFIG_VOLUME=web2api-restore-config
+PRESERVE_VOLUME=web2api-restore-preserve
+CONFIG_FILE=/opt/web2api/config.yaml
+
+docker volume create "$BACKUP_VOLUME"
+docker run --rm --user 0:0 \
+  --mount "source=$BACKUP_VOLUME,target=/backup" \
+  --entrypoint /bin/sh web2api:local \
+  -c 'chown chrome:chrome /backup'
+
+docker compose stop web2api
+docker run --rm --cap-drop ALL --security-opt no-new-privileges:true \
+  --entrypoint /usr/local/bin/web2api \
+  --mount "source=$DATA_VOLUME,target=/usr/src/app/data,readonly" \
+  --mount "type=bind,source=$CONFIG_FILE,target=/usr/src/app/config.yaml,readonly" \
+  --mount "source=$BACKUP_VOLUME,target=/backup" \
+  web2api:local admin-backup \
+  --full --data-dir /usr/src/app/data \
+  -c /usr/src/app/config.yaml --out /backup/full.tar.gz
+
+for volume in "$RESTORE_DATA_VOLUME" "$RESTORE_CONFIG_VOLUME" "$PRESERVE_VOLUME"; do
+  docker volume create "$volume"
+done
+docker run --rm --user 0:0 \
+  --mount "source=$RESTORE_DATA_VOLUME,target=/restored-data" \
+  --mount "source=$RESTORE_CONFIG_VOLUME,target=/restore-config" \
+  --mount "source=$PRESERVE_VOLUME,target=/preserve" \
+  --entrypoint /bin/sh web2api:local \
+  -c 'chown -R chrome:chrome /restored-data /restore-config /preserve'
+
+docker run --rm --cap-drop ALL --security-opt no-new-privileges:true \
+  --entrypoint /usr/local/bin/web2api \
+  --mount "source=$BACKUP_VOLUME,target=/backup,readonly" \
+  --mount "source=$RESTORE_DATA_VOLUME,target=/usr/src/app/restored-data" \
+  --mount "source=$RESTORE_CONFIG_VOLUME,target=/restore-config" \
+  --mount "source=$PRESERVE_VOLUME,target=/preserve" \
+  web2api:local admin-restore \
+  --in /backup/full.tar.gz \
+  --data-dir /usr/src/app/restored-data \
+  --config-out /restore-config/config.yaml \
+  --preserve-in /preserve
+```
+
+恢复结果应包含 `/restore-config/config.yaml`；旧数据位于 `/preserve/restored-data.pre-restore-*`。启动隔离容器验证后，才能把 Compose 数据卷和配置挂载切到恢复卷：
+
+```bash
+docker run -d --name web2api-restore-check \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --mount "source=$RESTORE_DATA_VOLUME,target=/usr/src/app/restored-data" \
+  --mount "source=$RESTORE_CONFIG_VOLUME,target=/restore-config" \
+  -e WEB2API_PLATFORM_DATA_DIR=/usr/src/app/restored-data \
+  -p 127.0.0.1:17001:7000 web2api:local \
+  serve -c /restore-config/config.yaml
+
+curl -fsS http://127.0.0.1:17001/web-tool/health
+```
+
+隔离实例必须返回 `healthy`/`bbolt`，并能用备份时相同的管理员凭据登录；核对 Key 数量、用量与任务历史后删除 `web2api-restore-check`。数据卷必须在重新启动正式服务前保留，不能把 `docker compose down -v` 当作回滚操作。
 
 备份必须覆盖的东西：
 
@@ -82,7 +248,7 @@ curl -s -H "Authorization: Bearer $TOKEN" -o /backup/live-$(date +%F).db \
 | `index_jobs/` | 异步任务元数据与结果 JSONL | 任务历史丢失（进行中的任务无法续跑） |
 | `config.yaml` | 全部配置 | 需重建配置 |
 
-> **实测结论（本次审计）**：`admin-backup` 只导出 `web2api.db`，恢复后登录与 API Key 计数完好（已实机验证：恢复后 `acc-sample` 的 `used_today` 仍为 4）。`secret.key` 与 `index_jobs/` 需单独备份。
+> **实测结论（本次审计）**：不带 `--full` 的 `admin-backup` 只导出 `web2api.db`，恢复后登录与 API Key 计数完好（恢复后 `acc-sample` 的 `used_today` 仍为 4）。`--full` 已在隔离临时目录完成往返验证：数据库、`secret.key`、任务 JSONL、审计日志和配置逐项恢复；路径穿越、未列入清单的条目和校验和篡改均在替换目标前被拒绝（E59）。Docker named volume 的原地恢复、容器重建持久性、管理员登录和 Key 恢复也已实测（E60）；Debian systemd 全目录归档、7001 隔离 unit 恢复与升级/回滚见 E63。
 
 ## 4. 恢复
 
@@ -169,7 +335,7 @@ curl -s -X POST $BASE/api/auth/password -H "Authorization: Bearer $TOKEN" \
 引擎  : curl -s $BASE/api/engines -H "Authorization: Bearer $TOKEN"
 任务  : curl -s $BASE/v1/index/check/jobs -H "X-API-Key: $KEY"
 配额  : curl -s $BASE/v1/quota -H "X-API-Key: $KEY"
-备份  : ./web2api admin-backup --out /backup/x.db   （先停服）
-恢复  : ./web2api admin-restore --in /backup/x.db
+备份  : ./web2api admin-backup --full -c config.yaml --out /backup/x.tar.gz  （先停服）
+恢复  : ./web2api admin-restore --in /backup/x.tar.gz --config-out config.yaml
 改密  : ./web2api admin-reset --password '<新密码>'  （停服状态，忘记密码时）
 ```

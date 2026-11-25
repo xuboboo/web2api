@@ -347,7 +347,7 @@ func TestNewRawHTTPClientSocks5hUsesProxyDNS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected proxied request to succeed, got %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestResource(t, resp.Body)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

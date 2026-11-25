@@ -10,17 +10,17 @@
 | F-02 | P1 | Docker 构建上下文泄露运行态密钥（`data/secret.key`、`web2api.db`）且体积 772MB | 已修复 |
 | F-09 | P1 | 异步收录任务越权：任意 API Key 可读/列/取消其他 Key 的任务 | 已修复 |
 | F-03 | P2 | `docker-compose.yaml` 注释宣称「API 无鉴权层」，与实际（API Key + JWT）相反 | 已修复 |
-| F-04 | P2 | CI 的 golangci-lint 版本无法 lint go1.26 模块（v1.64.8 由 go1.24 构建） | 已确认待修 |
+| F-04 | P2 | CI 的 golangci-lint 版本无法 lint go1.26 模块（v1.64.8 由 go1.24 构建） | 已修复（CI v2.13.2；当前树本机 lint 0 issues） |
 | F-05 | P3 | 工作区残留 531MB 可执行文件 + 146MB QA 目录 | 已确认待修 |
-| F-06 | P2 | 登录锁定仅按 (用户名, IP) 且纯内存，换 IP 可绕过、多实例失效 | 已确认待评估 |
-| F-07 | P3 | 本机无 C 工具链，`go test -race` 无法执行（CI 有覆盖） | 环境受限 |
-| F-08 | P3 | `go.mod` go1.26.0 / 开发工具链 1.27.4 / 镜像 1.26.11 三者不一致 | 待验证 |
+| F-06 | P2 | 登录锁定进程内存储，重启清空、多副本不共享 | 跨 IP 绕过已由 F-25 修复；单实例约束已记录，多副本前须外部化 |
+| F-07 | P3 | Windows race 检测需要 MinGW 与 ASCII 临时路径 | 已实测（当前树单测/严格集成 race 全绿，见 E37） |
+| F-08 | P3 | CI Go patch 版本浮动，可能与 Docker builder 漂移 | 已缓解（CI/integration/release 固定 1.26.11；远端复跑待验证） |
 | F-10 | P3 | 管理员（JWT）没有查询异步任务的接口，任务只有持 key 方可见 | 已确认 |
 | F-11 | P2 | 完成任务永不释放内存：URL 列表常驻 + 常驻任务表无上限；队列满时还会并发跑第二个任务 | 已修复 |
 | F-12 | P3 | `GET /v1/index/check/jobs` 每次轮询都遍历磁盘读取全部 job.json | 已确认 |
 | F-13 | P1 | `security.data_plane_auth` 代码默认 `false`，与文档/配置注释相反：裸启即匿名开放检索 | 已修复 |
-| F-14 | P2 | `admin-backup` 只含 `web2api.db`，不含 `secret.key` 与 `index_jobs/` | 已确认（文档已写明） |
-| F-15 | P2 | 收录结论随时间变化，接口/文档未说明时效性，用户易误读为"永久状态" | 已确认（需文档口径） |
+| F-14 | P2 | `admin-backup` 只含 `web2api.db`，不含 `secret.key` 与 `index_jobs/` | 已修复（`--full` 完整归档+校验/原子恢复，E59；Docker named volume 往返见 E60） |
+| F-15 | P2 | 收录结论随时间变化，接口/文档未说明时效性，用户易误读为"永久状态" | 已修复（API.md 口径已补；控制台逐结果时间戳未实现） |
 | F-16 | — | 核心业务准确性实测：正/负样本与时间变化复核 | 已验证（见 §F-16） |
 | F-17 | P2 | 登录页文案与后端能力不符（"20 条上限"、"10/30/120 冷却档"） | 已修复 |
 | F-18 | P2 | `index_jobs.dir` 无启动校验：部署健康，首个大批次才 500 | 已修复 |
@@ -48,6 +48,16 @@
 | F-40 | **P1** | release 打包只含二进制，不含 `web/`；而面板是磁盘资源 → 下载 tar 包的用户官网与控制台全 404 | 已修复（CI 打包加 `web`，INSTALL §4 + DEPLOYMENT §4 + 排错行） |
 | F-41 | — | 「真实查询挂住」实为验证脚本不读管道导致服务端写阻塞 | 已撤回（非产品缺陷，见下） |
 | F-42 | **P2** | 同步路径不去重而同 URL 重复计费，异步路径却去重：同一输入按条数决定花多少额度；且非域名/`ftp:`/`javascript:` 输入被接受并计费 | 已修复（同步去重 + scheme 白名单 + 必须有域名） |
+| F-43 | **P1** | 仓库容器配置跳过出站 TLS 证书校验，影响搜索结果与目标标题可信度 | 已修复（恢复证书校验 + 镜像安装 CA；E60 容器 HTTPS 通过） |
+| F-44 | P2 | Dockerfile 包安装失败可能被后续 `|| useradd` 分支掩盖 | 已修复（分组 shell 条件 + 回归检查；E60 最终镜像实构通过） |
+| F-45 | P2 | 安装/安全文档与当前磁盘静态资源、登录锁定语义不一致 | 已修复（INSTALL、ENVIRONMENT 与安全注释对齐） |
+| F-46 | **P1** | 百度标题探测经远端代理时，代理重新解析目标 DNS，可能绕过本机 SSRF/DNS 重绑定校验 | 已修复（固定直连；DNS 重绑定、零代理访问与公开路径回归均通过，E62） |
+| F-47 | P2 | 备份、任务结果与审计读取忽略 I/O 关闭/同步错误；成功状态可能掩盖未完整落盘 | 已修复（错误显式返回；当前树 lint、单测与 race 通过） |
+| F-48 | P2 | Compose 缺少一致的最小权限和日志轮转基线 | 已修复（静态配置/契约测试与 E60 容器运行检查通过） |
+| F-49 | P2 | Linux CI 浏览器 wrapper 测试用有头 Chrome，导致无 DISPLAY runner 全量测试失败 | 已修复（fixture 改 headless；本机回归通过，GitHub 复跑待完成） |
+| F-50 | **P1** | `admin-backup --out` 指向源数据库或其硬链接时会截断平台数据库 | 已修复（拒绝同一文件；同路径/硬链接回归通过，E48） |
+| F-51 | **P1** | Docker named-volume 根目录不能 rename，完整恢复在最后切换阶段失败 | 已修复（挂载点原地恢复 + 外部 preserve；单测/真实卷往返通过，E60） |
+| F-52 | **P1** | `trust_proxy_headers` 只控制 HSTS，TLS 反代后的限速、登录锁定和审计仍看到反代 IP | 已修复（仅受信 peer 的 `X-Real-IP` 生效；单测、跨容器 HTTPS 与审计实测通过，E63） |
 
 ---
 
@@ -162,13 +172,13 @@ Playwright 控制台告警：`[DOM] Input elements should have autocomplete attr
 
 **影响**：v1.64.8 无法解析 Go 1.26 的导出数据；集成测试与发布构建在低于模块声明的工具链上跑，结果不能代表真实 CI 主链路。
 
-**修复**（依据官方 [迁移指南](https://golangci-lint.run/docs/product/migration-guide/)）：
+**修复**（依据官方 [迁移指南](https://golangci-lint.run/docs/product/migration-guide/)；Go 版本曾采用 `1.26` 浮动 minor，现在与镜像统一固定到 `1.26.11`）：
 - `.golangci.yml` → `version: "2"`、`go: "1.26"`、`linters.default: none`；移除已并入 staticcheck 的 `gosimple`。
 - CI action → `golangci-lint-action@v8`，lint 版本固定 `v2.13.2`。
 - 增加 `govulncheck ./...` 步骤。
-- integration/release workflow 的 Go → 1.26。
+- integration/release workflow 的 Go → 1.26；2026-11-25 进一步把 CI、integration、release 三个 workflow 精确固定为 `1.26.11`，与 Docker builder 一致。
 
-**验证**：v2.13.2 已安装并成功读取 v2 配置（不是"未运行就宣称修好"）。完整 lint 在本机被 Windows 分页文件限制中止，错误为 Go 1.27 导出数据版本不兼容 + `fork/exec compile.exe: The paging file is too small`；CI 有 Linux + 完整内存，作为最终验证关卡。
+**验证**：本机 Go 1.26.11 下 golangci-lint v2.13.2 当前树 0 issues（E37）；另见 F-49 的远端同 SHA CI 测试失败与待复跑状态。
 
 **回滚**：恢复三个 workflow 和 `.golangci.yml` 的上一版本。
 
@@ -525,9 +535,9 @@ tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN
 [8]  "ftp://…"     → 200（接受，计 1 unit）
 ```
 
-**根因有两个，且第一个是自相矛盾的设计**：
+**修复前证据（此处描述的是历史缺陷，当前实现已由下文修复）**\n\n**根因有两个，且第一个是自相矛盾的设计**：
 
-1. 异步任务路径**已经**去重（`core/index_job_manager.go` 用 `seen` 表合并，`index_job_test.go` 还有断言 `Duplicate URLs must collapse`），而同步路径的 `validateIndexCheckURLs` 只做 trim + 校验，**不去重**。结果：**同一份输入，20 条重复只花 20 unit，21 条重复却塌成 1 条、只花 1 unit**——花多少额度取决于条数，这比"都计费"更难解释。
+1. 异步任务路径先于同步路径实现去重；修复前同步路径不去重，导致相同输入的计费取决于批次条数。当前两条路径已统一按 `indexURLKeyFrom` 去重，见 F-42 修复与回归。
 2. 校验只要求"能解析出 host"，于是 `not-a-url` 被当成 `http://not-a-url` 接受，`ftp://`、`javascript:`、`data:`、`mailto:` 也全部放行。这些 URL 永远不可能出现在搜索引擎索引里，却被照常计费并回答 `indexed:false`——**用户看到的是一条"未收录"的假答案**。
 
 **修复**（`core/server.go`）：
@@ -568,7 +578,7 @@ tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN
 
 ---
 
-## F-14 备份不含密钥与任务目录（P2，已确认）
+## F-14 备份不含密钥与任务目录（P2，历史发现，已由后文完整归档修复闭环）
 
 **实测**：`admin-backup` 产出 28 KB 文件；`admin-restore` 恢复出 `web2api.db`；启动后登录成功、`acc-sample` 这个 Key 仍在且 `used_today=4` 计数完好 —— 备份恢复链路**可用**。
 
@@ -576,7 +586,7 @@ tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN
 - `secret.key` 不在备份内 → 恢复到新机器后所有管理员 JWT 失效（需重新登录）。API Key 不受影响（哈希在 DB 里）。
 - `index_jobs/` 不在备份内 → 任务历史与"运行中任务"丢失，无法续跑。
 
-**处置**：不擅自改备份格式（会动数据契约）；已在 `docs/OPERATIONS.md` §3 明确"备份必须覆盖 web2api.db + secret.key + index_jobs/ + config.yaml"，并在 `RELEASE_CHECKLIST.md` F3 设为检查项。
+**当时的处置**：在 `docs/OPERATIONS.md` §3 明确手工完整备份清单，并在 `RELEASE_CHECKLIST.md` F3 设为检查项。后续已实现 `admin-backup --full`，兼容原 `.db` 格式；修复与验证见本文末“F-14 数据库快照不是完整恢复点”。
 
 ---
 
@@ -601,7 +611,7 @@ tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN
 3. **4 条"可疑"样本复核后全部翻正** → 说明此前的否定不是匹配器失效，而是文章当时确实还没被索引。这是正向证据：**判定对真实索引状态是敏感的**。
 4. **仍未量化的部分**：标题被百度大幅改写、外站转载压过原站、结果超过前 10 条这三种情况会产生漏判（false negative）。当前没有任何自动发现机制，只能靠抽样人工复核。已在报告中列为"业务准确性已知边界"，未伪称已解决。
 
-**待办（未做）**：把上述口径写进 `docs/API.md` 的响应说明与官网文案；给用户侧加一句"结果时间戳 + 复查建议"。
+**交付状态**：`docs/API.md` 已说明搜索视角、非官方状态和 24–72 小时复查建议；官网以可检索性和示例为主，尚未增加逐结果时间戳。API 结果没有单元级 `checked_at` 字段，因此不应在前端伪造时间；这项属于产品增强，不作为已交付内容。
 
 ---
 
@@ -752,19 +762,134 @@ q.GuardPrivateNetworks = true   // 调用方给的 URL 一律走私有网段防�
 
 ---
 
-## F-06 登录锁定可被换 IP 绕过（P2，**已修复**，详见 F-25）
+## F-06 登录锁定的单实例边界（P2，跨 IP 绕过已修复；进程内状态为已记录部署约束）
 
 **证据**：`platform/security.go`，锁定键原为 `loginAttemptKey{username, ip}`，状态存在进程内 map。
 **影响**：单管理员 + 单实例部署下，攻击者用代理池对同一用户名可继续尝试（每 IP 5 次/15 分钟）。
 
-**结案**：已改为**按用户名跨 IP 聚合**（F-25 记录了完整修复、取舍与实测）。此条保留作为原始发现编号，结论以 F-25 为准。
+**结案**：跨 IP 绕过已改为**按用户名聚合**（F-25 记录修复与实测）。剩余性质：计数器保存在 `Platform` 内存，服务重启会清空，多个副本彼此不共享。`docs/DEPLOYMENT.md` §8 已明确单实例部署边界；当前单实例目标下接受此约束，多副本上线前必须外部化状态或在边缘代理实现共享限速。
 
 **仍存在（记录在案，非本项范围）**：多实例部署时锁定状态是进程内的，跨实例不共享；单机部署不受影响，多实例需要粘性会话或在反代层做登录限速。
 
 ---
 
-## F-08 三处 Go 版本不一致（P3，待验证）
+## F-08 Go 版本漂移（P3，已缓解；CI 复跑待验证）
 
-`go.mod` = `go 1.26.0`；本机工具链 = **go1.27.4**；`Dockerfile` = `golang:1.26.11`；CI = `go-version: "1.26"`。
-风险：开发机上用 1.27 特性写代码 → CI/镜像 1.26 编译失败。当前 `go vet`/`go test` 通过只证明 1.27 能编译。
-**验证方案**：CI 已用 1.26，等价覆盖；本地可通过 `GOTOOLCHAIN=go1.26.11 go build` 复现（需下载工具链，网络受限未执行）。
+`go.mod` 声明最低 Go `1.26.0`；本机审计使用 go1.26.11；`Dockerfile` builder 精确固定 `golang:1.26.11`。CI、integration、release 的 setup-go 原为浮动 `1.26`，现已精确固定为 `1.26.11`。
+**剩余风险**：workflow 修改尚未进入远端；同 SHA 既有 CI 因 F-49 测试失败而未执行 build/vet/lint/vuln steps。目标版本本机全量验证见 E45，GitHub 复跑待完成。
+
+---
+
+## F-43 仓库容器配置关闭出站 TLS 证书校验（P1，已修复并验证）
+
+**证据**：审计时 `config.yaml:16` 为 `server.insecure: true`，`cmd/serve.go` 将其传入搜索引擎和目标页请求；`core/http_client.go` 在此开关为 true 时启用 `WithInsecureSkipVerify()`。这使中间人可伪造 SERP 或目标页标题，污染收录结论，也会降低出站 HTTPS 的机密性与完整性。
+
+**根因**：配置以“容器缺 CA”为理由关闭校验，而镜像没有安装根证书包。
+
+**修复**：`config.yaml` 默认改为 `false`；Dockerfile 安装 `ca-certificates`；部署说明要求企业代理场景安装可信 CA，而非关闭校验。源码安装文档也列出 CA 包。
+
+**验证**：静态核对配置默认值、TLS transport 分支与 Docker 包列表；新增 `TestContainerConfigShipsDefaults` 断言默认不启用 insecure。Docker 官方文档说明容器需要安装 CA 包以验证 HTTPS（[Docker CA certificates](https://docs.docker.com/engine/network/ca-certs/)）。最终镜像构建成功，并在容器内通过 `wget --spider https://example.com/` 证书链验证（E60）。
+
+**影响/兼容性**：自签名站点或代理证书此前依赖 `server.insecure: true` 的部署，改为校验后会失败；推荐把代理 CA 加入镜像/主机信任库。受控排障仍可显式临时设 `true`。
+
+**回滚**：可单独设 `server.insecure: true` 恢复旧行为，但会重新承担 TLS 中间人风险。
+
+---
+
+## F-44 Dockerfile 包安装失败可被 `|| useradd` 掩盖（P2，已修复并验证）
+
+**证据**：原 RUN 指令在 `apt-get install wget tini` 后串接 `&& getent ... || useradd ... && chown ...`。如果包安装失败而 `useradd` 成功，shell 可能以用户创建分支的成功状态结束 RUN，构建留下缺少 `tini`/`wget` 的镜像；容器启动入口或健康检查随后失败。
+
+**修复**：把 `getent || useradd` 放入括号，确保包安装失败不能跳到回退分支；添加 `TestDockerfilePackageInstallFailureCannotBeMasked` 静态回归检查。Docker 的 shell-form RUN 由命令 shell 解释（[Dockerfile reference](https://docs.docker.com/reference/dockerfile/)）。
+
+**验证/影响**：新增 Go 回归检查和一次真实 `docker build` 均通过，最终容器可健康启动并包含 `wget`/`tini`（E60）。语义仅让真实的 apt 安装错误正常令构建失败，无数据格式或运行时配置迁移。
+
+---
+
+## F-45 安装文档与代码语义漂移（P2，文档已修复）
+
+**证据**：`docs/INSTALL.md` 同时声称静态页面已编译入单二进制、又要求单独带 `web/`；启动说明把非 loopback 默认密码描述成告警，但 `cmd/serve.go` 对该组合拒绝启动。首次验证示例请求 7070，而随文复制的 `config.yaml` 监听 7000；创建的 `/var/lib/web2api` 数据目录也没有在 systemd 环境里实际配置。`docs/ENVIRONMENT.md` 与 README 仍写登录锁定按“用户名+IP”，而 `platform/security.go` 的键只有 username，失败次数跨 IP 聚合。
+
+**修复**：纠正 INSTALL 的磁盘资源、启动安全说明、验证端口和数据目录步骤；systemd 配置显式设置 `/var/lib/web2api`；更正 ENVIRONMENT、README 登录锁定说明，并更新过期的 `platform/security.go` 注释。2026-11-25 的干净 Linux 走查又发现 `/etc/web2api` 若为 `0700 root:root`，运行用户无法穿越并读取配置；INSTALL/DEPLOYMENT 已改为 `0750 root:web2api` + `0640 root:web2api`，并增加对应常见错误。
+
+**验证**：逐项对照 `cmd/serve.go`、`platform/security.go`、`cmd/serve.go` 的静态目录装配与当前 Dockerfile/发行打包内容；随后按修正后的权限在 Debian 12 systemd 容器跑通启动、站点、健康与恢复（E63）。
+
+---
+
+## F-46 标题探测代理绕过本机 DNS 固定（P1，已修复）
+
+**证据**：`core/title_fetch.go` 从 `runtime Query` 继承 `ProxyURL` 后调用 `RawSearchRequest`；`core/http_client.go:newRawTLSClient` 使用代理时只设置 `WithProxyUrl`，不会把 `GuardedDialContext` 用于目标主机。`doGuardedRawRequest` 在本机校验目标 DNS 后，把原始域名交给代理；代理会独立解析域名，攻击者控制的重绑定域名可在验证与代理请求之间改解析结果。
+
+**影响**：当服务配置了可用于百度的远端代理时，持 API Key 的调用方可能借助可控 DNS 名称诱使代理访问其可达的非公网地址，绕过 F-01 的本机直连保护。需要攻击者控制目标域名 DNS，并且部署启用了对应代理，条件比普通 SSRF 窄，但属于安全边界绕过。
+
+**根因**：本机验证与远端代理实际解析分属两个 resolver，无法对代理的最终目的 IP 做 pinning。OWASP SSRF 指南也明确要求连接到已验证地址；只做 DNS 检查再让另一组件解析不能防 DNS rebinding（[OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)）。
+
+**修复**：`guardedTitleProbeQuery` 清空 `ProxyURL`，保留 `GuardPrivateNetworks=true`，使用本机 guarded dial 固定已验证 IP，并对每个 redirect hop 继续校验。搜索引擎 SERP 仍使用原代理；目标页不能直连时，标题探测失败并回退 URL 短语，不会把私网目标交给代理。
+
+**验证**：新增 `TestGuardedTitleProbeDoesNotUseRemoteProxy`。随后把 resolver/dialer 做成仅测试注入点，并新增 `TestFetchPageTitleDNSRebindingCannotReachPrivateTargetOrProxy`：第一次 DNS 返回公网、第二次重绑定 loopback，传输层在 dial 前拒绝，公网、私网 fixture 和代理命中均为 0；`TestGuardedTitleProbePublicPathAndFallbackRemainUsable` 同时证明正常公网标题、代理隔离和 URL 短语回退没有被破坏。定向测试及当前树全包回归通过，E62 记录命令与结果。
+
+**兼容性/回滚**：启用搜索代理但服务不能直连目标站的部署，百度标题查询可能转为 URL 短语，漏判率会高于标题模式；API 仍正常返回。回滚可恢复代理使用，但会重新打开 SSRF 边界，不建议在公网部署这样回滚。
+
+---
+
+## F-52 反向代理后的真实客户端 IP 未生效（P1，已修复并实测）
+
+**证据**：`security.trust_proxy_headers` 原来只影响 HSTS 下发；Fiber 配置没有启用 trusted-proxy IP 解析，`c.IP()` 在 TLS 反代后始终得到上游 socket 地址。于是按 IP 的管理面/未鉴权限速、登录锁定审计和来源判断会把所有用户合并到反代地址。
+
+**影响**：公网反代是推荐部署形态。该缺陷会让单个用户消耗所有用户共享的 IP 配额，审计无法定位真实来源，并削弱按 IP 的防爆破与滥用隔离。
+
+**修复**：服务端只在 `security.trust_proxy_headers=true` 时启用 Fiber trusted-proxy 校验，`ProxyHeader` 固定为 `X-Real-IP`，并启用 IP 验证；只有 `security.trusted_proxies` 中的 peer 才能提供该头。默认只信任 loopback 的 `127.0.0.1/32` 与 `::1/128`。NGINX 示例明确用 `$remote_addr` 覆盖 `X-Real-IP`。HSTS 与管理会话 `Secure` 属性统一使用 trusted-proxy-aware 的 `c.Protocol()`。
+
+**验证**：`TestTrustedProxyClientIP` 与 `TestUntrustedPeerCannotSpoofClientIP` 通过。干净 Linux + systemd + NGINX HTTPS 中，从另一个容器 `172.17.0.2` 发起登录并伪造 `X-Real-IP: 203.0.113.250`，登录审计记录为 `172.17.0.2`，不是伪造值也不是代理地址；HTTPS/HSTS、服务重启、崩溃自恢复与恢复点验证见 E63。
+
+**兼容性/回滚**：直连部署保持 `trust_proxy_headers=false` 即可维持原行为。反向代理若不在默认 loopback peer 上，必须把实际代理 IP/CIDR 写入 `trusted_proxies`；不要为了省配置信任任意网段。
+
+---
+
+## F-47 关键文件 I/O 关闭/同步错误被忽略（P2，已修复）
+
+**证据/根因**：本轮对当前树运行 golangci-lint v2.13.2 初始得到 71 项，其中 55 项为未检查错误返回。生产路径里 `admin-backup` 在 `dst.Close()` 之前就打印成功；写入失败清理时也可能在 Windows 上因文件仍打开而删不掉不完整快照。`IndexJobStore.AppendResult`、审计日志读取和 `admin-reset` 同样忽略文件/数据库关闭错误。
+
+**影响**：磁盘/文件系统在 flush 或 close 阶段报错时，备份或任务结果可能被误认为已成功持久化，削弱恢复和审计可信度。
+
+**修复**：备份显式 `Sync` 并检查 `Close` 后才成功返回；失败路径先关闭再清理 partial file，并组合保留主错误与清理错误。恢复文件复制、管理员数据库关闭、结果 JSONL 写入/Sync/Close、审计读取与 CLI 输出错误均显式传播。测试夹具通过共享 `closeTestResource` 检查资源关闭错误；测试中的 `ForceCooldown` 结果改为断言。
+
+**验证**：Go 1.26.11 下全量单测、`go vet`、单测 race、严格集成 race 与 golangci-lint v2.13.2 均通过；lint 结果从 71 项降为 0（E37）。没有改动数据库格式/API；备份命令现在可能对底层 flush/close 故障返回非零，属于失败语义纠正。
+
+## F-48 Compose 容器缺少一致的最小权限与日志轮转基线（P2，已修复并验证）
+
+**发现**：根 Compose 依赖 Dockerfile 的隐式 `HEALTHCHECK`，部署 Compose 单独声明健康检查；两份 manifest 均未丢弃 Linux capabilities 或启用 `no-new-privileges`，且根 Compose 没有日志大小/文件数限制。长时间运行可能产生无限增长的 json-file 日志；manifest 漂移也使根部署和 deploy 独立部署的健康/安全属性不同。
+
+**修复**：两份 Compose 显式统一 healthcheck、`cap_drop: ALL`、`security_opt: no-new-privileges:true` 和 `json-file` 20MB × 3 日志轮转。维持 loopback 端口发布、配置只读挂载和数据持久卷。没有设置 `read_only`，因为服务还会在 `/usr/src/app` 创建 `logs.txt`；只读根文件系统需先把日志改到可写挂载再评估。
+
+**验证**：两份 Compose 纯配置解析通过；`TestComposeManifestsShareContainerSecurityBaseline` 与 Dockerfile 环境/包安装检查通过（E40）。最终容器以 `chrome` 非 root 用户启动、health 转 healthy，inspect 确认 `CapDrop=["ALL"]` 与 `no-new-privileges:true`（E60）。
+
+**回滚**：如目标 Docker runtime 不支持 `cap_drop: ALL` 或 `no-new-privileges`，先通过运行时验证识别确切所需 capability，再仅在该部署 manifest 中最小化恢复；不得直接移除所有限制而不记录理由。日志轮转和健康检查保持启用。
+
+## F-50 备份输出可能截断源数据库（P1，已修复）
+
+**根因**：`runAdminBackup` 在创建输出文件前没有检查输出路径是否与 `web2api.db` 指向同一文件。若操作员误将 `--out` 指向源路径，`os.Create` 会先截断数据库；硬链接路径也能命中同一个 inode。
+
+**修复**：先 `os.Stat` 源与目标，使用 `os.SameFile` 拒绝同路径、符号链接或硬链接别名；输出路径检查遇到其他 stat 错误时 fail closed。检查发生在 bbolt 打开源库和创建输出文件之前。
+
+**验证**：`TestAdminBackupRejectsOutputThatAliasesSourceDatabase` 覆盖同路径和硬链接，确认命令报错后数据库大小、修改时间和可读内容均保持不变（E48）。
+
+## F-14 数据库快照不是完整恢复点（P2，已修复，跨平台部署待验收）
+
+**原始问题**：`admin-backup` 只导出 `web2api.db`；`secret.key`、`index_jobs/`、审计日志和实际配置需要运维另做目录归档。手工流程容易漏文件，也没有机器可校验的恢复点清单。
+
+**修复**：保留原 `.db` 快照兼容路径，新增 `admin-backup --full`。完整归档包含整个数据目录和当前 `-c/--config` 指向的配置，清单记录路径、类型、大小、权限和 SHA-256。输出必须位于数据目录外；`index_jobs.enabled=true` 时若自定义任务目录在数据目录外则拒绝生成，以免把“只备份了一部分任务状态”误标为完整。恢复器自动识别 gzip 归档，先在隔离 staging 目录拒绝绝对路径、`..`、符号/硬链接、重复或清单外条目，并核对 checksum 和数据库 bucket；通过后才替换数据与配置，默认留档旧状态。
+
+**验证**：E59 的往返测试验证了数据库、secret、任务 JSONL、审计日志和配置逐项一致，目标旧目录和旧配置可留档回滚；路径穿越与 manifest checksum 篡改均在替换前失败。兼容性方面，原 `.db` 的 F1/F2 路径未改变；新归档只由新命令生成。全量 regression/vet 将在本轮修改完成后复跑。
+
+**剩余边界**：Docker named volume 的根目录 rename 限制已由 F-51/E60 处理并实机验证；Debian 12 systemd 干净安装、隔离 unit 恢复、HTTPS 与升级/回滚已由 E63 完成。外部云主机重启、正式域名/CA 与异地备份 provider 仍属于部署环境验收。
+
+## F-51 Docker named-volume 根目录无法原子替换（P1，已修复）
+
+**证据**：在 Docker named volume 挂载到 `/usr/src/app/restored-data` 后执行完整恢复，staging 校验全部通过，但切换阶段报 `rename /usr/src/app/restored-data ...: device or resource busy`。挂载点本身是独立 mount root，Linux 不允许像普通目录一样 rename 走。
+
+**修复**：新增 `admin-restore --preserve-in <外部目录>` 挂载卷原地恢复模式。恢复器先完整复制旧挂载内容到独立 preserve 目录，再清空挂载点内的子项并写入隔离 staging；写入或配置替换失败时从 preserve 回滚。preserve 路径必须在目标数据目录外，普通目录恢复仍使用原有原子目录替换，避免把原地清空模式扩大使用范围。
+
+**验证**：E60 用 `docker-volume-audit-key` 的真实完整归档在三个独立 named volumes 上完成往返；恢复后容器 `healthy`/`bbolt`，管理员登录和 Key 恢复成功，旧卷标记保留在 preserve，删除并重建容器后状态仍在。`TestApplyStagedAdminBundleInPlacePreservesMountedVolumeContents` 覆盖旧 bbolt、独有文件和配置的留档/替换。
+
+**回滚**：停止恢复验证容器，删除新恢复卷，继续挂载 preserve 卷或原数据卷；正式切换前必须保留旧卷，禁止执行 `docker compose down -v`。

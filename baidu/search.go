@@ -124,7 +124,7 @@ func (baid *Baidu) securityInterstitialErr(page *rod.Page) error {
 // When the browser session is challenged, it falls back to the plain-HTTP path.
 func (baid *Baidu) Search(ctx context.Context, query core.Query) ([]core.SearchResult, error) {
 	rawQuery := query
-	rawQuery.Insecure = rawQuery.Insecure || baid.Browser.Insecure
+	rawQuery.Insecure = rawQuery.Insecure || baid.Insecure
 
 	// While the browser path is known to be challenged, try the plain-HTTP path
 	// first: it stays usable much longer on a shared exit IP.
@@ -156,8 +156,8 @@ func (baid *Baidu) searchBrowser(ctx context.Context, query core.Query) (results
 	}
 	scoped := *baid
 	scoped.logger = baid.logger.WithRequest(ctx)
-	if scoped.Browser.WaitLoadTime == 0 || scoped.Browser.WaitLoadTime > 250*time.Millisecond {
-		scoped.Browser.WaitLoadTime = 250 * time.Millisecond
+	if scoped.WaitLoadTime == 0 || scoped.WaitLoadTime > 250*time.Millisecond {
+		scoped.WaitLoadTime = 250 * time.Millisecond
 	}
 	baid = &scoped
 
