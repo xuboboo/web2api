@@ -1690,6 +1690,10 @@
         forceBtn.disabled = true;
         forceBtn.title = '冷却中,无需再次强制冷却';
       }
+      if (!canManageEngines()) {
+        resetBtn.style.display = 'none';
+        forceBtn.style.display = 'none';
+      }
       return { resetBtn: resetBtn, forceBtn: forceBtn };
     }
 
@@ -1839,7 +1843,8 @@
       onclick: function () { openCreateKeyModal(loadAll); }
     });
     actions.appendChild(searchBox);
-    actions.appendChild(createBtn);
+    if (canManageKeys()) actions.appendChild(createBtn);
+    else root.appendChild(roleHintNode('当前角色为只读,密钥管理操作已隐藏。'));
 
     var card = el('div', { class: 'card' });
     root.appendChild(card);
@@ -1884,10 +1889,12 @@
       card.classList.remove('is-busy');
       card.innerHTML = '';
       if (!keys.length) {
-        var emptyCreate = el('button', {
-          class: 'btn btn-primary btn-sm', type: 'button', text: '创建第一个密钥',
-          onclick: function () { openCreateKeyModal(loadAll); }
-        });
+        var emptyCreate = canManageKeys()
+          ? el('button', {
+            class: 'btn btn-primary btn-sm', type: 'button', text: '创建第一个密钥',
+            onclick: function () { openCreateKeyModal(loadAll); }
+          })
+          : el('span', { class: 'muted', text: '只读角色,不能创建密钥' });
         card.appendChild(emptyNode('还没有 API 密钥', '创建一个密钥,即可开始调用收录查询 API。', emptyCreate));
         return;
       }
@@ -2031,7 +2038,7 @@
         el('td', { class: 'td-num', text: fmtQuota(k.daily_quota) }),
         el('td', { class: 'td-mono', text: fmtDateTime(k.created_at) }),
         el('td', { class: 'td-mono', text: (k.last_used_at === null || k.last_used_at === undefined || k.last_used_at === '') ? '从未使用' : fmtDateTime(k.last_used_at) }),
-        el('td', null, el('div', { class: 'row-actions' }, sw, editBtn, rotateBtn, del))));
+        el('td', null, el('div', { class: 'row-actions' }, sw, canManageKeys() ? editBtn : null, canManageKeys() ? rotateBtn : null, canManageKeys() ? del : null))));
     });
 
     // keys 页无分页:GET /api/keys 全量返回;行多时容器内纵向滚动,不伪造分页控件
@@ -3955,10 +3962,10 @@ async def run():
     var sessionsCard = el('div', { class: 'card', id: 'st-sessions' },
       el('div', { class: 'card-head' },
         el('h2', { class: 'card-title' }, '会话管理', el('span', { class: 'card-head-sub', text: '当前登录中的管理员会话' })),
-        el('button', {
+        (currentRole() === 'admin' ? el('button', {
           class: 'btn btn-secondary btn-sm', type: 'button', text: '撤销其他会话',
           onclick: function () { revokeOtherSessions(); }
-        })),
+        }) : el('span', { class: 'muted', text: '仅管理员可撤销会话' }))),
       sessionBody);
 
     function revokeOtherSessions() {
@@ -4029,7 +4036,7 @@ async def run():
             el('td', { class: 'td-mono', text: s.ip || '—' }),
             el('td', { class: 'td-mono', text: (s.last_active_at || s.last_active) ? fmtDateTime(s.last_active_at || s.last_active) : '—' }),
             el('td', null, el('span', { class: 'pill ' + (isCur ? 'pill-green' : 'pill-gray'), text: isCur ? '当前会话' : '活跃' })),
-            el('td', null, el('div', { class: 'row-actions' },
+            (currentRole() === 'admin' ? el('td', null, el('div', { class: 'row-actions' },
               el('button', {
                 class: 'btn btn-ghost btn-sm', type: 'button', text: '撤销',
                 onclick: function () {
@@ -4039,7 +4046,7 @@ async def run():
                     confirmText: '撤销'
                   }).then(function (yes) { if (yes) revokeSession(s.id); });
                 }
-              }))));
+              }))) : el('td', { text: '—' })))
           tbody.appendChild(row);
         });
         sessionBody.appendChild(el('div', { class: 'table-wrap' }, el('table', { class: 'table' },
@@ -4151,10 +4158,10 @@ async def run():
     backupBody.appendChild(el('div', null,
       el('p', { class: 'card-desc', text: '下载数据库的一致性快照(密钥、用量、审计与配置数据)。' }),
       el('div', { style: 'margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;' },
-        el('button', {
+        (currentRole() === 'admin' ? el('button', {
           class: 'btn btn-primary', type: 'button', text: '下载备份快照',
           onclick: downloadBackup
-        })),
+        }) : el('span', { class: 'muted', text: '仅管理员可下载备份快照' }))),
       el('div', { class: 'form-hint', style: 'margin-top:12px;', text: '建议定期下载备份,并在停服窗口演练恢复流程。' })));
 
     /* ---- 布局:左锚点 + 右卡片流 ---- */
@@ -4179,6 +4186,8 @@ async def run():
   function currentRole() { return state.role || 'viewer'; }
   function canWriteUsers() { return currentRole() === 'admin'; }
   function canWriteBlacklist() { return currentRole() !== 'viewer'; }
+  function canManageKeys() { return currentRole() !== 'viewer'; }
+  function canManageEngines() { return currentRole() !== 'viewer'; }
   function canCleanupLogs() { return currentRole() === 'admin'; }
 
   /* 只读提示:留在页面内,不弹窗、不跳转 */
@@ -4267,6 +4276,11 @@ async def run():
     root.appendChild(card);
 
     function loadAll() {
+      if (!canWriteUsers()) {
+        card.innerHTML = '';
+        card.appendChild(roleHintNode('当前角色无权查看用户列表;请使用管理员账号登录。'));
+        return;
+      }
       if (first) {
         first = false;
         card.innerHTML = '';
