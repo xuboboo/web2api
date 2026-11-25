@@ -3095,9 +3095,7 @@
   /* ================= 8b. 页面:Agent 集成 ================= */
 
   function pageOrigin() {
-    return (location.origin && location.origin.indexOf('http') === 0)
-      ? location.origin
-      : 'https://radar.ydsdoa.cn';
+    return 'https://radar.ydsdoa.cn';
   }
 
   function pageAgents(root) {

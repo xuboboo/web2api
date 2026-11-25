@@ -294,11 +294,9 @@
     initOrigin();
 
     function initOrigin() {
-      /* 自适应部署地址:源码中的 {{ORIGIN}} 占位符在运行时替换为当前访问源。
-       * 源码不含任何写死的 IP/端口,避免复制源码/禁用 JS/SEO 抓取时暴露内网地址;
-       * 正式访问地址为 https://radar.ydsdoa.cn,部署地址始终以当前访问源为准。 */
-      var origin = location.origin;
-      if (origin.indexOf('http') !== 0) return;
+      /* 官网示例统一展示正式访问域名,避免本机实例把 {{ORIGIN}} 渲染成 127.0.0.1:7000。
+       * 源码中的 {{ORIGIN}} 占位符只用于避免静态文案重复写死域名。 */
+      var origin = 'https://radar.ydsdoa.cn';
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
       var hits = [];
       while (walker.nextNode()) {
