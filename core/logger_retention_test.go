@@ -15,7 +15,7 @@ func TestRotatingWriterRetentionPrunesExpiredArchives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new writer: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	for i := 0; i < 3; i++ {
 		if _, err := w.Write([]byte("[2026-11-25 18:00:00][info][some line that forces rotation]\n")); err != nil {
