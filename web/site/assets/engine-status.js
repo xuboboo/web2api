@@ -39,6 +39,8 @@
   function setTime(stamp) {
     if (!updated) return;
     updated.textContent = stamp ? '更新于 ' + stamp : '';
+    if (stamp) updated.dateTime = stamp;
+    else updated.removeAttribute('datetime');
   }
 
   function empty(message) {

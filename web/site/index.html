@@ -155,7 +155,7 @@
       </div>
       <div class="tech-band reveal">
         <span>技术核心</span>
-        <code>Go + Fiber</code><code>Chromium / rod</code><code>bbolt</code><code>JWT + Session</code><code>MCP + OpenAPI</code><code>DECIMAL 用量账本</code>
+        <code>Go + Fiber</code><code>Chromium / rod</code><code>bbolt</code><code>JWT + Session</code><code>MCP + OpenAPI</code><code>bbolt 用量账本</code>
       </div>
       <div class="split-ctas reveal">
         <a class="btn btn-primary" href="/web-tool/console/">进入控制台
@@ -436,6 +436,8 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
             <span class="chip">check_indexed</span>
             <span class="chip">get_quota</span>
             <span class="chip">list_engines</span>
+            <span class="chip">get_index_job</span>
+            <span class="chip">cancel_index_job</span>
           </div>
           <div class="dk-links"><a href="/web-tool/openapi.yaml" target="_blank" rel="noopener noreferrer">在 OpenAPI 规范中查看 MCP 定义 ↗</a></div>
         </div>
@@ -456,7 +458,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
               <span class="eco-mono">llms.txt</span>
             </a>
           </div>
-          <p class="dk-auth">鉴权:Header 型 API Key <code>X-API-Key</code>(计费;<code>Authorization: Bearer &lt;密钥本体&gt;</code> 等效)。MCP 端点另接受 <code>Authorization: Bearer &lt;管理员JWT&gt;</code>(不计费,仅限管理员)。无鉴权请求一律 401,不暴露裸端点。spec 地址 <a class="dk-link" href="/web-tool/openapi.yaml"><code>/web-tool/openapi.yaml</code></a>(浏览器打开即网页视图,程序化导入自动取得原始 YAML)。请先在控制台创建密钥。</p>
+          <p class="dk-auth">鉴权:Header 型 API Key <code>X-API-Key</code>(计费;<code>Authorization: Bearer &lt;密钥本体&gt;</code> 等效)。MCP 端点另接受 <code>Authorization: Bearer &lt;管理员JWT&gt;</code>(不计费,仅限管理员)。受保护的 API / MCP 端点无鉴权一律 401,不暴露裸端点;健康探针与规范下载地址公开。 spec 地址 <a class="dk-link" href="/web-tool/openapi.yaml"><code>/web-tool/openapi.yaml</code></a>(浏览器打开即网页视图,程序化导入自动取得原始 YAML)。请先在控制台创建密钥。</p>
         </div>
       </div>
     </div>
@@ -547,7 +549,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
       </div>
       <div class="qs-notes reveal" style="--reveal-delay:480ms">
 <p class="qs-note"><code class="inline-code">indexed</code> 表示本次搜索是否命中，<code class="inline-code">match</code> 表示匹配方式。<code class="inline-code">meta.units</code> 是请求单元总数；同步查询按成功单元计费，单个引擎失败会在对应结果中返回 <code class="inline-code">error</code>。</p>
-        <p class="qs-note">更多端点:GET 单 URL 判定、GET <span class="inline-code">/web-tool/v1/quota</span> 配额查询、GET <span class="inline-code">/{engine}/search</span> 四引擎搜索 —— 全部见 <a href="/web-tool/openapi.yaml">API 文档(OpenAPI 3.1)</a>。</p>
+        <p class="qs-note">更多端点:GET 单 URL 判定、GET <span class="inline-code">/web-tool/v1/quota</span> 配额查询、GET <span class="inline-code">/web-tool/{engine}/search</span> 四引擎搜索 —— 全部见 <a href="/web-tool/openapi.yaml">API 文档(OpenAPI 3.1)</a>。</p>
         <p class="qs-note">AI Agent 接入:MCP Server 一条命令即用,见上方 <a href="#agents">Agent 接入区</a>。</p>
       </div>
     </div>
@@ -596,7 +598,7 @@ console.log(data.results[<span class="tk-num">0</span>].engines.baidu.indexed);<
       </nav>
     </div>
     <div class="foot-bottom">
-      <span>版权所有 © 2026 华军软件园</span>
+      <span>版权所有 © 2026 华军软件园 · 正式访问 <a href="https://radar.ydsdoa.cn/web-tool/">https://radar.ydsdoa.cn/web-tool/</a></span>
     </div>
   </div>
 </footer>

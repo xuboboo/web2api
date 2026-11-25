@@ -100,7 +100,7 @@
 
 ```bash
 go build -o web2api .
-./web2api serve          # 默认读 ./config.yaml，监听 radar.ydsdoa.cn
+./web2api serve          # 默认读 ./config.yaml，监听 127.0.0.1:7000
 # 浏览器打开官网 https://radar.ydsdoa.cn/web-tool/
 # 管理控制台入口 https://radar.ydsdoa.cn/web-tool/console/
 ```
@@ -108,13 +108,16 @@ go build -o web2api .
 或 Docker Compose（详见 [deploy/README.md](deploy/README.md)）：
 
 ```bash
+read -rsp 'Admin password: ' ADMIN_PASSWORD; echo
+export ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d --build
-curl https://radar.ydsdoa.cn/web-tool/health
+unset ADMIN_PASSWORD
+curl http://127.0.0.1:7000/web-tool/health
 ```
 
 > 下文用 `{BASE}` 代表你的服务根地址：本机默认 `https://radar.ydsdoa.cn/web-tool`，部署后如 `https://your-domain.com/web-tool`。**所有端点都挂在 `/web-tool` 固定前缀下。**
 
-默认管理员 **`admin` / `admin123`** —— 首次部署后立即在控制台（`/web-tool/console/`）「系统设置」页改密码，或修改 `config.yaml` 的 `platform.admin_password`。绑定非回环地址且密码仍为默认 `admin123` 时，启动日志会给出安全告警（本机回环部署不触发；`security.data_plane_auth=false` 时另有数据面匿名告警）；控制台登录无验证码，切勿将管理端点暴露到公网。
+默认管理员 **`admin` / `admin123`** —— 首次部署后立即在控制台（`/web-tool/console/`）「系统设置」页改密码，或修改 `config.yaml` 的 `platform.admin_password`。绑定非回环地址且密码仍为默认 `admin123` 时，服务拒绝启动并退出（本机回环部署不触发；`security.data_plane_auth=false` 时另有数据面匿名告警）；控制台登录无验证码，切勿将管理端点暴露到公网。
 
 **第一个调用**（控制台 `#/keys` 页创建一个 API key 后）：
 
@@ -247,7 +250,7 @@ Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code
 3. **熔断器**——连续请求失败 8 次熔断、20 秒后半开（`circuit_breaker` 节）。针对**技术性失败**。
 4. **引擎冷却状态机**（二期新增，`stability.engine_cooldown` 节）——针对**反爬拦截**，每引擎独立：
    - **触发**：引擎返回 blocked（403）/ 429 / captcha。**行为级提示：浏览器验证码页一旦出现即触发冷却**——哪怕那次请求最终解题成功，最短也会进入 10 分钟冷却。这是刻意设计：出现验证码意味着 IP 已被标记，继续打只会加深封禁。
-   - **连续升级**：第 1 次冷却 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟（`steps_minutes: [10,30,120]`）。
+   - **连续升级**：默认第 1 次 10 分钟、第 2 次 30 分钟、第 3 次及以上 120 分钟；本仓库配置把百度覆盖为 2/10/30 分钟（`steps_minutes: [2,10,30]`）。
    - **计数归零**：连续无拦截达 240 分钟（`reset_after_minutes`）后计数清零，重新从第 1 档起算。
    - **冷却期内**：该引擎所有 search/check **快速失败（HTTP 503 `engine_cooldown` 信封 + `Retry-After`），不发真实请求**——不消耗引擎配额、代理与浏览器资源。
    - **到期探测**：冷却到期放行一个探测请求——成功即恢复；再次被拦截进下一档；其他失败（如超时）按当前档时长顺延重试。
@@ -290,7 +293,7 @@ Claude Desktop 经 Connectors 界面添加远程 MCP；ChatGPT、Codex、VS Code
 
 ```nginx
 location /web-tool/ {
-    proxy_pass https://radar.ydsdoa.cn;   # 原样透传，不做路径重写
+    proxy_pass http://127.0.0.1:7000;   # 原样透传，不做路径重写
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }

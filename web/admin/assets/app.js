@@ -74,7 +74,7 @@
 
   var state = {
     username: '',
-    /* 角色来自 /api/me;旧后端不返回 role 时按 admin 处理(向后兼容) */
+    /* 角色来自 /api/me;缺失或未知角色一律按 viewer 处理(最小权限) */
     role: 'viewer',
     userId: '',
     keysCache: [],
@@ -3150,19 +3150,20 @@
           ['get_quota', 'object', '—', '返回当前密钥的配额与用量'],
           ['list_engines', 'object', '—', '返回引擎清单与冷却、熔断状态']
         ]),
-        p('计费:web_search 每次调用计 1 次;check_indexed 按 URL 数 × 引擎数计次;get_quota 与 list_engines 不计费。'),
+        p('计费:web_search 每次调用计 1 次;check_indexed 按 URL 数 × 引擎数计次;get_index_job、cancel_index_job、get_quota 与 list_engines 不计费。'),
         p('提示:引擎冷却期间,check_indexed 中对应引擎的查询会返回 <code>engine_cooldown</code> 错误。可先调用 <code>list_engines</code> 确认可用性。'))));
 
     /* ---- Claude Desktop / Claude Code ---- */
     root.appendChild(agentCard('Claude Desktop / Claude Code', [
       '打开 Claude Desktop「设置 → 开发者 → 编辑配置」(或项目根目录的 <code>.mcp.json</code>)。',
       '将下方 JSON 合并进 <code>mcpServers</code>;headers 中的 <code>X-API-Key</code> 替换为你的密钥。',
-      '重启 Claude Desktop,工具面板出现 web_search / check_indexed / get_quota / list_engines 即接入成功。',
+      '重启 Claude Desktop,工具面板出现 6 个工具(web_search / check_indexed / get_quota / list_engines / get_index_job / cancel_index_job)即接入成功。',
       '注意:未配置 <code>X-API-Key</code> 的调用会返回 401 <code>{"error":"unauthorized"}</code>。',
       '配置文件为 JSON,不支持注释,请勿在文件内添加注释。'
     ], 'JSON · claude_desktop_config.json', `{
   "mcpServers": {
     "web2api": {
+      "type": "http",
       "url": "${MCP_URL}",
       "headers": {
         "X-API-Key": "${DEMO_KEY}"
@@ -3181,7 +3182,7 @@
 #    类型(Type):Header
 #    名称(Key):X-API-Key
 #    值(Value):${DEMO_KEY}
-# 3. 导入后可用工具:web_search / check_indexed / get_quota / list_engines
+# 3. 导入后可用工具:web_search / check_indexed / get_quota / list_engines / get_index_job / cancel_index_job
 # 注意:未携带 X-API-Key 的调用会返回 401 {"error":"unauthorized"}`, OPENAPI_URL));
 
     /* ---- n8n ---- */
@@ -4169,8 +4170,8 @@ async def run():
   }
 
   /* ================= 8b. 页面:用户管理 / 系统日志 / 黑名单 =================
-   * 角色规则:admin 全部可写;operator 可管理黑名单与清理日志,用户列表只读;
-   * viewer 三组页面均只读(隐藏写按钮 + 就地提示,不强制登出)。
+   * 角色规则:admin 全部可写;operator 可查看并管理黑名单;
+   * viewer 无黑名单读取权限,不发起加载;用户列表与日志清理仅 admin。
    * 403 的 insufficient_role / blacklisted 由 extractErrMsg 转成中文提示。 */
 
   var ROLE_LABEL = { admin: '管理员', operator: '运维员', viewer: '只读用户' };
@@ -4662,13 +4663,18 @@ async def run():
         onclick: function () { openBlacklistModal(null, loadAll); }
       }));
     } else {
-      root.appendChild(roleHintNode('当前为只读角色,仅可查看黑名单;新增、编辑与删除操作已隐藏。'));
+      root.appendChild(roleHintNode('当前角色无权查看黑名单;请切换为管理员或运维员。'));
     }
 
     var card = el('div', { class: 'card' });
     root.appendChild(card);
 
     function loadAll() {
+      if (!writable) {
+        card.innerHTML = '';
+        card.appendChild(roleHintNode('当前角色无权查看黑名单;请切换为管理员或运维员。'));
+        return;
+      }
       if (first) {
         first = false;
         card.innerHTML = '';
@@ -5010,7 +5016,7 @@ async def run():
     api('GET', '/api/me', null, { skipAuthRedirect: true })
       .then(function (me) {
         meVerified = true; // 服务端确认会话有效:F5 后由此恢复登录态
-        applyMe(me); // 角色 / user_id 落全局;旧后端不返回 role 时按 admin 兼容
+        applyMe(me); // 角色 / user_id 落全局;未知角色按 viewer 兼容
         if (bootRendered) {
           showApp(); // 顶栏用户名/头像用 /api/me 的权威值刷新,页面数据已在首轮加载
           /* 首屏先渲染的历史行为保留;若本次 /api/me 带来受限角色,

@@ -493,7 +493,7 @@ admin password before 'docker compose up'          → exit 1
 $ ADMIN_PASSWORD=*** docker compose config
 WEB2API_PLATFORM_ADMIN_PASSWORD: ***   WEB2API_SERVER_HOST: 0.0.0.0   WEB2API_SERVER_PORT: "7000"
 image: web2api:local   init: true   shm_size: "536870912"
-ports radar.ydsdoa.cn → 7000   volumes: config.yaml(ro) + web2api-data→/usr/src/app/data
+ports 127.0.0.1:7000 → 7000   volumes: config.yaml(ro) + web2api-data→/usr/src/app/data
 → exit 0
 ```
 
@@ -946,7 +946,7 @@ go test -count=1 ./core -run 'TestFetchPageTitleDNSRebindingCannotReachPrivateTa
 
 ## E63 干净 Linux systemd、NGINX TLS、可信 IP 与升级恢复（2026-11-25）
 
-**环境**：全新 `jrei/systemd-debian:12`、privileged systemd 容器、Debian 12、NGINX 1.22.1、Chromium 156、OpenSSL 3、linux/amd64 静态二进制；服务以 `web2api:web2api` 非 root 用户运行，监听 `radar.ydsdoa.cn`。
+**环境**：全新 `jrei/systemd-debian:12`、privileged systemd 容器、Debian 12、NGINX 1.22.1、Chromium 156、OpenSSL 3、linux/amd64 静态二进制；服务以 `web2api:web2api` 非 root 用户运行，监听 `127.0.0.1:7000`。
 
 **干净安装与权限**：
 

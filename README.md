@@ -73,7 +73,7 @@ Capability matrix below (✓ = yes, ✗ = no, partial = yes with clear limits). 
 | Self-hosted (keys/logs stored locally) | **✓** (single executable) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | MCP server (direct client connection) | ✓ (built in) | ✓ (official) | ✗ | ✓ | ✗ | ✗ | ✗ |
 | Public OpenAPI spec (Dify/n8n/LangChain import) | ✓ (`/web-tool/openapi.yaml` + `llms.txt`) | ✗ | ✗ | ✗ (docs behind a login-walled Feishu wiki) | ✗ | ✗ | ✗ |
-| Async batch / archive / callbacks | ✗ (sync, 20 URLs/request) | ✓ (async + Searches Archive) | ✗ | ✗ | ✓ (taskid polling) | ✗ | ✓ (webhook) |
+| Async batch / archive / callbacks | ✓ (>20 URLs become a job; no archive/callback) | ✓ (async + Searches Archive) | ✗ | ✗ | ✓ (taskid polling) | ✗ | ✓ (webhook) |
 | Location/language/freshness params | ✗ | ✓ (location/uule/gl/hl…) | Partial | ✓ (freshness) | ✗ | ✗ | ✗ |
 | Result format options | Partial (`format=json\|markdown\|text\|ndjson` on search; index endpoint is JSON-only) | ✓ (json/html/md) | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Reranker / AI value-add layer | ✗ | ✗ | ✗ | ✓ (Semantic Reranker / AI Search) | ✗ | ✗ | ✗ |
@@ -100,7 +100,7 @@ A local Chrome/Chromium/Edge is required (browser mode is the default).
 
 ```bash
 go build -o web2api .
-./web2api serve          # reads ./config.yaml by default, listens on radar.ydsdoa.cn
+./web2api serve          # reads ./config.yaml by default, listens on 127.0.0.1:7000
 # Website:        https://radar.ydsdoa.cn/web-tool/
 # Admin console:  https://radar.ydsdoa.cn/web-tool/console/
 ```
@@ -113,7 +113,7 @@ read -rsp 'Admin password: ' ADMIN_PASSWORD; echo
 export ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d --build
 unset ADMIN_PASSWORD
-curl https://radar.ydsdoa.cn/web-tool/health
+curl http://127.0.0.1:7000/web-tool/health
 ```
 
 `docker compose ps/logs/down` also parses that variable; put a 0600 `.env` next to the compose file to avoid repeating it (see DEPLOYMENT.md §3).
@@ -253,7 +253,7 @@ Chinese engines are extremely sensitive to high-frequency access from a single e
 3. **Circuit breaker** — 8 consecutive failures open the circuit, half-open after 20 s (`circuit_breaker` section). Targets **technical failures**.
 4. **Engine cooldown state machine** (`stability.engine_cooldown` section) — targets **anti-scraping blocks**, independent per engine:
    - **Trigger**: the engine returns blocked (403) / 429 / captcha. **Behavioral note: the moment a browser CAPTCHA page appears, the cooldown starts** — even if that request is eventually solved, a 10-minute cooldown applies at minimum. This is deliberate: a CAPTCHA means the IP is flagged; hammering on only deepens the ban.
-   - **Escalation**: 1st cooldown 10 min, 2nd 30 min, 3rd and beyond 120 min (`steps_minutes: [10,30,120]`).
+   - **Escalation**: 1st cooldown 10 min, 2nd 30 min, 3rd and beyond 120 min (`steps_minutes: [10,30,120]`（本仓库配置将百度覆盖为 `[2,10,30]`）).
    - **Reset**: after 240 consecutive minutes without a block (`reset_after_minutes`), the counter resets to tier 1.
    - **During cooldown**: all search/check calls to that engine **fail fast (HTTP 503 `engine_cooldown` envelope + `Retry-After`) without touching the real engine** — no engine quota, proxy or browser resources consumed.
    - **Expiry probe**: when the cooldown expires one probe request is let through — success recovers the engine; another block advances to the next tier; other failures (e.g. timeouts) postpone by the current tier's duration.
@@ -296,7 +296,7 @@ The whole application **is always deployed under the `/web-tool` sub-path** (the
 
 ```nginx
 location /web-tool/ {
-    proxy_pass https://radar.ydsdoa.cn;   # pass through as-is, no path rewrite
+    proxy_pass http://127.0.0.1:7000;   # pass through as-is, no path rewrite
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }
@@ -311,6 +311,11 @@ A `proxy_pass` target **without a trailing slash** does not rewrite the path; th
 Precedence: **CLI flags > `WEB2API_*` environment variables > `config.yaml` > built-in defaults** (Viper). Key-by-key comments are in the root [config.yaml](config.yaml); the full reference is [docs/CONFIGURATION.md](docs/CONFIGURATION.md) (Chinese). Platform-related sections (field names fixed):
 
 ```yaml
+app:
+  log_max_mb: 10             # single log file cap (MB); 0 disables size rotation but time retention still applies
+  log_backups: 5
+  log_retention_days: 30     # prune logs.txt.N / audit.log.N by mtime
+
 platform:
   enabled: true           # false unmounts /api/* and /v1/*; website, console statics and health endpoints remain
   data_dir: "./data"      # bbolt web2api.db + JWT secret.key live here (data/ is gitignored)
@@ -330,9 +335,7 @@ security:                 # control-plane hardening
   admin_rate_per_minute: 60  # global admin API rate limit (429 rate_limited beyond)
   data_plane_auth: true      # bundled template AND in-code default are true: /{engine}/search and /stats/* require X-API-Key
                              # false opens the data plane anonymously — compatibility only, keep true in production
-  log_max_mb: 10             # single log file cap (MB); 0 disables size rotation but time retention still applies
-  log_backups: 5
-  log_retention_days: 30     # prune logs.txt.N / audit.log.N by mtime; 0 disables time-based deletion
+  # log rotation/retention keys live under app:
   blacklist: []              # first-start IP/CIDR seed; one-shot marker, then manage via console/API
 ```
 
