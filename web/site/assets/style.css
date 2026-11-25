@@ -1310,6 +1310,32 @@ html.dark .eco { background: var(--card); }
 .eco .pill-dark:hover { background: var(--accent); border-color: var(--border-strong); }
 .eco-mono { display: inline-flex; font: 500 11px/1 var(--font-mono); letter-spacing: 0.02em; opacity: 0.65; }
 
+/* ---------- 产品介绍:技术核心 ---------- */
+.tech-band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 32px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.tech-band > span {
+  font: 600 12px/1 var(--font-sans);
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  margin-right: 4px;
+}
+.tech-band code {
+  font: 500 12px/1 var(--font-mono);
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--foreground);
+}
+
 /* ---------- 15. 页脚 ---------- */
 .footer { padding: 80px 0 40px; overflow: hidden; }
 .foot-top {
