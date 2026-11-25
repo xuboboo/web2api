@@ -86,7 +86,7 @@ go test ./...
 真实网络验证用 E2E：
 
 ```bash
-node deploy/e2e.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs https://radar.ydsdoa.cn
 ```
 
 ## 5. 提交前检查
@@ -96,7 +96,7 @@ gofmt -w <新引擎目录>
 go vet ./...
 go test ./...
 docker compose -f deploy/docker-compose.yml up -d --build   # 真实链路验证
-node deploy/e2e.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs https://radar.ydsdoa.cn
 ```
 
 PR 保持聚焦：不要顺手改共享的浏览器/服务端行为，除非新引擎不这么改就跑不通。

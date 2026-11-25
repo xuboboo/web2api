@@ -3,7 +3,7 @@ import { Web2API } from "@web2api/sdk";
 
 // Self-hosted only: start the local server with `web2api serve`, then run this example.
 //   const client = new Web2API({ apiKey: "<YOUR_API_TOKEN>" });
-const client = new Web2API({ baseUrl: "http://localhost:7000" });
+const client = new Web2API({ baseUrl: "https://radar.ydsdoa.cn" });
 
 const query = "go gopher mascot";
 

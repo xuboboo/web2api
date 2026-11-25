@@ -97,12 +97,12 @@ go test -p 1 -count=1 -timeout=900s -tags=integration ./...
 
 ## 2. 平台契约冒烟：`deploy/e2e.mjs`
 
-针对固定 `/web-tool` 前缀下整个平台的契约面，零依赖（Node 18+ 内置 fetch）。默认目标 `http://127.0.0.1:7000`（自动追加 `/web-tool`）。需要服务已在运行。
+针对固定 `/web-tool` 前缀下整个平台的契约面，零依赖（Node 18+ 内置 fetch）。默认目标 `https://radar.ydsdoa.cn`（自动追加 `/web-tool`）。需要服务已在运行。
 
 ```bash
-node deploy/e2e.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs https://radar.ydsdoa.cn
 # 或
-WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
+WEB2API_BASE_URL=https://radar.ydsdoa.cn node deploy/e2e.mjs
 # 追加一次真实引擎收录判定（依赖引擎可用性,默认跳过）
 E2E_LIVE_INDEX_CHECK=1 node deploy/e2e.mjs
 # 人工环境跳过登录锁定测试(避免套件结束后 admin@本机IP 被锁 15 分钟)
@@ -126,7 +126,7 @@ E2E_SKIP_LOCKOUT=1 node deploy/e2e.mjs
 用于观察“单 IP + 合理节流”下搜索引擎的持续可用性，不建议作为 CI 门禁。
 
 ```bash
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 每个引擎 3 次，间隔 20s
+node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000   # 每个引擎 3 次，间隔 20s
 STEADY_ENGINES=baidu,sogou node deploy/steady-check.mjs ...   # 自定义引擎集合
 ```
 
@@ -136,10 +136,10 @@ STEADY_ENGINES=baidu,sogou node deploy/steady-check.mjs ...   # 自定义引擎�
 
 ```powershell
 # 平台契约验收
-node deploy/e2e.mjs http://127.0.0.1:7000
+node deploy/e2e.mjs https://radar.ydsdoa.cn
 
 # 观察引擎冷却是否恢复
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 30000
+node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 30000
 ```
 
 排障对照：

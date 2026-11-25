@@ -41,8 +41,8 @@ unset ADMIN_PASSWORD
 # 3) 验证
 docker compose ps
 docker compose logs --tail=50 web2api
-curl -s http://127.0.0.1:7000/web-tool/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7000/web-tool/console/   # 预期 200/301
+curl -s https://radar.ydsdoa.cn/web-tool/health
+curl -s -o /dev/null -w '%{http_code}\n' https://radar.ydsdoa.cn/web-tool/console/   # 预期 200/301
 ```
 
 > **`ADMIN_PASSWORD` 对每条 compose 命令都是必需的**：`docker-compose.yaml` 用 `${ADMIN_PASSWORD:?...}` 声明它，缺失时 `docker compose` 会在解析阶段直接报错（这是有意的——容器里进程必须绑 `0.0.0.0` 才能被端口映射访问，而服务在非 loopback + 默认密码时会拒绝启动，见 F-26）。
@@ -150,7 +150,7 @@ server {
     proxy_request_buffering off;
 
     location / {
-        proxy_pass http://127.0.0.1:7000;
+        proxy_pass https://radar.ydsdoa.cn;
         proxy_set_header Host              $host;
         # Overwrite, not append: client-supplied forwarding headers are untrusted.
         proxy_set_header X-Real-IP         $remote_addr;

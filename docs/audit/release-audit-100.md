@@ -18,7 +18,7 @@ Go 测试退出码为 0。原始 JSON 事件保存在本机 `qa/audit100/go-test
 
 全量普通 Go 测试、`go vet`、golangci-lint、两套 Compose 静态校验、控制台脚本语法检查和 Windows/amd64、Linux/amd64 构建通过。依赖扫描报告 0 个可达漏洞和 1 个未调用的模块公告。
 
-Windows 本机更新后二进制 SHA-256 为 `d45ac6cc0a6835082daf65d7dc92e12c4f44d26ad2c1e365cb9d7b9f9b1a783b`，与验收候选文件一致。实例沿用 bbolt，17 项本机 HTTP 检查通过，百度实网查询 0 次。实际 Docker 容器和生产环境验收未完成。应用仅监听 `127.0.0.1:7000`，改动尚未推送。
+Windows 本机更新后二进制 SHA-256 为 `d45ac6cc0a6835082daf65d7dc92e12c4f44d26ad2c1e365cb9d7b9f9b1a783b`，与验收候选文件一致。实例沿用 bbolt，17 项本机 HTTP 检查通过，百度实网查询 0 次。实际 Docker 容器和生产环境验收未完成。应用仅监听 `radar.ydsdoa.cn`，改动尚未推送。
 
 ## 管理身份与会话
 

@@ -5,7 +5,7 @@ output_file = "extracted.md"
 
 # Self-hosted only: start the local server with `web2api serve`, then run this example.
 #   with Web2API(api_key="<YOUR_API_TOKEN>", timeout=60.0) as client:
-with Web2API(base_url="http://localhost:7000", timeout=60.0) as client:
+with Web2API(base_url="https://radar.ydsdoa.cn", timeout=60.0) as client:
     # /extract turns a single page into clean Markdown (or plain text).
     result = client.extract(url=url, mode="auto", clean=True)
 

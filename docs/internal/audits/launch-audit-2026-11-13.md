@@ -3,7 +3,7 @@
 目标：上线前完成 50 轮全面审核。每轮基于实时取证（本会话内实际运行的命令），不依赖记忆；发现问题直接修复并复验。
 
 环境事实（基线取证）：
-- 服务部署：Docker 容器 `serp`（镜像 `web2api:local`），`127.0.0.1:7000`，Up 6h+，Docker healthcheck=healthy
+- 服务部署：Docker 容器 `serp`（镜像 `web2api:local`），`radar.ydsdoa.cn`，Up 6h+，Docker healthcheck=healthy
 - `/health` 实测返回 `status=degraded`：sogou 引擎 `circuit_open`，其余 baidu/bing/so360 `ready`
 - 构建环境：`go-dev` 容器（golang:1.24.6-bookworm），代码挂载 `/src`
 - 基线 `go build ./...` = OK；`go vet ./...` = OK；`go test ./... -count=1` = 全部 ok（16 个包有测试，全绿）
@@ -68,7 +68,7 @@
 
 ### 第 12-14 轮（16:25）— 【修复部署漂移 + 全量回归 + 重新部署】
 - 发现：docker-compose.yaml 与实际容器漂移（image 旧命名 vs 实际 `web2api:local`；端口 `0.0.0.0:7000` vs 实际 `127.0.0.1` 绑定；baidu 限流 env 覆盖 vs config.yaml 12；`serve -l` vs `serve`）→ 任何人 `docker compose up` 会得到无认证 API 暴露 0.0.0.0 的部署，**P1 运维风险**
-- 修复：compose 对齐实际部署（`build: .` + `web2api:local` + `127.0.0.1:7000:7000` + `serve` + `restart: unless-stopped` + 移除限流覆盖，config.yaml 为唯一事实源）
+- 修复：compose 对齐实际部署（`build: .` + `web2api:local` + `radar.ydsdoa.cn:7000` + `serve` + `restart: unless-stopped` + 移除限流覆盖，config.yaml 为唯一事实源）
 - 全量 `go test ./... -count=1` 14 包全绿后重建镜像 `web2api:local`（sha256:fe5ae3c2…）
 - 容器经 compose 重建：Up healthy，127.0.0.1 绑定不变
 - 复验：`?date=20250101` 由 panic→502 无消息 变为 受控 502 + "incorrect date interval provided, expected format: YYYYMMDD..YYYYMMDD" ✅；四引擎 ready ✅

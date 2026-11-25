@@ -8,7 +8,7 @@ output_file = "keywords.csv"
 
 # Self-hosted only: start the local server with `web2api serve`, then run this example.
 #with Web2API(api_key="<YOUR_API_TOKEN>") as client:
-with Web2API(base_url="http://localhost:7000") as client:
+with Web2API(base_url="https://radar.ydsdoa.cn") as client:
     rows = []
     for keyword in keywords:
         response = client.search(engine="google", text=keyword, region="US", limit=10)

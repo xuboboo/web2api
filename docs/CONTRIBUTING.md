@@ -30,8 +30,8 @@ go build -o web2api .
 ```bash
 go test ./...                                  # 单测，无需网络/浏览器
 docker compose -f deploy/docker-compose.yml up -d --build
-node deploy/e2e.mjs http://127.0.0.1:7000
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000
+node deploy/e2e.mjs https://radar.ydsdoa.cn
+node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000
 ```
 
 集成测试由 `testutil.RequireIntegration(t)` 控制（默认跳过）：

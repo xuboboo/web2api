@@ -1,6 +1,6 @@
 import { Web2API } from "@web2api/sdk";
 
-const client = new Web2API({ baseUrl: "http://localhost:7000" });
+const client = new Web2API({ baseUrl: "https://radar.ydsdoa.cn" });
 
 const { results } = await client.search({
   engine: "google",

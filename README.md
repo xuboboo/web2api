@@ -54,7 +54,7 @@ This is **not** a general-purpose API gateway, nor another SerpAPI clone. The mo
 - **Index-check API**: `POST /web-tool/v1/index/check` handles ≤20 URLs synchronously and queues >20 URLs as a server-side job (202 + `job_id`); per-engine `indexed` verdicts with match details; 1 URL × 1 engine = 1 unit.
 - **Four-engine raw search**: `GET /web-tool/{engine}/search` with `format=json|markdown|text|ndjson`.
 - **Dual agent entry points**: MCP streamable HTTP (6 tools, incl. batch jobs) + OpenAPI 3.1 spec + an llms.txt capability list.
-- **Admin console**: API keys, quotas, usage logs, engine risk-control dashboard, playground, settings.
+- **Admin console**: API keys, quotas, usage logs, engine risk-control dashboard, playground, settings; a standalone API docs page is reachable from both the sidebar and footer.
 - **User roles**: built-in `admin` / `operator` / `viewer` roles, re-read from the user store on every request; user management and session revocation are admin-only.
 - **Log rotation with retention**: `logs.txt.N` / `audit.log.N` are pruned by mtime after `app.log_retention_days` (default 30) at startup, after rotation and every 12 hours; `POST /api/logs/cleanup` triggers a manual sweep.
 - **IP blacklist**: `security.blacklist` seeds IP/CIDR rules on first start only, then rules are managed in the console/API; hits return 403 and write an audit entry.
@@ -100,9 +100,9 @@ A local Chrome/Chromium/Edge is required (browser mode is the default).
 
 ```bash
 go build -o web2api .
-./web2api serve          # reads ./config.yaml by default, listens on 127.0.0.1:7000
-# Website:        http://127.0.0.1:7000/web-tool/
-# Admin console:  http://127.0.0.1:7000/web-tool/console/
+./web2api serve          # reads ./config.yaml by default, listens on radar.ydsdoa.cn
+# Website:        https://radar.ydsdoa.cn/web-tool/
+# Admin console:  https://radar.ydsdoa.cn/web-tool/console/
 ```
 
 Or Docker Compose (see [deploy/README.md](deploy/README.md)):
@@ -113,12 +113,12 @@ read -rsp 'Admin password: ' ADMIN_PASSWORD; echo
 export ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d --build
 unset ADMIN_PASSWORD
-curl http://127.0.0.1:7000/web-tool/health
+curl https://radar.ydsdoa.cn/web-tool/health
 ```
 
 `docker compose ps/logs/down` also parses that variable; put a 0600 `.env` next to the compose file to avoid repeating it (see DEPLOYMENT.md §3).
 
-> `{BASE}` below stands for your service root: `http://127.0.0.1:7000/web-tool` locally, or e.g. `https://your-domain.com/web-tool` once deployed. **Every endpoint lives under the fixed `/web-tool` prefix.**
+> `{BASE}` below stands for your service root: `https://radar.ydsdoa.cn/web-tool` locally, or e.g. `https://your-domain.com/web-tool` once deployed. **Every endpoint lives under the fixed `/web-tool` prefix.**
 
 The default admin is **`admin` / `admin123`** — change the password right after the first deployment, either in the console (`/web-tool/console/`, Settings page) or via `config.yaml`'s `platform.admin_password`. When bound to a non-loopback address (including `0.0.0.0` and container networks) with the default `admin123` password, the service **refuses to start and exits with code 1** — set `WEB2API_PLATFORM_ADMIN_PASSWORD` or `platform.admin_password` first. Only loopback-only deployments allow the default password. Console login has no CAPTCHA — never expose the admin endpoints to the public internet.
 
@@ -296,7 +296,7 @@ The whole application **is always deployed under the `/web-tool` sub-path** (the
 
 ```nginx
 location /web-tool/ {
-    proxy_pass http://127.0.0.1:7000;   # pass through as-is, no path rewrite
+    proxy_pass https://radar.ydsdoa.cn;   # pass through as-is, no path rewrite
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }
@@ -346,8 +346,8 @@ Engine and anti-scraping parameters (rate limits, fingerprints, circuit breakers
 go test ./...                                  # unit tests (offline)
 go test -race -count=1 ./...                   # race detector needs cgo; on Windows use the Docker Linux path in docs/TESTING.md
                                                # (already verified: 11 packages green, qa/features-audit/race-final.log)
-node deploy/e2e.mjs http://127.0.0.1:7000      # platform contract smoke (MCP handshake, cooldown recovery, openapi.yaml/llms.txt assertions)
-node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # engine steady-state observation
+node deploy/e2e.mjs https://radar.ydsdoa.cn      # platform contract smoke (MCP handshake, cooldown recovery, openapi.yaml/llms.txt assertions)
+node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000   # engine steady-state observation
 ```
 
 Testing design: [docs/TESTING.md](docs/TESTING.md).

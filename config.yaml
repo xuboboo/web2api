@@ -155,11 +155,11 @@ security:
 #
 # 管理控制台 + 公网 API(/v1/index/check 等)+ 管理 API(/api/*)的后端开关与
 # 存储/凭据配置。整个应用固定部署在 /web-tool 子路径之下(代码内常量,无配置项):
-#   官网      http://127.0.0.1:7000/web-tool/
-#   控制台    http://127.0.0.1:7000/web-tool/console/
-#   公网API   http://127.0.0.1:7000/web-tool/v1/...
-#   Agent平面 http://127.0.0.1:7000/web-tool/mcp(+ /web-tool/openapi.yaml、/web-tool/llms.txt)
-#   管理API   http://127.0.0.1:7000/web-tool/api/...
+#   官网      https://radar.ydsdoa.cn/web-tool/
+#   控制台    https://radar.ydsdoa.cn/web-tool/console/
+#   公网API   https://radar.ydsdoa.cn/web-tool/v1/...
+#   Agent平面 https://radar.ydsdoa.cn/web-tool/mcp(+ /web-tool/openapi.yaml、/web-tool/llms.txt)
+#   管理API   https://radar.ydsdoa.cn/web-tool/api/...
 # enabled=false 时不挂载 /api/* 与 /v1/*,官网与控制台静态页与健康端点仍可用。
 # 计费口径:1 条 URL × 1 个引擎 = 1 次;HTTP 200 完成后按响应信封逐引擎核对、
 # 仅成功单元计费(引擎级失败/冷却/熔断单元不计费,信封解析失败时全额计费);

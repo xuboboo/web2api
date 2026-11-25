@@ -3,7 +3,7 @@
 > 本文所有请求与响应样例均来自真实调用（2026-11-16），密钥、ID、时间已脱敏。
 > 跟着做一遍，你就能拿到第一个「这个 URL 是否被百度/必应收录」的判定结果。
 
-**约定**：下文用 `{BASE}` 代表你的服务根地址，例如 `http://127.0.0.1:7000/web-tool`
+**约定**：下文用 `{BASE}` 代表你的服务根地址，例如 `https://radar.ydsdoa.cn/web-tool`
 或部署后的 `https://your-domain.com/web-tool`。**所有端点都挂在 `/web-tool` 固定前缀下**。
 
 ---
@@ -259,7 +259,7 @@ curl "{BASE}/api/usage?limit=3" -H "Authorization: Bearer $ADMIN_TOKEN"
 import json, os
 from urllib.request import Request, urlopen
 
-BASE = os.environ["W2A_BASE"]   # 例如 http://127.0.0.1:7000/web-tool
+BASE = os.environ["W2A_BASE"]   # 例如 https://radar.ydsdoa.cn/web-tool
 KEY  = os.environ["W2A_KEY"]    # 你的 sk-w2a- 开头完整密钥
 
 req = Request(
@@ -286,7 +286,7 @@ print("计费 units =", data["meta"]["units"])
 ### JavaScript（Node 18+ 内置 fetch）
 
 ```js
-const BASE = process.env.W2A_BASE; // http://127.0.0.1:7000/web-tool
+const BASE = process.env.W2A_BASE; // https://radar.ydsdoa.cn/web-tool
 const KEY = process.env.W2A_KEY;   // 你的 sk-w2a- 开头完整密钥
 
 const res = await fetch(`${BASE}/v1/index/check`, {
