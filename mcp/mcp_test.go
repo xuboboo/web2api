@@ -670,6 +670,19 @@ func TestSessionLifecycle(t *testing.T) {
 	// DELETE terminates the session.
 	req := httptest.NewRequest(fiber.MethodDelete, "/web-tool/mcp", nil)
 	req.Header.Set(sessionHeader, sid)
+	unauthorized, err := app.Test(req, -1)
+	if err != nil || unauthorized.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("unauthenticated delete: response=%v err=%v", unauthorized, err)
+	}
+	t.Cleanup(func() { _ = unauthorized.Body.Close() })
+	req.Header.Set(fiber.HeaderAuthorization, "Bearer jwt-admin")
+	foreign, err := app.Test(req, -1)
+	if err != nil || foreign.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("delete with a different identity: response=%v err=%v", foreign, err)
+	}
+	t.Cleanup(func() { _ = foreign.Body.Close() })
+	req.Header.Del(fiber.HeaderAuthorization)
+	req.Header.Set("X-API-Key", "sk-test-123")
 	delResp, err := app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("delete: %v", err)
@@ -677,6 +690,7 @@ func TestSessionLifecycle(t *testing.T) {
 	if delResp.StatusCode != fiber.StatusNoContent {
 		t.Fatalf("delete status = %d, want 204", delResp.StatusCode)
 	}
+	t.Cleanup(func() { _ = delResp.Body.Close() })
 	status, _, _ = rpc(t, app, rpcMsg(4, "tools/list", nil), withSession(sid))
 	if status != fiber.StatusNotFound {
 		t.Fatalf("terminated session status = %d, want 404", status)

@@ -177,3 +177,23 @@ func usedTodayUnits(k *APIKey, now time.Time) int64 {
 	}
 	return 0
 }
+
+// Requests can finish in one order and acquire the storage writer in another.
+// A late entry for the previous day updates the total without rolling back
+// the current quota bucket or last-used timestamp.
+func applyKeyUsage(key *APIKey, units int64, consume bool, at time.Time) {
+	if key.LastUsedAt == nil || at.After(*key.LastUsedAt) {
+		key.LastUsedAt = &at
+	}
+	if !consume || units <= 0 {
+		return
+	}
+	key.UsedTotal += units
+	day := localDate(at)
+	switch {
+	case day > key.TodayDate:
+		key.TodayDate, key.UsedToday = day, units
+	case day == key.TodayDate:
+		key.UsedToday += units
+	}
+}

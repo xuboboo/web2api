@@ -1166,7 +1166,7 @@ func parseIndexCheckRequest(c *fiber.Ctx) ([]string, []string, *APIError) {
 	)
 	if c.Method() == fiber.MethodPost {
 		var body indexCheckRequestBody
-		if err := c.BodyParser(&body); err != nil {
+		if err := json.Unmarshal(c.Body(), &body); err != nil {
 			return nil, nil, errInvalidParam(fmt.Sprintf(
 				"request body must be JSON: {\"urls\":[\"...\"],\"engines\":[\"...\"]}: %v", err))
 		}
@@ -1708,7 +1708,7 @@ func (s *Server) ShutdownWithTimeout(timeout time.Duration) error {
 	}
 	// Stop the job runner first: it owns engine work that must not outlive the
 	// process (its state is on disk, so a restart resumes it).
-	s.jobs.Stop()
 	s.SetDraining(true)
+	s.jobs.Stop()
 	return s.app.ShutdownWithTimeout(timeout)
 }

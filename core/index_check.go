@@ -858,6 +858,9 @@ func SelectIndexCheckEngines(available []SearchEngine, requested []string) ([]Se
 		}
 		wanted[resolveEngineAlias(name)] = true
 	}
+	if len(wanted) == 0 {
+		return available, nil
+	}
 	selected := make([]SearchEngine, 0, len(wanted))
 	for _, engine := range available {
 		if wanted[engine.Name()] {

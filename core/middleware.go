@@ -100,17 +100,17 @@ func RequestTimeoutMiddleware(timeout, indexTimeout time.Duration) fiber.Handler
 
 // IsIndexCheckPath reports whether the request path targets an index-check
 // batch endpoint: the dedicated /v1/index/check route and the console
-// playground check. Both are registered under the fixed base path, so the
-// route segment is matched anywhere in the path.
+// playground check. Match the case-insensitive router's path semantics.
 func IsIndexCheckPath(p string) bool {
-	return strings.Contains(p, "/v1/index/check") || strings.Contains(p, "/playground/check")
+	p = strings.TrimSuffix(strings.ToLower(p), "/")
+	return strings.HasSuffix(p, "/v1/index/check") || IsPlaygroundIndexCheckPath(p)
 }
 
 // IsPlaygroundIndexCheckPath reports whether the request targets the console
 // playground. The playground renders the synchronous envelope only, so it keeps
 // the 20-URL ceiling even when the async job queue is enabled.
 func IsPlaygroundIndexCheckPath(p string) bool {
-	return strings.Contains(p, "/playground/check")
+	return strings.HasSuffix(strings.TrimSuffix(strings.ToLower(p), "/"), "/playground/check")
 }
 
 // IndexCheckDeadlineCap is the wall-clock ceiling for index-check batch
@@ -181,7 +181,8 @@ func CORSMiddleware(cfg CORSConfig) fiber.Handler {
 	}
 
 	return func(c *fiber.Ctx) error {
-		isAdminPlane := strings.HasPrefix(c.Path(), BasePath+"/api/") || c.Path() == BasePath+"/api"
+		path := strings.ToLower(c.Path())
+		isAdminPlane := strings.HasPrefix(path, BasePath+"/api/") || path == BasePath+"/api"
 		if isAdminPlane {
 			// No ACAO for the management plane (B-13). Preflights answer 204
 			// without allow headers so browsers stop early.

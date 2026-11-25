@@ -640,6 +640,46 @@ func TestDailyQuotaOneAllowsFirstCallAndRejectsSecond(t *testing.T) {
 	}
 }
 
+func TestDailyQuotaSharesPendingBudgetBetweenRESTAndMCP(t *testing.T) {
+	p := mustNewPlatform(t, t.TempDir(), nil)
+	env := &testEnv{p: p, app: fiber.New()}
+	p.RegisterAdmin(env.app, nil, nil)
+	entered, release, completed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	p.RegisterPublic(env.app, func(c *fiber.Ctx) error {
+		close(entered)
+		<-release
+		return stubIndexCheck(http.StatusOK, false)(c)
+	})
+	env.app.Post("/mcp", p.AuthAny(), func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"result": "ok"})
+	})
+	token := loginToken(t, env.app)
+	_, key := createKey(t, env, token, "shared-budget", 1)
+	statusREST := 0
+	go func() {
+		defer close(completed)
+		statusREST, _ = doJSON(t, env.app, http.MethodGet,
+			"/v1/index/check?url=https%3A%2F%2Fexample.test%2Fa&engines=baidu", nil, keyHeaders(key))
+	}()
+	defer func() {
+		close(release)
+		<-completed
+		if statusREST != http.StatusOK {
+			t.Errorf("first REST request returned %d", statusREST)
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("REST request did not enter the handler")
+	}
+	status, body := doJSONRaw(t, env.app, http.MethodPost, "/mcp",
+		`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"web_search"},"id":1}`, keyHeaders(key))
+	if status != http.StatusTooManyRequests || body["error"] != "quota_exceeded" {
+		t.Fatalf("concurrent MCP request returned %d, body %v", status, body)
+	}
+}
+
 func TestQuotaNotConsumedOnBadRequest(t *testing.T) {
 	// Stub always answers 400; quota must stay untouched.
 	env := newTestEnv(t, 400, false)

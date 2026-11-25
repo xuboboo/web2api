@@ -190,6 +190,8 @@ HTTP 503，响应带 `Retry-After` 头（与 `retry_after_seconds` 同值）。�
 | 401 | `{"error":"unauthorized"}` | key 缺失 / 未知 / 禁用 |
 | 429 | `{"error":"quota_exceeded"}`（`Retry-After` 头） | 当日配额用尽 |
 | 503 | `{"error":"engine_cooldown","reason":"COOLDOWN","retry_after_seconds":600}`（`Retry-After` 头） | 所选引擎全部处于冷却期 |
+| 503 | `job_queue_full`（`reason=JOB_QUEUE_FULL`，带 `Retry-After`） | 异步任务队列已满，本次未入队、未计费。MCP 以 HTTP 503 返回 JSON-RPC 错误，同样可退避后重试 |
+| 503 | `server_draining`（`reason=SERVER_DRAINING`，带 `Retry-After`） | 服务进入停机排水，暂停接收新异步任务。REST 和 MCP 本次均未入队、未计费 |
 
 > **本端点 400 的信封现状（实测）**：契约目标形状是上面的三字段平台信封（`platform/errors.go` 注释与 §1.2），管理端 `/api/*` 的 400 已是该形状；但 `/web-tool/v1/index/check` 的参数校验当前由核心 index 处理器应答，实测返回的是 §1.1 核心信封：
 >
@@ -451,7 +453,7 @@ curl "{BASE}/baidu/search?text=golang%20%E5%B9%B6%E5%8F%91%E6%A8%A1%E5%9E%8B&lim
 
 鉴权失败返回平台信封 `401 {"error":"unauthorized"}`；API key 配额用尽返回 `429 {"error":"quota_exceeded"}`。
 
-**会话**：`initialize` 响应头返回 `Mcp-Session-Id`，后续请求携带该头可复用内存会话；不携带则每请求独立（无状态调用同样合法）。显式关闭会话：`DELETE /web-tool/mcp`（带 `Mcp-Session-Id` 头）→ 204（已知会话）/ 404（未知会话）。
+**会话**：`initialize` 响应头返回 `Mcp-Session-Id`。后续请求在使用同一 API Key 身份或管理员账号时可以复用会话，也可以无状态调用。关闭会话时用相同身份和 `Mcp-Session-Id` 发送 `DELETE /web-tool/mcp`。成功返回 204，未鉴权返回 401，已过期、未知或归属其他身份的会话返回 404。
 
 #### 握手三步
 
@@ -927,7 +929,7 @@ curl -X POST {BASE}/api/playground/check \
 - 对账：`GET /api/reconcile` 按日核对「落账次数」与「逐引擎成功单元数」；携带逐引擎明细的记录逐条核对，无明细的记录（MCP `web_search`、信封解析失败的存量数据）按落账口径计入、不判 mismatch。
 - 对计费敏感的批量任务建议：先小批量探测引擎健康度（`GET /web-tool/v1/engines` / `list_engines`），避开冷却与熔断中的引擎，再放大批量——冷却/熔断单元虽不计费，但整请求会因此缩水。
 - 配额维度：`daily_quota`（本地日重置，0 = 不限）与 `used_total`（累计）；用量日志（`/web-tool/api/usage`）逐笔记录计费 unit 数（units）、HTTP 状态与各引擎成功/失败数。
-- **配额硬上限语义（B-15）**：配额为「预检-事后扣减」两段式——并发在途请求可轻微超出 `daily_quota`（每请求最多超额「在途次数 − 1」）；扣减在 bbolt 单事务内完成,**无丢账**。严格 Reservation 语义（先记账后执行、失败回滚）未实现;对账接口 `GET /api/reconcile` 可核对扣费与流水差异。
+- **并发配额（B-15）**：REST 和 MCP 在同一进程内按 API Key 共用在途配额。接收前检查已用量和在途预留，完成后按实际计费口径落账并释放预留。预留只存在于进程内，已入账的扣费和流水在同一存储事务提交。可用 `GET /api/reconcile` 核对用量。
 - 免费额度、QPS 分级等商用配额策略当前未实现；自托管场景配额即自我约束工具。
 
 ---

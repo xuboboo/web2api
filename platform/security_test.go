@@ -222,6 +222,47 @@ func TestLoginLockoutConfigFromSecurity(t *testing.T) {
 // Password change + token_version invalidation (契约 B)
 // ---------------------------------------------------------------------------
 
+func TestAdminTokenRejectsInvalidVersionState(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	token := loginToken(t, env.app)
+	if err := env.p.store.PutSetting(settingTokenVersion, []byte("invalid")); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := doJSON(t, env.app, http.MethodGet, "/api/me", nil, adminHeaders(token)); status != http.StatusUnauthorized {
+		t.Fatalf("token with unreadable version state returned %d", status)
+	}
+}
+
+func TestSessionRevocationSurvivesConcurrentRefresh(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	for i := 0; i < 12; i++ {
+		session, err := env.p.createSession("127.0.0.1", "test", time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			<-start
+			if _, err := env.p.touchSession(session.ID, true); err != nil {
+				t.Error(err)
+			}
+		})
+		wg.Go(func() {
+			<-start
+			if revoked, err := env.p.revokeSession(session.ID); !revoked || err != nil {
+				t.Errorf("revoke: revoked=%v err=%v", revoked, err)
+			}
+		})
+		close(start)
+		wg.Wait()
+		saved, err := env.p.store.GetSession(session.ID)
+		if err != nil || saved == nil || !saved.Revoked || env.p.sessionActive(session.ID) {
+			t.Fatalf("persisted session not revoked: %+v, err=%v", saved, err)
+		}
+	}
+}
+
 func TestPasswordChangeInvalidatesOldTokens(t *testing.T) {
 	env := newTestEnv(t, 200, false)
 	oldToken := login(t, env.app)
@@ -438,6 +479,12 @@ func TestAuthAnyMCPBillingUnits(t *testing.T) {
 	latest, _ := items[0].(map[string]any)
 	if latest["units"] != float64(8) || latest["endpoint"] != "/web-tool/mcp" {
 		t.Fatalf("latest MCP usage item: %v", latest)
+	}
+
+	// Route identity stays canonical even when Fiber matches a different spelling.
+	status, _, _ = doJSONErr(t, app, http.MethodPost, "/web-tool/MCP/", json.RawMessage(mcpSearchBody), keyHeaders(key))
+	if status != http.StatusOK || quotaUsedToday(t, env.app, key) != 10 {
+		t.Fatalf("case-insensitive MCP route did not record its usage: status=%d", status)
 	}
 }
 

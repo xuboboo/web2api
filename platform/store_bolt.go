@@ -128,6 +128,32 @@ func (s *boltStore) PutKey(key *APIKey) error {
 	})
 }
 
+func (s *boltStore) UpdateKey(id string, edit func(*APIKey)) (*APIKey, error) {
+	var key *APIKey
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(boltBucketName(bucketKeys))
+		raw := bucket.Get([]byte(id))
+		if raw == nil {
+			return nil
+		}
+		var current APIKey
+		if err := json.Unmarshal(raw, &current); err != nil {
+			return fmt.Errorf("corrupt key record: %w", err)
+		}
+		edit(&current)
+		updated, err := json.Marshal(&current)
+		if err != nil {
+			return err
+		}
+		key = &current
+		return bucket.Put([]byte(id), updated)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
 func (s *boltStore) DeleteKey(id string) (bool, error) {
 	existed := false
 	err := s.db.Update(func(tx *bolt.Tx) error {
@@ -177,18 +203,7 @@ func (s *boltStore) RecordUsage(rec *UsageRecord, keyID string, units int64, con
 			if err := json.Unmarshal(rawKey, &k); err != nil {
 				return fmt.Errorf("corrupt key record: %w", err)
 			}
-			atCopy := at
-			k.LastUsedAt = &atCopy
-			if consume && units > 0 {
-				today := localDate(at)
-				if k.TodayDate != today {
-					k.TodayDate = today
-					k.UsedToday = units
-				} else {
-					k.UsedToday += units
-				}
-				k.UsedTotal += units
-			}
+			applyKeyUsage(&k, units, consume, at)
 			rawUpdated, err := json.Marshal(&k)
 			if err != nil {
 				return err
@@ -219,11 +234,11 @@ type usageKeyDayStat struct {
 
 // usageDailyBucket is one day's aggregate counters.
 type usageDailyBucket struct {
-	Calls    int64                     `json:"c"`
-	Units    int64                     `json:"u"`
-	OK       int64                     `json:"ok"`
-	Rejected int64                     `json:"rj"`
-	ByEngine map[string]EngineStat     `json:"be,omitempty"`
+	Calls    int64                      `json:"c"`
+	Units    int64                      `json:"u"`
+	OK       int64                      `json:"ok"`
+	Rejected int64                      `json:"rj"`
+	ByEngine map[string]EngineStat      `json:"be,omitempty"`
 	Keys     map[string]usageKeyDayStat `json:"keys,omitempty"`
 }
 
@@ -646,8 +661,18 @@ func (s *boltStore) GetSetting(name string) ([]byte, error) {
 }
 
 func (s *boltStore) PutSetting(name string, value []byte) error {
+	return s.PutSettings(map[string][]byte{name: value})
+}
+
+func (s *boltStore) PutSettings(values map[string][]byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(boltBucketName(bucketSettings)).Put([]byte(name), value)
+		bucket := tx.Bucket(boltBucketName(bucketSettings))
+		for name, value := range values {
+			if err := bucket.Put([]byte(name), value); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

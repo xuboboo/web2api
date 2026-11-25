@@ -4,7 +4,7 @@ package platform
 // revocation, sliding renewal and logout.
 //
 //   - JWT claims carry sid (session id) + jti (per-token id). jwtGuard /
-//     AuthAny verify the sid is still active (memory cache + store).
+//     AuthAny verify the sid is still active (persistent store).
 //   - Tokens issued before S4 carry no sid and stay valid until their own
 //     TTL (兼容), still subject to the token_version global invalidation.
 //   - POST /api/auth/logout revokes the current session and clears the
@@ -18,8 +18,6 @@ import (
 	"encoding/hex"
 	"sort"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // AdminSession is one stored admin login session. IsCurrent is derived per
@@ -51,26 +49,6 @@ func newSessionID() string {
 	return hex.EncodeToString(buf)
 }
 
-// sessionCache is the in-memory view of the sessions bucket: active IDs with
-// their expiry, plus a revoked set so a revocation answers instantly even
-// when the store lookup would race.
-//
-// Concurrency: the maps are guarded by Platform.sessionMu, not by a mutex of
-// their own — every access in this file takes that lock. The struct therefore
-// stays lock-free to avoid two locks guarding one map.
-type sessionCache struct {
-	known   map[string]time.Time // sid -> expiry (active sessions seen recently)
-	revoked map[string]bool
-}
-
-func newSessionCache() *sessionCache {
-	return &sessionCache{known: map[string]time.Time{}, revoked: map[string]bool{}}
-}
-
-// ---------------------------------------------------------------------------
-// Platform session operations
-// ---------------------------------------------------------------------------
-
 // createSession stores a fresh session for the admin login and returns it.
 func (p *Platform) createSession(ip, userAgent string, ttl time.Duration) (*AdminSession, error) {
 	now := time.Now()
@@ -82,100 +60,73 @@ func (p *Platform) createSession(ip, userAgent string, ttl time.Duration) (*Admi
 		IP:           ip,
 		UserAgent:    userAgent,
 	}
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
 	if err := p.store.PutSession(s); err != nil {
 		return nil, err
 	}
-	p.sessionMu.Lock()
-	p.sessions.known[s.ID] = s.ExpiresAt
-	delete(p.sessions.revoked, s.ID)
-	p.sessionMu.Unlock()
 	return s, nil
 }
 
-// sessionActive reports whether sid is an active (non-revoked, non-expired)
-// session. Memory cache first, store as the source of truth.
+// sessionActive validates the persisted session on every authorization check.
 func (p *Platform) sessionActive(sid string) bool {
 	if sid == "" {
 		return false
 	}
-	now := time.Now()
-	p.sessionMu.Lock()
-	if p.sessions.revoked[sid] {
-		p.sessionMu.Unlock()
-		return false
-	}
-	if exp, ok := p.sessions.known[sid]; ok && now.Before(exp) {
-		p.sessionMu.Unlock()
-		return true
-	}
-	p.sessionMu.Unlock()
-
 	s, err := p.store.GetSession(sid)
-	if err != nil || s == nil || s.Revoked || now.After(s.ExpiresAt) {
-		p.sessionMu.Lock()
-		p.sessions.revoked[sid] = true
-		p.sessionMu.Unlock()
-		return false
-	}
-	p.sessionMu.Lock()
-	p.sessions.known[sid] = s.ExpiresAt
-	delete(p.sessions.revoked, sid)
-	p.sessionMu.Unlock()
-	return true
+	return err == nil && s != nil && !s.Revoked && time.Now().Before(s.ExpiresAt)
 }
 
-// touchSession slides LastActiveAt forward (throttled to sessionTouchInterval)
-// and, when slide is true, extends ExpiresAt (POST /api/auth/refresh).
-func (p *Platform) touchSession(sid string, slide bool) {
+// touchSession serializes read-modify-write with revocation. The boolean
+// reports whether the session was active when it was touched.
+func (p *Platform) touchSession(sid string, slide bool) (bool, error) {
 	if sid == "" {
-		return
+		return false, nil
 	}
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
 	s, err := p.store.GetSession(sid)
-	if err != nil || s == nil || s.Revoked {
-		return
-	}
 	now := time.Now()
+	if err != nil || s == nil || s.Revoked || !now.Before(s.ExpiresAt) {
+		return false, err
+	}
 	if !slide && now.Sub(s.LastActiveAt) < sessionTouchInterval {
-		return
+		return true, nil
 	}
 	s.LastActiveAt = now
 	if slide {
 		s.ExpiresAt = now.Add(p.jwtTTL())
 	}
 	if err := p.store.PutSession(s); err != nil {
-		logrus.WithError(err).Warn("platform: 更新会话活跃时间失败")
-		return
+		return false, err
 	}
-	if slide {
-		p.sessionMu.Lock()
-		p.sessions.known[s.ID] = s.ExpiresAt
-		p.sessionMu.Unlock()
-	}
+	return true, nil
 }
 
-// revokeSession marks one session revoked (single-session logout/撤销).
+// revokeSession marks one session revoked (single-session logout or revoke).
 func (p *Platform) revokeSession(sid string) (bool, error) {
 	if sid == "" {
 		return false, nil
 	}
 	p.sessionMu.Lock()
-	p.sessions.revoked[sid] = true
-	delete(p.sessions.known, sid)
-	p.sessionMu.Unlock()
+	defer p.sessionMu.Unlock()
 	s, err := p.store.GetSession(sid)
 	if err != nil || s == nil {
 		return false, err
 	}
-	if s.Revoked {
-		return true, nil
+	if !s.Revoked {
+		s.Revoked = true
+		if err := p.store.PutSession(s); err != nil {
+			return false, err
+		}
 	}
-	s.Revoked = true
-	return true, p.store.PutSession(s)
+	return true, nil
 }
 
-// revokeOtherSessions revokes every session except keepID (撤销其他会话;
-// keepID "" = all) and returns how many were revoked.
+// revokeOtherSessions revokes every active session except keepID.
 func (p *Platform) revokeOtherSessions(keepID string) (int, error) {
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
 	sessions, err := p.store.ListSessions()
 	if err != nil {
 		return 0, err
@@ -184,13 +135,9 @@ func (p *Platform) revokeOtherSessions(keepID string) (int, error) {
 	revoked := 0
 	for i := range sessions {
 		s := &sessions[i]
-		if s.ID == keepID || s.Revoked || now.After(s.ExpiresAt) {
+		if s.ID == keepID || s.Revoked || !now.Before(s.ExpiresAt) {
 			continue
 		}
-		p.sessionMu.Lock()
-		p.sessions.revoked[s.ID] = true
-		delete(p.sessions.known, s.ID)
-		p.sessionMu.Unlock()
 		s.Revoked = true
 		if err := p.store.PutSession(s); err != nil {
 			return revoked, err

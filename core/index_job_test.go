@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +49,9 @@ func TestIndexJobSubmitValidation(t *testing.T) {
 	}
 	if _, apiErr := m.Submit(context.Background(), []string{"not a url"}, nil); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
 		t.Fatalf("invalid url: got %+v", apiErr)
+	}
+	if _, apiErr := m.Submit(t.Context(), []string{"https://example.test/a"}, []string{"invalid-engine"}); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
+		t.Fatalf("invalid engine: got %+v", apiErr)
 	}
 
 	tooMany := make([]string, DefaultIndexJobMaxURLs+1)
@@ -119,7 +125,7 @@ func TestIndexJobResumesAfterRestart(t *testing.T) {
 	created := time.Now().UTC().Add(-time.Minute)
 	job := IndexJob{
 		ID: "job_restart_case", Status: IndexJobRunning, CreatedAt: created, UpdatedAt: created,
-		Engines: []string{"baidu"}, Total: 3, Completed: 1, Indexed: 1, URLs: urls,
+		Engines: []string{"baidu"}, Total: 3, URLs: urls,
 	}
 	if err := store.SaveMeta(&job); err != nil {
 		t.Fatalf("save meta: %v", err)
@@ -129,6 +135,15 @@ func TestIndexJobResumesAfterRestart(t *testing.T) {
 	}}
 	if err := store.AppendResult(job.ID, first); err != nil {
 		t.Fatalf("append result: %v", err)
+	}
+	// Crash between the result append and metadata save, followed by a torn row.
+	f, err := os.OpenFile(filepath.Join(dir, job.ID, "results.jsonl"), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := f.WriteString("{\"url\":")
+	if err := f.Close(); err != nil || writeErr != nil {
+		t.Fatalf("write torn result: %v, close: %v", writeErr, err)
 	}
 
 	eng := &indexEngineMock{
@@ -140,8 +155,8 @@ func TestIndexJobResumesAfterRestart(t *testing.T) {
 	m, _ := newTestJobManager(t, dir, []SearchEngine{eng})
 
 	done := waitForJob(t, m, job.ID, 5*time.Second)
-	if done.Completed != 3 {
-		t.Fatalf("resumed job completed %d of %d", done.Completed, done.Total)
+	if done.Completed != 3 || done.Indexed != 3 {
+		t.Fatalf("resumed job completed %d of %d, indexed %d", done.Completed, done.Total, done.Indexed)
 	}
 	rows, _ := m.Results(job.ID)
 	if len(rows) != 3 {
@@ -152,6 +167,148 @@ func TestIndexJobResumesAfterRestart(t *testing.T) {
 		if called == urls[0] {
 			t.Fatalf("resumed job re-queried the completed URL %s", called)
 		}
+	}
+}
+
+func TestIndexJobRetainsEngineSelectionAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	store := NewIndexJobStore(dir)
+	job := IndexJob{ID: "job_missing_engine", Status: IndexJobQueued, Engines: []string{"sogou"},
+		URLs: []string{"https://example.test/a"}, Total: 1}
+	if err := store.SaveMeta(&job); err != nil {
+		t.Fatal(err)
+	}
+	fallback := &indexEngineMock{name: "baidu", initialized: true}
+	m, _ := newTestJobManager(t, dir, []SearchEngine{fallback})
+	terminal := waitForJob(t, m, job.ID, 5*time.Second)
+	if terminal.Status != IndexJobFailed || terminal.Completed != 0 || len(fallback.calls()) != 0 {
+		t.Fatalf("job switched engines after restart: %+v", terminal)
+	}
+}
+
+func TestIndexJobRestoresBacklogBeyondQueueCapacity(t *testing.T) {
+	m := NewIndexJobManager(t.TempDir(), nil, nil, IndexJobOptions{})
+	m.queue = make(chan string, 1)
+	for i := 0; i < 2; i++ {
+		job := &IndexJob{ID: fmt.Sprintf("job_backlog_%d", i), Status: IndexJobQueued}
+		if err := m.store.SaveMeta(job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{})
+	go func() {
+		m.Start(ctx)
+		close(started)
+	}()
+	select {
+	case <-started:
+		t.Cleanup(m.Stop)
+	case <-time.After(5 * time.Second):
+		t.Fatal("job manager startup blocked on its recovery backlog")
+	}
+	for i := 0; i < 2; i++ {
+		if got := waitForJob(t, m, fmt.Sprintf("job_backlog_%d", i), 5*time.Second); got.Status != IndexJobDone {
+			t.Fatalf("restored job = %+v", got)
+		}
+	}
+}
+
+func TestIndexJobFullQueueRejectsWithoutPersisting(t *testing.T) {
+	m := NewIndexJobManager(t.TempDir(), nil, nil, IndexJobOptions{})
+	m.queue = make(chan string, 1)
+	urls := []string{"https://example.test/1"}
+	if _, err := m.Submit(t.Context(), urls, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Submit(t.Context(), urls, nil); err == nil || err.Reason != "JOB_QUEUE_FULL" {
+		t.Fatalf("full queue returned %v", err)
+	}
+	stored, err := m.store.ListMeta()
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("stored jobs = %d, err = %v", len(stored), err)
+	}
+}
+
+func TestIndexJobShutdownLeavesInFlightJobResumable(t *testing.T) {
+	started := make(chan struct{})
+	eng := &indexEngineMock{name: "baidu", initialized: true,
+		serpFn: func(ctx context.Context, _ string, _ Query) ([]SearchResult, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	m, _ := newTestJobManager(t, t.TempDir(), []SearchEngine{eng})
+	job, apiErr := m.Submit(t.Context(), []string{"https://example.test/1"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("job did not reach the engine")
+	}
+	m.Stop()
+	stored, err := m.store.LoadMeta(job.ID)
+	if err != nil || stored.Status != IndexJobQueued || stored.Completed != 0 {
+		t.Fatalf("interrupted job = %+v, err = %v", stored, err)
+	}
+}
+
+func TestIndexJobFailsWhenResultCannotBePersisted(t *testing.T) {
+	urls := []string{"https://example.test/1"}
+	eng := &indexEngineMock{name: "baidu", initialized: true,
+		serpFn: func(_ context.Context, target string, _ Query) ([]SearchResult, error) {
+			return []SearchResult{{Rank: 1, URL: target}}, nil
+		},
+	}
+	cfg := DefaultResilientConfig()
+	rs := NewResilientSearcher([]SearchEngine{eng}, cfg)
+	m := NewIndexJobManager(t.TempDir(), []SearchEngine{eng}, rs, IndexJobOptions{})
+	job, apiErr := m.Submit(t.Context(), urls, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	// A directory at the result path rejects writes while metadata stays writable.
+	if err := os.Mkdir(filepath.Join(m.store.jobDir(job.ID), "results.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m.runJob(t.Context(), job.ID)
+	got, err := m.store.LoadMeta(job.ID)
+	if err != nil || got.Status != IndexJobFailed || got.Completed != 0 || got.LastError == "" {
+		t.Fatalf("failed job = %+v, err = %v", got, err)
+	}
+}
+
+func TestIndexJobCancelRequiresPersistedTransition(t *testing.T) {
+	m := NewIndexJobManager(t.TempDir(), nil, nil, IndexJobOptions{})
+	ctx := WithJobOwner(t.Context(), "owner")
+	job, apiErr := m.Submit(ctx, []string{"https://example.test/1"}, nil)
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	blocked := filepath.Join(m.store.jobDir(job.ID), "job.json.tmp")
+	if err := os.Mkdir(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := m.cancelJob(job.ID, "owner"); ok || err == nil {
+		t.Fatalf("failed cancellation: ok=%v err=%v", ok, err)
+	}
+	current, ok := m.Get(job.ID, "owner")
+	if !ok || current.Status != IndexJobQueued {
+		t.Fatalf("job changed after failed persistence: %+v", current)
+	}
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := m.cancelJob(job.ID, "owner"); !ok || err != nil {
+		t.Fatalf("retry cancellation: ok=%v err=%v", ok, err)
+	}
+	stored, err := m.store.LoadMeta(job.ID)
+	if err != nil || stored.Status != IndexJobCancelled {
+		t.Fatalf("persisted job = %+v, err = %v", stored, err)
 	}
 }
 
@@ -248,6 +405,22 @@ func TestIndexJobCSV(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "captcha_detected") {
 		t.Errorf("error row must carry the code: %q", lines[2])
+	}
+}
+
+func TestSpreadsheetCSVCellPreservesLiteralText(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"sample", "sample"},
+		{"=sample", "'=sample"},
+		{"  +sample", "'  +sample"},
+		{"＠sample", "'＠sample"},
+		{"\tsample", "'\tsample"},
+		{"a,b", "\"a,b\""},
+		{"", ""},
+	} {
+		if got := SpreadsheetCSVCell(tc.input); got != tc.want {
+			t.Errorf("SpreadsheetCSVCell(%q) = %q, want %q", tc.input, got, tc.want)
+		}
 	}
 }
 

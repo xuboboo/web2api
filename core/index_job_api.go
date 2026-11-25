@@ -18,15 +18,23 @@ import (
 // JobsEnabled reports whether the async job queue is wired in this deployment.
 func (s *Server) JobsEnabled() bool { return s != nil && s.jobs != nil }
 
+func (s *Server) queueIndexJob(ctx context.Context, urls, engines []string) (*IndexJob, *APIError) {
+	if s.draining.Load() {
+		return nil, &APIError{HTTPStatus: 503, ErrorCode: "server_draining", Reason: "SERVER_DRAINING",
+			Message: "server is shutting down; retry later", RetryAfterSeconds: 5}
+	}
+	return s.jobs.Submit(ctx, urls, engines)
+}
+
 // SubmitIndexJob queues a large batch for MCP callers. The owner (API key)
 // travels in ctx, so the job stays visible only to the key that paid for it.
 func (s *Server) SubmitIndexJob(ctx context.Context, urls, engines []string) (any, error) {
 	if !s.JobsEnabled() {
 		return nil, fmt.Errorf("index jobs are not enabled in this deployment")
 	}
-	job, apiErr := s.jobs.Submit(ctx, urls, engines)
+	job, apiErr := s.queueIndexJob(ctx, urls, engines)
 	if apiErr != nil {
-		return nil, fmt.Errorf("%s", apiErr.Message)
+		return nil, apiErr
 	}
 	return map[string]any{
 		"job_id":     job.ID,
@@ -81,7 +89,11 @@ func (s *Server) CancelIndexJob(ctx context.Context, jobID string) (any, error) 
 	if !s.JobsEnabled() {
 		return nil, fmt.Errorf("index jobs are not enabled in this deployment")
 	}
-	if !s.jobs.Cancel(jobID, JobOwner(ctx)) {
+	cancelled, err := s.jobs.cancelJob(jobID, JobOwner(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("cannot persist job cancellation")
+	}
+	if !cancelled {
 		if _, ok := s.jobs.Get(jobID, JobOwner(ctx)); !ok {
 			return nil, fmt.Errorf("job %q not found", jobID)
 		}

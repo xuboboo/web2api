@@ -61,7 +61,7 @@ type indexJobView struct {
 
 // submitIndexJob queues an oversized batch and answers 202.
 func (s *Server) submitIndexJob(c *fiber.Ctx, requestCtx context.Context, urls, engines []string) error {
-	job, apiErr := s.jobs.Submit(requestCtx, urls, engines)
+	job, apiErr := s.queueIndexJob(requestCtx, urls, engines)
 	if apiErr != nil {
 		WithRequest(requestCtx).WithField("reason", apiErr.Reason).Warn("Invalid index job parameters")
 		return apiErr
@@ -149,7 +149,11 @@ func (s *Server) IndexJobCancelHandler(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if !s.jobs.Cancel(job.ID, JobOwner(c.UserContext())) {
+	cancelled, err := s.jobs.cancelJob(job.ID, JobOwner(c.UserContext()))
+	if err != nil {
+		return &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot persist job cancellation"}
+	}
+	if !cancelled {
 		return &APIError{HTTPStatus: 409, ErrorCode: "conflict", Reason: "CONFLICT", Message: "job already finished"}
 	}
 	updated, _ := s.jobs.Get(job.ID, JobOwner(c.UserContext()))

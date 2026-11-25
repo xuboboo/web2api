@@ -134,6 +134,30 @@ func TestIndexCheckLargeBatchReturnsJob(t *testing.T) {
 	}
 }
 
+func TestDrainingRejectsAsyncSubmissionsWithoutScheduling(t *testing.T) {
+	srv, eng := newJobTestServer(t, true)
+	srv.SetDraining(true)
+	urls := make([]string, MaxIndexCheckURLs+1)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://example.test/drain/%d", i)
+	}
+	resp := postIndexCheck(t, srv, urls)
+	body := readAll(t, resp)
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" ||
+		!strings.Contains(body, "server_draining") {
+		t.Fatalf("REST draining response: status=%d body=%s", resp.StatusCode, body)
+	}
+	_, err := srv.SubmitIndexJob(t.Context(), urls, []string{"baidu"})
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.ErrorCode != "server_draining" {
+		t.Fatalf("MCP draining response: %v", err)
+	}
+	stored, err := srv.jobs.Store().ListMeta()
+	if err != nil || len(stored) != 0 || len(eng.calls()) != 0 {
+		t.Fatalf("drain scheduled work: jobs=%d engine calls=%d err=%v", len(stored), len(eng.calls()), err)
+	}
+}
+
 func TestIndexCheckSmallBatchStaysSynchronous(t *testing.T) {
 	srv, _ := newJobTestServer(t, true)
 	resp := postIndexCheck(t, srv, []string{"https://example.test/a/1", "https://example.test/a/2"})

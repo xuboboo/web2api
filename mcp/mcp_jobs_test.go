@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/xuboboo/web2api/core"
 )
 
 const jobTestKey = "sk-test-123"
@@ -45,6 +47,22 @@ func TestCheckIndexedLargeBatchBecomesJob(t *testing.T) {
 	}
 	if len(submittedEngines) != 1 || submittedEngines[0] != "baidu" {
 		t.Fatalf("engines forwarded as %v", submittedEngines)
+	}
+}
+
+func TestCheckIndexedQueueFullReturnsRetryableHTTPError(t *testing.T) {
+	app := newTestApp(t, fakeAuth, Deps{
+		SubmitIndexJob: func(context.Context, []string, []string) (any, error) {
+			return nil, &core.APIError{HTTPStatus: 503, Reason: "JOB_QUEUE_FULL", RetryAfterSeconds: 60}
+		},
+	})
+	body := rpcMsg(1, "tools/call", map[string]any{
+		"name":      toolCheckIndexed,
+		"arguments": map[string]any{"urls": twentyOneURLs()},
+	})
+	status, resp, out := rpc(t, app, body, map[string]string{"X-API-Key": jobTestKey})
+	if status != 503 || resp.Header.Get("Retry-After") != "60" || out["error"] == nil {
+		t.Fatalf("queue-full response: status=%d retry-after=%q body=%v", status, resp.Header.Get("Retry-After"), out)
 	}
 }
 
