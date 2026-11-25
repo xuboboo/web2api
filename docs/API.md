@@ -4,7 +4,7 @@ Web2API 查询指定网页能否在百度、搜狗、360 搜索和必应中检�
 
 ## 第一次调用
 
-在管理控制台的「API 密钥」页创建密钥并保存完整值。以下命令适用于 Bash，需安装 curl。示例使用本机地址，远程部署时把地址换成你的服务地址并保留 `/web-tool`。
+在管理控制台的「API 密钥」页创建密钥并保存完整值。以下命令适用于 Bash，需安装 curl。示例使用正式访问地址；本机部署时换成 `http://127.0.0.1:7000/web-tool`，并保留 `/web-tool` 前缀。
 
 ```bash
 export W2A_BASE='https://radar.ydsdoa.cn/web-tool'

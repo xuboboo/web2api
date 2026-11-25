@@ -60,14 +60,21 @@ function Start-Live() {
   }
 }
 function Cache-Bust() {
-  $indexPath = Join-Path $deployWeb 'admin/index.html'
-  $text = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8
-  foreach ($asset in @('assets/app.js', 'assets/style.css')) {
-    $file = Join-Path $deployWeb ('admin/' + $asset)
-    $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.Substring(0, 8)
-    $text = [regex]::Replace($text, '(' + [regex]::Escape($asset) + '\?v=)[^"'']+', '$1' + $hash)
+  $pages = @(
+    @{ file = (Join-Path $deployWeb 'admin/index.html'); dir = (Join-Path $deployWeb 'admin') },
+    @{ file = (Join-Path $deployWeb 'index.html'); dir = $deployWeb }
+  )
+  foreach ($page in $pages) {
+    if (!(Test-Path -LiteralPath $page.file)) { continue }
+    $text = Get-Content -LiteralPath $page.file -Raw -Encoding UTF8
+    foreach ($asset in @('assets/app.js', 'assets/style.css', 'assets/theme-boot.js', 'assets/engine-status.js')) {
+      $file = Join-Path $page.dir $asset
+      if (!(Test-Path -LiteralPath $file)) { continue }
+      $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.Substring(0, 8)
+      $text = [regex]::Replace($text, '(' + [regex]::Escape($asset) + '\?v=)[^"'']+', '${1}' + $hash)
+    }
+    [IO.File]::WriteAllText($page.file, $text, (New-Object Text.UTF8Encoding($false)))
   }
-  [IO.File]::WriteAllText($indexPath, $text, (New-Object Text.UTF8Encoding($false)))
 }
 function Verify() {
   $cred = Import-Clixml -LiteralPath (Join-Path $DeployDir 'admin.credential.xml')
@@ -104,8 +111,11 @@ if ($Binary) { $newExe = $Binary }
 else {
   $go = if ($env:W2A_GO) { $env:W2A_GO } else { 'go' }
   $newExe = Join-Path $env:TEMP 'w2a-deploy-build.exe'
-  & $go build -trimpath -ldflags '-s -w' -o $newExe .
-  if ($LASTEXITCODE -ne 0) { Fail 'go build failed' }
+  Push-Location $RepoRoot
+  try {
+    & $go build -trimpath -ldflags '-s -w' -o $newExe .
+    if ($LASTEXITCODE -ne 0) { Fail 'go build failed' }
+  } finally { Pop-Location }
 }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $live = Get-LiveProcess

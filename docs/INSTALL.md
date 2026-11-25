@@ -146,7 +146,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
-| `listen tcp radar.ydsdoa.cn: bind: address already in use` | 端口被占 | 改 `server.port` 或 `lsof -i:7000` 找到占用者 |
+| `listen tcp 127.0.0.1:7000: bind: address already in use` | 端口被占 | 改 `server.port` 或 `lsof -i:7000` 找到占用者 |
 | 启动即退出，日志 `bbolt: open ... permission denied` | `platform.data_dir` 不可写 | `chown` 给运行用户 |
 | 启动即退出，日志 `cannot read config ... permission denied` | `/etc/web2api` 父目录不允许运行用户穿越，或配置文件不可读 | `chown root:web2api /etc/web2api && chmod 0750 /etc/web2api && chmod 0640 /etc/web2api/config.yaml` |
 | `/ready` 返回非 200，日志 `chromium not found` | 没有浏览器或路径不对 | 装 Chrome，或设 `app.browser_path` |

@@ -76,6 +76,12 @@ staticcheck ./...
 
 > **Windows 上 `gofmt -l .` 会列出几十个文件，这不是格式问题**：本机 `core.autocrlf=true`，工作区是 CRLF，而 gofmt 期望 LF。CI 在 Linux 以 LF 检出，因此不会报。判断自己改的文件是否合规，用 `gofmt -l $(git diff --name-only -- '*.go')`，不要为了消除噪音去批量重写 51 个文件。
 
+不需要浏览器或网络。覆盖：
+
+- 各引擎 `BuildURL`（含中文编码、site/filetype 折叠、翻页换算、非法入参）
+- 各引擎 `ParseHTML`（真实 SERP 快照，位于 `*/testdata/`；含广告识别、隐藏卡片过滤、去重与排名）
+- 响应信封、缓存键、熔断、重试、提取、代理策略、`core.CaptchaGate` 等核心模块
+
 ### 严格集成测试（会启动真实 Chrome、访问真实站点）
 
 ```bash
@@ -86,23 +92,16 @@ go test -p 1 -count=1 -timeout=900s -tags=integration ./...
 ```
 
 > `TestSearch*` 是 live 用例（真实打开 bing/baidu/sogou/360）。严格模式下外部站点抖动（元素渲染超时、验证码、出口 IP 被限）会让它变红——先单独重跑该用例确认，再判定是否回归。非严格模式这类用例自动 skip。
-
-不需要浏览器或网络。覆盖：
-
-- 各引擎 `BuildURL`（含中文编码、site/filetype 折叠、翻页换算、非法入参）
-- 各引擎 `ParseHTML`（真实 SERP 快照，位于 `*/testdata/`；含广告识别、隐藏卡片过滤、去重与排名）
-- 响应信封、缓存键、熔断、重试、提取、代理策略、`core.CaptchaGate` 等核心模块
-
 搜狗、360 的解析器断言包括：`/link` 相对地址绝对化、`data-mdurl` 直达链接优先、captcha / no-result 分类。
 
 ## 2. 平台契约冒烟：`deploy/e2e.mjs`
 
-针对固定 `/web-tool` 前缀下整个平台的契约面，零依赖（Node 18+ 内置 fetch）。默认目标 `https://radar.ydsdoa.cn`（自动追加 `/web-tool`）。需要服务已在运行。
+针对固定 `/web-tool` 前缀下整个平台的契约面，零依赖（Node 18+ 内置 fetch）。默认目标 `http://127.0.0.1:7000`（自动追加 `/web-tool`）；公网示例需显式传参。需要服务已在运行。
 
 ```bash
-node deploy/e2e.mjs https://radar.ydsdoa.cn
+node deploy/e2e.mjs http://127.0.0.1:7000
 # 或
-WEB2API_BASE_URL=https://radar.ydsdoa.cn node deploy/e2e.mjs
+WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
 # 追加一次真实引擎收录判定（依赖引擎可用性,默认跳过）
 E2E_LIVE_INDEX_CHECK=1 node deploy/e2e.mjs
 # 人工环境跳过登录锁定测试(避免套件结束后 admin@本机IP 被锁 15 分钟)
@@ -126,7 +125,7 @@ E2E_SKIP_LOCKOUT=1 node deploy/e2e.mjs
 用于观察“单 IP + 合理节流”下搜索引擎的持续可用性，不建议作为 CI 门禁。
 
 ```bash
-node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000   # 每个引擎 3 次，间隔 20s
+node deploy/steady-check.mjs http://127.0.0.1:7000 3 20000   # 每个引擎 3 次，间隔 20s
 STEADY_ENGINES=baidu,sogou node deploy/steady-check.mjs ...   # 自定义引擎集合
 ```
 
@@ -136,10 +135,10 @@ STEADY_ENGINES=baidu,sogou node deploy/steady-check.mjs ...   # 自定义引擎�
 
 ```powershell
 # 平台契约验收
-node deploy/e2e.mjs https://radar.ydsdoa.cn
+node deploy/e2e.mjs http://127.0.0.1:7000
 
 # 观察引擎冷却是否恢复
-node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 30000
+node deploy/steady-check.mjs http://127.0.0.1:7000 3 30000
 ```
 
 排障对照：

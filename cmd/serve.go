@@ -136,6 +136,9 @@ func serve(cmd *cobra.Command, args []string) error {
 		if len(rawEngines) == 0 {
 			return fmt.Errorf("all search engines are disabled")
 		}
+		if err := probeIndexJobDir(serverOpts); err != nil {
+			return err
+		}
 		serv := core.NewServerWithOptions(config.Server.Host, config.Server.Port, serverOpts, rawEngines...)
 		return startServerWithPlatform(serv, nil)
 	}
@@ -152,6 +155,9 @@ func serve(cmd *cobra.Command, args []string) error {
 
 	serverOpts := buildServerOptions(corsCfg, proxyCfg, fingerprintBrowserOpts)
 	if err := probeIndexJobDir(serverOpts); err != nil {
+		if closeBrowsers != nil {
+			_ = closeBrowsers()
+		}
 		return err
 	}
 	serv := core.NewServerWithOptions(config.Server.Host, config.Server.Port, serverOpts, engines...)

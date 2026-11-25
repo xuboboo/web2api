@@ -53,7 +53,7 @@ curl.exe -s https://radar.ydsdoa.cn/web-tool/health
 
 ```nginx
 location /web-tool/ {
-    proxy_pass https://radar.ydsdoa.cn;   # 不重写路径,原样透传 /web-tool 前缀
+    proxy_pass http://127.0.0.1:7000;   # 不重写路径,原样透传 /web-tool 前缀
     proxy_set_header Host $host;
     proxy_read_timeout 120s;
 }

@@ -68,7 +68,7 @@
 
 ### 第 12-14 轮（16:25）— 【修复部署漂移 + 全量回归 + 重新部署】
 - 发现：docker-compose.yaml 与实际容器漂移（image 旧命名 vs 实际 `web2api:local`；端口 `0.0.0.0:7000` vs 实际 `127.0.0.1` 绑定；baidu 限流 env 覆盖 vs config.yaml 12；`serve -l` vs `serve`）→ 任何人 `docker compose up` 会得到无认证 API 暴露 0.0.0.0 的部署，**P1 运维风险**
-- 修复：compose 对齐实际部署（`build: .` + `web2api:local` + `radar.ydsdoa.cn:7000` + `serve` + `restart: unless-stopped` + 移除限流覆盖，config.yaml 为唯一事实源）
+- 修复：compose 对齐实际部署（`build: .` + `web2api:local` + `127.0.0.1:7000` + `serve` + `restart: unless-stopped` + 移除限流覆盖，config.yaml 为唯一事实源）
 - 全量 `go test ./... -count=1` 14 包全绿后重建镜像 `web2api:local`（sha256:fe5ae3c2…）
 - 容器经 compose 重建：Up healthy，127.0.0.1 绑定不变
 - 复验：`?date=20250101` 由 panic→502 无消息 变为 受控 502 + "incorrect date interval provided, expected format: YYYYMMDD..YYYYMMDD" ✅；四引擎 ready ✅
