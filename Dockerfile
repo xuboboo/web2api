@@ -4,6 +4,11 @@ FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed
 
 WORKDIR /build
 
+# 部署环境无法直连 proxy.golang.org（中国大陆），改用 goproxy.cn 镜像。
+# 其余构建步骤与原 Dockerfile 完全一致。
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
+
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -17,13 +22,13 @@ FROM chromedp/headless-shell:stable@sha256:381353d3530ab9d579d2fe8b9c0f4519c9956
 
 WORKDIR /usr/src/app
 
-# wget: used by HEALTHCHECK; ca-certificates validate outbound TLS requests.
-# tini: reaps orphaned Chrome children, which would otherwise pile up as zombies when web2api is PID 1.
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates wget tini \
-  && rm -rf /var/lib/apt/lists/* \
-  && (getent passwd chrome >/dev/null 2>&1 || useradd --create-home --uid 1001 --shell /bin/bash chrome)
+# 部署主机连 deb.debian.org 的 apt 极不稳定（实测挂起 >5 分钟），改为从 builder 阶段
+# 直接拷贝 CA 根证书（等价 ca-certificates），省掉整段 apt-get。
+# tini 由 compose 的 init: true 提供（/usr/bin/docker-init）；healthcheck 用 bash 的
+# /dev/tcp 探测，不再依赖 wget。
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN mkdir -p /usr/src/app/data \
+  && (getent passwd chrome >/dev/null 2>&1 || useradd --create-home --uid 1001 --shell /bin/bash chrome) \
   && chown chrome:chrome /usr/src/app /usr/src/app/data
 
 COPY --from=builder /app/web2api /usr/local/bin/web2api
@@ -44,8 +49,10 @@ ENV WEB2API_APP_BROWSER_PATH=/headless-shell/headless-shell \
 
 USER chrome
 
+# 运行层没有 wget（见上），用 bash /dev/tcp 探测 HTTP 200。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget --quiet --tries=1 --spider "http://127.0.0.1:${WEB2API_SERVER_PORT}/web-tool/health" || exit 1
+  CMD bash -c "exec 3<>/dev/tcp/127.0.0.1/${WEB2API_SERVER_PORT} && printf 'GET /web-tool/health HTTP/1.0\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"
 
 # -s keeps reaping when another init is PID 1 (`docker run --init`, compose `init: true`).
-ENTRYPOINT ["/usr/bin/tini", "-s", "--", "web2api"]
+# 僵尸回收交给 compose 的 init: true（/usr/bin/docker-init），镜像内不再装 tini。
+ENTRYPOINT ["web2api"]

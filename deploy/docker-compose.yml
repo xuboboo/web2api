@@ -40,8 +40,10 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    # 宿主 nginx 跑在容器里（hj-tech-radar-nginx-1），经 host.docker.internal
+    # （docker0 网关 172.17.0.1）回源；只绑 docker0，不暴露公网。
     ports:
-      - "127.0.0.1:7000:7000"
+      - "172.17.0.1:7000:7000"
     command: serve
     volumes:
       - ../config.yaml:/usr/src/app/config.yaml:ro
@@ -58,8 +60,9 @@ services:
       # or set platform.admin_password in the mounted ../config.yaml. The ":?"
       # form makes a missing value an immediate error instead of a restart loop.
       WEB2API_PLATFORM_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD to a strong admin password before 'docker compose up'}
+    # 本机 apt 不可用，运行镜像内没有 wget；用 bash /dev/tcp 直接探测 HTTP 200。
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7000/web-tool/health"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7000 && printf 'GET /web-tool/health HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
       interval: 30s
       timeout: 5s
       start_period: 15s
