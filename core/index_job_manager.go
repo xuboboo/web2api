@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +29,10 @@ type IndexJobOptions struct {
 	RetentionDays int
 	// MaxURLs caps one job (0 = DefaultIndexJobMaxURLs).
 	MaxURLs int
+	// MaxQueuedURLs and MaxQueuedURLBytes cap the aggregate URL working set for
+	// all non-terminal jobs resident in memory (0 selects the safe defaults).
+	MaxQueuedURLs     int64
+	MaxQueuedURLBytes int64
 	// Chunk is how many URLs are evaluated per progress write (0 = 1).
 	//
 	// One URL per write keeps progress honest: the runner can only report a row
@@ -47,9 +52,29 @@ type IndexJobOptions struct {
 // 5000 keeps a full-site batch in one job while bounding memory and disk.
 const DefaultIndexJobMaxURLs = 5000
 
+const (
+	DefaultIndexJobMaxURLBytes       = 2048
+	DefaultIndexJobMaxQueuedURLs     = int64(20_000)
+	DefaultIndexJobMaxQueuedURLBytes = int64(32 << 20)
+)
+
+// IndexJobURLBudget is the current process-local URL working-set budget.
+type IndexJobURLBudget struct {
+	InUseURLs     int64 `json:"in_use_urls"`
+	MaxURLs       int64 `json:"max_urls"`
+	InUseURLBytes int64 `json:"in_use_url_bytes"`
+	MaxURLBytes   int64 `json:"max_url_bytes"`
+}
+
 func (o IndexJobOptions) normalized() IndexJobOptions {
 	if o.MaxURLs <= 0 {
 		o.MaxURLs = DefaultIndexJobMaxURLs
+	}
+	if o.MaxQueuedURLs <= 0 {
+		o.MaxQueuedURLs = DefaultIndexJobMaxQueuedURLs
+	}
+	if o.MaxQueuedURLBytes <= 0 {
+		o.MaxQueuedURLBytes = DefaultIndexJobMaxQueuedURLBytes
 	}
 	if o.Chunk <= 0 {
 		o.Chunk = 1
@@ -71,6 +96,9 @@ type jobState struct {
 	attempts map[string]int
 	cancel   context.CancelFunc
 	running  bool
+	urlBytes int64
+	urlCount int64
+	lazyLoad bool
 }
 
 // releaseLocked drops the heavy part of a finished job (the submitted URL list
@@ -82,13 +110,21 @@ type jobState struct {
 // left a real window: an observer (progress query, test) could read a finished
 // status while the URL list was still resident — surfaced by
 // TestIndexJobReleasesMemoryWhenDone under -race.
-func (s *jobState) releaseLocked() {
+func (s *jobState) releaseLocked() (int64, int64) {
 	if !s.job.Status.Terminal() {
-		return
+		return 0, 0
 	}
+	return s.clearURLsLocked()
+}
+
+func (s *jobState) clearURLsLocked() (int64, int64) {
+	bytes, count := s.urlBytes, s.urlCount
 	s.job.URLs = nil
 	s.pending = nil
 	s.attempts = nil
+	s.urlBytes, s.urlCount = 0, 0
+	s.lazyLoad = false
+	return bytes, count
 }
 
 // maxResidentJobs bounds how many finished jobs stay in memory. Older ones are
@@ -143,10 +179,13 @@ type IndexJobManager struct {
 	engines []SearchEngine
 	rs      *ResilientSearcher
 
-	mu       sync.Mutex
-	jobs     map[string]*jobState
-	queue    chan string
-	prepared int
+	mu               sync.Mutex
+	jobs             map[string]*jobState
+	queue            chan string
+	prepared         int
+	activeJobs       int
+	residentURLBytes atomic.Int64
+	residentURLCount atomic.Int64
 
 	lifecycle sync.Mutex
 	cancel    context.CancelFunc
@@ -170,6 +209,16 @@ func NewIndexJobManager(dir string, engines []SearchEngine, rs *ResilientSearche
 // Store exposes the job store (results, CSV).
 func (m *IndexJobManager) Store() *IndexJobStore { return m.store }
 
+func (m *IndexJobManager) URLBudget() IndexJobURLBudget {
+	if m == nil {
+		return IndexJobURLBudget{}
+	}
+	return IndexJobURLBudget{
+		InUseURLs: m.residentURLCount.Load(), MaxURLs: m.opts.MaxQueuedURLs,
+		InUseURLBytes: m.residentURLBytes.Load(), MaxURLBytes: m.opts.MaxQueuedURLBytes,
+	}
+}
+
 // Start launches the runner and re-queues jobs left unfinished by a previous
 // process.
 func (m *IndexJobManager) Start(ctx context.Context) {
@@ -183,6 +232,13 @@ func (m *IndexJobManager) Start(ctx context.Context) {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
+	m.mu.Lock()
+	m.jobs = map[string]*jobState{}
+	m.queue = make(chan string, 1024)
+	m.prepared, m.activeJobs = 0, 0
+	m.residentURLBytes.Store(0)
+	m.residentURLCount.Store(0)
+	m.mu.Unlock()
 	recovered := m.resume(runCtx)
 	if m.opts.RetentionDays > 0 {
 		m.pruneExpired(time.Now())
@@ -342,43 +398,88 @@ func (m *IndexJobManager) resume(ctx context.Context) []string {
 			continue
 		}
 		if meta.Status == IndexJobBillingPending {
+			urlBytes, urlCount := indexJobURLPayloadStats(meta.URLs)
 			m.mu.Lock()
-			m.jobs[meta.ID] = &jobState{job: *meta, pending: meta.URLs, attempts: map[string]int{}}
+			m.jobs[meta.ID] = &jobState{job: *meta, pending: meta.URLs, attempts: map[string]int{}, urlBytes: urlBytes, urlCount: urlCount}
+			m.residentURLBytes.Add(urlBytes)
+			m.residentURLCount.Add(urlCount)
 			m.prepared++
+			m.activeJobs++
 			m.mu.Unlock()
 			continue
 		}
-		rows, err := m.store.LoadResults(meta.ID)
-		if err != nil {
-			WithRequest(ctx).WithError(err).WithField("job_id", meta.ID).Error("cannot load index job results for recovery")
-			continue
-		}
-		st := &jobState{job: *meta, attempts: map[string]int{}}
-		st.job.Completed, st.job.Indexed, st.job.NotIndexed, st.job.Failed = 0, 0, 0, 0
-		done := make(map[string]bool, len(rows))
-		for _, row := range rows {
-			if !done[row.URL] {
-				done[row.URL] = true
-				m.countResult(st, row)
-			}
-		}
-		pending := make([]string, 0, len(meta.URLs))
-		for _, u := range meta.URLs {
-			if !done[u] {
-				pending = append(pending, u)
-			}
-		}
-		st.pending = pending
-		st.job.Status = IndexJobQueued
-		st.job.WaitSeconds, st.job.Retrying = 0, 0
+		urlBytes, urlCount := indexJobURLPayloadStats(meta.URLs)
+		meta.URLs = nil
+		meta.Status = IndexJobQueued
+		meta.WaitSeconds, meta.Retrying = 0, 0
+		st := &jobState{job: *meta, attempts: map[string]int{}, urlBytes: urlBytes, urlCount: urlCount, lazyLoad: true}
 		m.mu.Lock()
 		m.jobs[meta.ID] = st
+		m.residentURLBytes.Add(urlBytes)
+		m.residentURLCount.Add(urlCount)
+		m.activeJobs++
 		m.mu.Unlock()
 		recovered = append(recovered, meta.ID)
-		WithRequest(ctx).WithField("job_id", meta.ID).WithField("pending", len(pending)).
-			Info("index job restored after restart")
+		WithRequest(ctx).WithField("job_id", meta.ID).WithField("urls", urlCount).
+			Info("index job restored lazily after restart")
 	}
 	return recovered
+}
+
+// hydrateRestoredJob loads URL lists and result rows only when a recovered job
+// reaches the head of the single-worker queue. This keeps restart memory bounded
+// even when an older deployment persisted a backlog above today's admission cap.
+func (m *IndexJobManager) hydrateRestoredJob(st *jobState) error {
+	st.mu.Lock()
+	if !st.lazyLoad || st.job.Status.Terminal() {
+		st.mu.Unlock()
+		return nil
+	}
+	id := st.job.ID
+	st.mu.Unlock()
+
+	meta, err := m.store.LoadMeta(id)
+	if err != nil {
+		return err
+	}
+	rows, err := m.store.LoadResults(id)
+	if err != nil {
+		return err
+	}
+	done := make(map[string]bool, len(rows))
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.lazyLoad || st.job.Status.Terminal() {
+		return nil
+	}
+	st.job.URLs = meta.URLs
+	st.job.Completed, st.job.Indexed, st.job.NotIndexed, st.job.Failed = 0, 0, 0, 0
+	for _, row := range rows {
+		if !done[row.URL] {
+			done[row.URL] = true
+			m.countResult(st, row)
+		}
+	}
+	st.pending = make([]string, 0, len(meta.URLs))
+	for _, raw := range meta.URLs {
+		if !done[raw] {
+			st.pending = append(st.pending, raw)
+		}
+	}
+	st.attempts = map[string]int{}
+	st.lazyLoad = false
+	st.job.Status = IndexJobQueued
+	st.job.WaitSeconds, st.job.Retrying = 0, 0
+	m.saveJobLocked(st)
+	return nil
+}
+
+func indexJobURLPayloadStats(urls []string) (int64, int64) {
+	var bytes int64
+	for _, raw := range urls {
+		bytes += int64(len(raw))
+	}
+	return bytes, int64(len(urls))
 }
 
 // Submit validates and queues a batch for the caller identified by ctx.
@@ -405,16 +506,21 @@ func (m *IndexJobManager) submit(ctx context.Context, urls []string, engines []s
 	}
 	clean := make([]string, 0, len(urls))
 	seen := make(map[string]bool, len(urls))
+	var urlBytes int64
 	for _, raw := range urls {
 		u := strings.TrimSpace(raw)
 		if u == "" || seen[u] {
 			continue
+		}
+		if len(u) > DefaultIndexJobMaxURLBytes {
+			return nil, errInvalidParam(fmt.Sprintf("URL exceeds %d bytes", DefaultIndexJobMaxURLBytes))
 		}
 		if _, ok := indexURLKeyFrom(u); !ok {
 			return nil, errInvalidParam(fmt.Sprintf("%q is not a valid absolute URL", u))
 		}
 		seen[u] = true
 		clean = append(clean, u)
+		urlBytes += int64(len(u))
 	}
 	if len(clean) == 0 {
 		return nil, errEmptyQuery()
@@ -458,14 +564,21 @@ func (m *IndexJobManager) submit(ctx context.Context, urls []string, engines []s
 			return nil, &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot read existing job"}
 		}
 	}
-	if len(m.queue)+m.prepared >= cap(m.queue) {
+	if m.activeJobs >= cap(m.queue) || len(m.queue)+m.prepared >= cap(m.queue) {
 		return nil, &APIError{HTTPStatus: 503, ErrorCode: "job_queue_full", Reason: "JOB_QUEUE_FULL", Message: "index job queue is full; retry later", RetryAfterSeconds: 60}
+	}
+	if m.residentURLCount.Load()+int64(len(clean)) > m.opts.MaxQueuedURLs ||
+		m.residentURLBytes.Load()+urlBytes > m.opts.MaxQueuedURLBytes {
+		return nil, &APIError{HTTPStatus: 503, ErrorCode: "job_queue_full", Reason: "JOB_QUEUE_FULL", Message: "index job backlog is at its URL memory budget; retry later", RetryAfterSeconds: 60}
 	}
 	if err := m.store.SaveMeta(&job); err != nil {
 		return nil, &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot persist the job"}
 	}
-	st := &jobState{job: job, pending: clean, attempts: map[string]int{}}
+	st := &jobState{job: job, pending: clean, attempts: map[string]int{}, urlBytes: urlBytes, urlCount: int64(len(clean))}
 	m.jobs[job.ID] = st
+	m.activeJobs++
+	m.residentURLBytes.Add(urlBytes)
+	m.residentURLCount.Add(int64(len(clean)))
 	if marker != "" {
 		m.prepared++
 	} else {
@@ -542,7 +655,11 @@ func (m *IndexJobManager) DiscardPrepared(id, marker, fingerprint string) error 
 		return err
 	}
 	delete(m.jobs, id)
+	bytes, count := st.clearURLsLocked()
+	m.residentURLBytes.Add(-bytes)
+	m.residentURLCount.Add(-count)
 	m.prepared--
+	m.activeJobs--
 	return nil
 }
 
@@ -699,9 +816,18 @@ func (m *IndexJobManager) cancelJob(id, ownerKeyID string) (bool, error) {
 		st.cancel()
 	}
 	st.job = next
-	st.releaseLocked()
+	bytes, count := st.releaseLocked()
+	finished := st.job
 	st.mu.Unlock()
+	m.mu.Lock()
+	m.activeJobs--
+	m.mu.Unlock()
+	m.residentURLBytes.Add(-bytes)
+	m.residentURLCount.Add(-count)
 	m.evictTerminal()
+	if m.opts.OnFinished != nil {
+		go m.opts.OnFinished(finished)
+	}
 	return true, nil
 }
 
@@ -726,6 +852,17 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 	m.mu.Unlock()
 	if !ok {
 		return
+	}
+
+	st.mu.Lock()
+	lazyLoad := st.lazyLoad && !st.job.Status.Terminal()
+	st.mu.Unlock()
+	if lazyLoad {
+		if err := m.hydrateRestoredJob(st); err != nil {
+			WithRequest(parent).WithError(err).WithField("job_id", id).Error("cannot hydrate restored index job")
+			m.finish(st, IndexJobFailed, "cannot restore index job data")
+			return
+		}
 	}
 
 	st.mu.Lock()
@@ -955,8 +1092,13 @@ func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr st
 	finished := st.job
 	finished.URLs = nil
 	m.saveJobLocked(st)
-	st.releaseLocked()
+	bytes, count := st.releaseLocked()
 	st.mu.Unlock()
+	m.mu.Lock()
+	m.activeJobs--
+	m.mu.Unlock()
+	m.residentURLBytes.Add(-bytes)
+	m.residentURLCount.Add(-count)
 	m.evictTerminal()
 	if m.opts.OnFinished != nil {
 		go m.opts.OnFinished(finished)

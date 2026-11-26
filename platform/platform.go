@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -58,10 +59,13 @@ type Platform struct {
 	// S4 rate-limit tables (B-02 per-key/unauth, B-05 per-IP admin).
 	ratelimits platformRateLimiters
 
-	quotaMu         sync.Mutex
-	pendingQuota    map[string]int64
-	jobSubmissionMu sync.Mutex
-	scheduleMu      sync.Mutex
+	quotaMu          sync.Mutex
+	pendingQuota     map[string]int64
+	jobSubmissionMu  sync.Mutex
+	scheduleMu       sync.Mutex
+	usagePruneMu     sync.Mutex
+	usagePruneCancel context.CancelFunc
+	usagePruneWG     sync.WaitGroup
 
 	// Serializes session updates and revocations across store operations.
 	sessionMu sync.Mutex
@@ -161,6 +165,7 @@ func New(cfg PlatformConfig, engineStatus func() any) (*Platform, error) {
 	// Startup usage-journal pruning (滚动清理上限,契约: 防止用量日志无上限增长).
 	p.pruneUsage()
 	p.started = time.Now()
+	p.startUsagePruner()
 	return p, nil
 }
 
@@ -365,6 +370,10 @@ func (p *Platform) issueUserToken(u *User, sessionID string, version int) (strin
 // Close releases the storage handle and the audit writer.
 func (p *Platform) Close() error {
 	var errs []error
+	if p.usagePruneCancel != nil {
+		p.usagePruneCancel()
+		p.usagePruneWG.Wait()
+	}
 	if p.store != nil {
 		if err := p.store.Close(); err != nil {
 			errs = append(errs, err)

@@ -26,6 +26,34 @@ func (consoleJobEngine) CheckIndexed(_ context.Context, url string, _ core.Query
 	return []core.SearchResult{{Rank: 1, URL: url, Title: "self"}}, nil
 }
 
+func TestScheduledBillingUsesStoredKeyWithoutInboundIP(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	keyID, _ := createKey(t, env, login(t, env.app), "scheduled-ip-key", 10)
+	key, err := env.p.store.GetKeyByID(keyID)
+	if err != nil || key == nil {
+		t.Fatalf("load key: key=%+v err=%v", key, err)
+	}
+	key.AllowedIPs = []string{"203.0.113.8"}
+	if err := env.p.store.PutKey(key); err != nil {
+		t.Fatal(err)
+	}
+	opts := core.DefaultServerOptions()
+	opts.IndexJobDir = filepath.Join(t.TempDir(), "jobs")
+	srv := core.NewServerWithOptions("127.0.0.1", 0, opts, consoleJobEngine{})
+	t.Cleanup(func() { _ = srv.Shutdown() })
+	env.p.engineControl = srv
+	ctx := core.WithJobUser(core.WithJobOwner(context.Background(), keyID), "operator")
+	urls, engines := []string{"https://example.test/a"}, []string{"baidu"}
+	if _, _, err := env.p.enqueueBilled(ctx, "operator", keyID, "schedule-test-ip-plain-01", urls, engines, ""); err == nil {
+		t.Fatal("ordinary billed submission bypassed the key IP allowlist")
+	} else if apiErr, ok := err.(*core.APIError); !ok || apiErr.HTTPStatus != http.StatusForbidden {
+		t.Fatalf("ordinary submission error = %T %v, want 403", err, err)
+	}
+	if _, _, err := env.p.enqueueBilled(withScheduledBilling(ctx), "operator", keyID, "schedule-test-ip-cron-01", urls, engines, ""); err != nil {
+		t.Fatalf("authorized internal schedule was rejected by inbound IP policy: %v", err)
+	}
+}
+
 func TestConsoleJobSubmissionChargesOnce(t *testing.T) {
 	env := newTestEnv(t, http.StatusOK, false)
 	env.app = fiber.New(fiber.Config{ErrorHandler: core.JSONErrorMiddleware()})

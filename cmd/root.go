@@ -126,6 +126,9 @@ type IndexJobsConfig struct {
 	Dir string `mapstructure:"dir"`
 	// MaxURLs caps one submission.
 	MaxURLs int `mapstructure:"max_urls"`
+	// MaxQueuedURLs and MaxQueuedURLBytes bound the total resident URL input set.
+	MaxQueuedURLs     int64 `mapstructure:"max_queued_urls"`
+	MaxQueuedURLBytes int64 `mapstructure:"max_queued_url_bytes"`
 	// Chunk sizes one progress write.
 	Chunk int `mapstructure:"chunk"`
 	// MaxUnitRetries retries a URL blocked by a transient engine condition.
@@ -493,7 +496,8 @@ var knownConfigKeys = map[string]bool{
 	"cache.index_check_ttl_seconds": true,
 
 	"index_jobs.enabled": true, "index_jobs.dir": true,
-	"index_jobs.max_urls": true, "index_jobs.chunk": true,
+	"index_jobs.max_urls": true, "index_jobs.max_queued_urls": true,
+	"index_jobs.max_queued_url_bytes": true, "index_jobs.chunk": true,
 	"index_jobs.max_unit_retries": true,
 	"index_jobs.retention_days":   true,
 	"index_jobs.schedule_enabled": true, "index_jobs.schedule_interval": true,
@@ -673,6 +677,8 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("index_jobs.enabled", true)
 	v.SetDefault("index_jobs.dir", "")
 	v.SetDefault("index_jobs.max_urls", 5000)
+	v.SetDefault("index_jobs.max_queued_urls", 20000)
+	v.SetDefault("index_jobs.max_queued_url_bytes", 33554432)
 	v.SetDefault("index_jobs.chunk", 1)
 	v.SetDefault("index_jobs.max_unit_retries", 6)
 	v.SetDefault("index_jobs.retention_days", 0)

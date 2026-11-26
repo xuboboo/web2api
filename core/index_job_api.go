@@ -35,6 +35,15 @@ func (s *Server) IndexJobRetentionPreview(days int) (int, int64, error) {
 // JobsEnabled reports whether the async job queue is wired in this deployment.
 func (s *Server) JobsEnabled() bool { return s != nil && s.jobs != nil }
 
+// IndexJobURLBudget reports the bounded in-memory input set for admin
+// capacity monitoring; it is not exposed on the unauthenticated health route.
+func (s *Server) IndexJobURLBudget() (IndexJobURLBudget, bool) {
+	if !s.JobsEnabled() {
+		return IndexJobURLBudget{}, false
+	}
+	return s.jobs.URLBudget(), true
+}
+
 // PrepareBilledIndexJob persists the task while keeping it out of the runner.
 func (s *Server) PrepareBilledIndexJob(ctx context.Context, urls, engines []string, id, marker, fingerprint string, units int64) (*IndexJob, error) {
 	if !s.JobsEnabled() {
@@ -128,6 +137,16 @@ func (s *Server) JobResults(id string) ([]IndexCheckURLResult, error) {
 		return nil, fmt.Errorf("index jobs are not enabled")
 	}
 	return s.jobs.Store().LoadResults(id)
+}
+
+// IndexJobNotificationSnapshot exposes only the persisted job status needed
+// by the platform to recover completion notifications after an interrupted
+// callback. It is not mounted on an HTTP route.
+func (s *Server) IndexJobNotificationSnapshot(id string) (*IndexJob, bool) {
+	if !s.JobsEnabled() {
+		return nil, false
+	}
+	return s.jobs.Get(id, "")
 }
 
 func (s *Server) ConsoleJobOwned(id, userID string) bool {

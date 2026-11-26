@@ -65,7 +65,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `admin_username` | `admin` | `admin` | 控制台管理员登录名 |
 | `admin_password` | `admin123` | `admin123` | 控制台管理员密码（生产环境务必修改） |
 | `jwt_expire_hours` | `24` | `24` | 管理员 JWT 有效期（小时） |
-| `usage_retention_days` | `30` | `30` | 用量账本保留天数，启动时与每 256 条写入后滚动清理；0=不限 |
+| `usage_retention_days` | `30` | `30` | 用量账本保留天数，启动时及每 6 小时清理；0=不限 |
 
 说明:存储主路径为 bbolt(纯 Go 无 CGO)。S4-B-06 起**锁冲突 fail-closed**:
 数据目录被第二个进程占用时启动直接失败(避免双实例分裂记账);JSON 文件回退
@@ -99,6 +99,8 @@ app.log_max_mb/log_backups 同轮转机制)。
 | `index_jobs.enabled` | `true` | `true` | 开启异步批量收录任务（>20 条 URL 时返回 202 + job_id） |
 | `index_jobs.dir` | 空 | 空 | 任务状态与结果落盘目录，空 = `<platform.data_dir>/index_jobs`；进程重启后从这里续跑 |
 | `index_jobs.max_urls` | `5000` | `5000` | 单次提交上限（去重后计数） |
+| `index_jobs.max_queued_urls` | `20000` | `20000` | 所有排队、执行和待激活任务合计 URL 数上限 |
+| `index_jobs.max_queued_url_bytes` | `33554432` | `33554432` | 所有未完成任务 URL 字符串合计字节数上限（32 MiB） |
 | `index_jobs.chunk` | `1` | `1` | 每处理多少条落一次进度（1 = 每条都落；设大只会让进度条按 2 分钟一跳，省不下什么 IO） |
 | `index_jobs.max_unit_retries` | `6` | `6` | 单条 URL 被冷却/验证码挡住后的重排次数 |
 | `resilience.max_retries` | `3` | `1` | 每引擎重试次数 |
@@ -112,6 +114,8 @@ app.log_max_mb/log_backups 同轮转机制)。
 ### 批量任务队列（`index_jobs`）
 
 `index_jobs.retention_days` 默认为 0，长期保留任务。设为正整数后，启动时及每 12 小时清理完成时间超过该天数的终态任务。运行中的任务及尚未记录完成时间的历史任务会保留。
+
+异步任务除单任务 URL 上限外，还受 `max_queued_urls`（默认 20000）和 `max_queued_url_bytes`（默认 33554432，即 32 MiB）保护；这些预算覆盖进程内所有排队、执行和待激活任务的 URL 输入。单 URL 最长 2048 字节。超出全局待处理预算时返回 503 和 Retry-After；任务完成/取消后释放预算。可按主机内存调整，但不要关闭或大幅提高上限而不先做压力测试。
 
 定时巡检计划通过管理 API 创建，默认计划均为暂停状态。`index_jobs.schedule_enabled` 默认为 `false`；只有显式设为 true 才启动周期调度器，`schedule_interval` 默认 1h。计划按 UTC 每日或每周运行，重启后按持久化的下一次运行时间恢复；密钥失效时计划暂停。计划数据存于平台设置存储中，并受全局计划数、每用户计划数和累计 URL 数上限保护，防止设置记录和调度载入无界增长。
 

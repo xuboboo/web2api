@@ -158,6 +158,8 @@ type Store interface {
 	GetSetting(name string) ([]byte, error)
 	PutSetting(name string, value []byte) error
 	PutSettings(values map[string][]byte) error
+	ListSettings(prefix string) (map[string][]byte, error)
+	DeleteSetting(name string) error
 	ListNotices(userID string, limit int) ([]Notice, error)
 	PutNotice(notice *Notice) error
 	AcknowledgeNotice(userID, id string, at time.Time) (bool, error)

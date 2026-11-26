@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -719,6 +720,33 @@ func TestUsageRetentionPrunesOldRecords(t *testing.T) {
 	if err != nil || len(all) != 3 {
 		t.Fatalf("after prune: len=%d err=%v, want 3 (old records pruned)", len(all), err)
 	}
+}
+
+func TestUsageRetentionPrunesOnTimerAtLowVolume(t *testing.T) {
+	store, err := newBoltStore(filepath.Join(t.TempDir(), "usage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Platform{cfg: PlatformConfig{UsageRetentionDays: 1}, store: store}
+	now := time.Now()
+	rec := &UsageRecord{Time: now.Add(-48 * time.Hour), KeyID: "k", Endpoint: "/v1/index/check", Units: 1, Status: 200}
+	if err := store.RecordUsage(rec, "k", 0, false, now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	p.startUsagePrunerWithPeriod(10 * time.Millisecond)
+	t.Cleanup(func() { _ = p.Close() })
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := store.AllUsage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expired usage record was not pruned without reaching the old write-count threshold")
 }
 
 func TestUsageRetentionUnlimitedKeepsEverything(t *testing.T) {

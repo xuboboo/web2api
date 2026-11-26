@@ -9,10 +9,27 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/sirupsen/logrus"
 	"github.com/xuboboo/web2api/core"
 )
 
 const maxBilledIndexJobURLs = 5000
+
+type scheduledBillingContextKey struct{}
+
+func withScheduledBilling(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scheduledBillingContextKey{}, true)
+}
+
+func billedJobIdentity(userID, keyID, idempotency string) (jobID, marker string) {
+	if strings.HasPrefix(idempotency, "schedule-") {
+		idempotency = sha256Hex(idempotency)
+	}
+	identity, _ := json.Marshal([]string{userID, keyID, idempotency})
+	marker = "job_charge_" + sha256Hex(string(identity))
+	jobID = "job_" + strings.TrimPrefix(marker, "job_charge_")[:40]
+	return jobID, marker
+}
 
 type consoleJobCoordinator interface {
 	PrepareBilledIndexJob(context.Context, []string, []string, string, string, string, int64) (*core.IndexJob, error)
@@ -71,9 +88,6 @@ func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency
 	if len(idempotency) < 16 || len(idempotency) > 128 || strings.ContainsAny(idempotency, "\r\n\t ") {
 		return fail(400, "invalid_param", "Idempotency-Key 长度须为 16–128 且不含空白")
 	}
-	if strings.HasPrefix(idempotency, "schedule-") {
-		idempotency = sha256Hex(idempotency)
-	}
 	if keyID == "" || len(urls) == 0 {
 		return fail(400, "invalid_param", "须指定密钥和至少一个 URL")
 	}
@@ -93,9 +107,7 @@ func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency
 		}
 	}
 	units := int64(len(urls)) * int64(len(engines))
-	identity, _ := json.Marshal([]string{userID, keyID, idempotency})
-	marker := "job_charge_" + sha256Hex(string(identity))
-	jobID := "job_" + strings.TrimPrefix(marker, "job_charge_")[:40]
+	jobID, marker := billedJobIdentity(userID, keyID, idempotency)
 	canonical, _ := json.Marshal(struct {
 		UserID  string
 		KeyID   string
@@ -112,7 +124,8 @@ func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency
 	if key == nil || key.Status != KeyStatusActive || (key.ExpiresAt != nil && !time.Now().Before(*key.ExpiresAt)) {
 		return fail(401, "unauthorized", "计费密钥已失效")
 	}
-	if !ipAllowedFor(key.AllowedIPs, ip) {
+	_, scheduled := ctx.Value(scheduledBillingContextKey{}).(bool)
+	if !scheduled && !ipAllowedFor(key.AllowedIPs, ip) {
 		return fail(403, "forbidden", "计费密钥 IP 限制不允许当前入口")
 	}
 	if !p.allowKeyRate(key.ID) {
@@ -185,7 +198,9 @@ func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency
 	if !replayed {
 		core.Metrics().AddUsageUnits(units)
 		if userID != "" {
-			p.emitNotice(Notice{UserID: userID, Kind: "job_submitted", Title: "批量任务已提交", Body: fmt.Sprintf("任务 %s 已排队，提交 %d 个 URL。", job.ID, len(urls)), JobID: job.ID})
+			if err := p.emitNotice(Notice{UserID: userID, Kind: "job_submitted", Title: "批量任务已提交", Body: fmt.Sprintf("任务 %s 已排队，提交 %d 个 URL。", job.ID, len(urls)), JobID: job.ID}); err != nil {
+				logrus.WithError(err).WithField("job_id", job.ID).Warn("platform: failed to create job submission notice")
+			}
 		}
 	}
 	return job, replayed, nil

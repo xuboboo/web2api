@@ -13,7 +13,7 @@
 | 推荐 | 4 vCPU / 4 GB / 40 GB | `max_processes=4`，四引擎并行，批量任务稳定 |
 | 有并发租户 | 8 vCPU / 8 GB + 代理池 | 每个出口 IP 独立限速；`max_concurrent_requests` 提到 16–32 |
 
-> 内存估算依据：每个 Chrome 实例 150–300 MB；`app.max_processes=N` 即上限。两个 compose 模板均固定 `shm_size: 512mb`（注释说明普通主机可用 2gb）；1.4 GB 机器不要调高该值。
+> 内存估算依据：每个 Chrome 实例 150–300 MB；`app.max_processes=N` 即应用侧上限。两个 Compose 模板默认限制容器 memory 768 MiB、CPU 2 核、PIDs 128；可用 `WEB2API_MEM_LIMIT`、`WEB2API_CPUS`、`WEB2API_PIDS_LIMIT` 覆盖。目标主机应在压测后调整，低内存主机不要盲目提高 `shm_size`（默认 512 MiB）。
 
 ## 2. 端口与网络
 

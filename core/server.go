@@ -147,6 +147,10 @@ type ServerOptions struct {
 	IndexJobDir string
 	// IndexJobMaxURLs caps one job (0 = DefaultIndexJobMaxURLs).
 	IndexJobMaxURLs int
+	// IndexJobMaxQueuedURLs and IndexJobMaxQueuedURLBytes cap the aggregate
+	// URL working set retained by all queued/running jobs.
+	IndexJobMaxQueuedURLs     int64
+	IndexJobMaxQueuedURLBytes int64
 	// IndexJobChunk sizes one progress write (0 = 10 URLs).
 	IndexJobChunk int
 	// IndexJobMaxRetries retries a URL blocked by a transient engine condition
@@ -245,18 +249,22 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	}
 	if opts.IndexJobDir != "" {
 		serv.jobs = NewIndexJobManager(opts.IndexJobDir, searchEngines, serv.resilient, IndexJobOptions{
-			MaxURLs:        opts.IndexJobMaxURLs,
-			RetentionDays:  opts.IndexJobRetentionDays,
-			Chunk:          opts.IndexJobChunk,
-			MaxUnitRetries: opts.IndexJobMaxRetries,
-			OnFinished:     opts.IndexJobOnFinished,
+			MaxURLs:           opts.IndexJobMaxURLs,
+			MaxQueuedURLs:     opts.IndexJobMaxQueuedURLs,
+			MaxQueuedURLBytes: opts.IndexJobMaxQueuedURLBytes,
+			RetentionDays:     opts.IndexJobRetentionDays,
+			Chunk:             opts.IndexJobChunk,
+			MaxUnitRetries:    opts.IndexJobMaxRetries,
+			OnFinished:        opts.IndexJobOnFinished,
 		})
 		serv.jobs.Start(context.Background())
 		logrus.WithFields(logrus.Fields{
-			"dir":       opts.IndexJobDir,
-			"max_urls":  serv.jobs.opts.MaxURLs,
-			"chunk":     serv.jobs.opts.Chunk,
-			"max_tries": serv.jobs.opts.MaxUnitRetries,
+			"dir":                  opts.IndexJobDir,
+			"max_urls":             serv.jobs.opts.MaxURLs,
+			"max_queued_urls":      serv.jobs.opts.MaxQueuedURLs,
+			"max_queued_url_bytes": serv.jobs.opts.MaxQueuedURLBytes,
+			"chunk":                serv.jobs.opts.Chunk,
+			"max_tries":            serv.jobs.opts.MaxUnitRetries,
 		}).Info("Index-check job queue enabled")
 	}
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -511,6 +512,38 @@ func (s *jsonStore) PutSettings(values map[string][]byte) error {
 	s.data.Settings = updated
 	if err := s.saveLocked(); err != nil {
 		s.data.Settings = old
+		return err
+	}
+	return nil
+}
+
+func (s *jsonStore) ListSettings(prefix string) (map[string][]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := map[string][]byte{}
+	for name, raw := range s.data.Settings {
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, err
+		}
+		values[name] = decoded
+	}
+	return values, nil
+}
+
+func (s *jsonStore) DeleteSetting(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.data.Settings[name]
+	if !ok {
+		return nil
+	}
+	delete(s.data.Settings, name)
+	if err := s.saveLocked(); err != nil {
+		s.data.Settings[name] = old
 		return err
 	}
 	return nil

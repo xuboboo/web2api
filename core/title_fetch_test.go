@@ -128,7 +128,7 @@ func TestFetchPageTitleDNSRebindingCannotReachPrivateTargetOrProxy(t *testing.T)
 		t.Fatal(err)
 	}
 	targetURL := "http://rebind.web2api.test:" + publicURL.Port() + "/article"
-	publicIP := netip.MustParseAddr("203.0.113.10")
+	publicIP := netip.MustParseAddr("1.1.1.1")
 	privateIP := netip.MustParseAddr("127.0.0.1")
 	var lookups atomic.Int32
 	resolver := testNetIPResolver(func(context.Context, string, string) ([]netip.Addr, error) {
@@ -198,7 +198,7 @@ func TestGuardedTitleProbePublicPathAndFallbackRemainUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 	targetURL := "http://public.web2api.test:" + publicURL.Port() + "/article"
-	publicIP := netip.MustParseAddr("203.0.113.11")
+	publicIP := netip.MustParseAddr("1.1.1.1")
 	resolver := testNetIPResolver(func(context.Context, string, string) ([]netip.Addr, error) {
 		return []netip.Addr{publicIP}, nil
 	})

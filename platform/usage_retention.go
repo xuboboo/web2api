@@ -3,35 +3,50 @@ package platform
 // Usage-journal retention (滚动清理上限) and the shared RecordUsage wrapper.
 
 import (
+	"context"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
-// usagePruneInterval spreads the prune scan over the insert stream: prune
-// once per N recorded calls (startup prunes too). Keeps the constant-size
-// scan amortized and invisible on the request path.
-const usagePruneInterval = int64(256)
+const usagePrunePeriod = 6 * time.Hour
 
-// recordUsage is the single choke point every billed write goes through:
-// it appends the record (and key counters) atomically, then triggers the
-// rolling prune every usagePruneInterval inserts when a retention window is
-// configured. rec.Seq is set by the store implementation.
+// recordUsage is the single choke point every billed write goes through.
+// Retention runs on a timer so low request volume does not extend the policy.
 func (p *Platform) recordUsage(rec *UsageRecord, keyID string, units int64, consume bool, at time.Time) error {
 	if err := p.store.RecordUsage(rec, keyID, units, consume, at); err != nil {
 		return err
 	}
-	if rec.Seq > 0 && rec.Seq%usagePruneInterval == 0 && p.usageRetentionDays() > 0 {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logrus.WithField("panic", r).Warn("platform: usage prune panicked")
-				}
-			}()
-			p.pruneUsage()
-		}()
-	}
 	return nil
+}
+
+func (p *Platform) startUsagePruner() {
+	p.startUsagePrunerWithPeriod(usagePrunePeriod)
+}
+
+func (p *Platform) startUsagePrunerWithPeriod(period time.Duration) {
+	if p.usageRetentionDays() <= 0 {
+		return
+	}
+	if period <= 0 {
+		period = usagePrunePeriod
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.usagePruneCancel = cancel
+	p.usagePruneWG.Add(1)
+	go func() {
+		defer p.usagePruneWG.Done()
+		ticker := time.NewTicker(period)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.pruneUsage()
+			}
+		}
+	}()
 }
 
 // usageRetentionDays returns the configured retention window in days
@@ -45,6 +60,8 @@ func (p *Platform) usageRetentionDays() int {
 
 // pruneUsage deletes usage records older than the retention window.
 func (p *Platform) pruneUsage() {
+	p.usagePruneMu.Lock()
+	defer p.usagePruneMu.Unlock()
 	days := p.usageRetentionDays()
 	if days <= 0 || p.store == nil {
 		return
