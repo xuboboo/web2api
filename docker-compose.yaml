@@ -4,6 +4,12 @@ services:
     # Chrome needs more than the default 64MB /dev/shm. 2gb is safe on normal hosts;
     # on 1.4GB-RAM servers use 512mb (launch already passes --disable-dev-shm-usage).
     shm_size: 512mb
+    # Keep browser crashes/backlogs from consuming the host. Override these
+    # defaults with WEB2API_MEM_LIMIT / WEB2API_CPUS / WEB2API_PIDS_LIMIT
+    # after measuring the target machine under its expected concurrency.
+    mem_limit: ${WEB2API_MEM_LIMIT:-768m}
+    cpus: ${WEB2API_CPUS:-2.0}
+    pids_limit: ${WEB2API_PIDS_LIMIT:-128}
     # Build from source so the image always matches this tree.
     build:
       context: .

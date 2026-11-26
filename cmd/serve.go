@@ -246,9 +246,6 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 			_ = plat.Close()
 			return nil, fmt.Errorf("platform: reconcile billed jobs: %w", err)
 		}
-		if config.IndexJobs.ScheduleEnabled {
-			plat.StartScheduleRunner(context.Background(), config.IndexJobs.ScheduleInterval)
-		}
 		dataPlaneAuth.Store(plat)
 		// RegisterAdmin/RegisterPublic mount literal /api/* and /v1/* paths on
 		// the given router, so the router must be rooted at BasePath (passing
@@ -272,6 +269,10 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 			}
 			plat.RegisterPublicJobs(root, jobHandlers)
 			plat.RegisterConsoleJobs(root, jobHandlers)
+		}
+		plat.RecoverScheduledNotices(serv)
+		if config.IndexJobs.ScheduleEnabled {
+			plat.StartScheduleRunner(context.Background(), config.IndexJobs.ScheduleInterval)
 		}
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
 		// 根植于 BasePath。必须在 mountStaticPanels 之前注册,静态通配不覆盖这些路由。
@@ -643,6 +644,8 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		}
 		opts.IndexJobDir = dir
 		opts.IndexJobMaxURLs = config.IndexJobs.MaxURLs
+		opts.IndexJobMaxQueuedURLs = config.IndexJobs.MaxQueuedURLs
+		opts.IndexJobMaxQueuedURLBytes = config.IndexJobs.MaxQueuedURLBytes
 		opts.IndexJobChunk = config.IndexJobs.Chunk
 		opts.IndexJobMaxRetries = config.IndexJobs.MaxUnitRetries
 		opts.IndexJobRetentionDays = config.IndexJobs.RetentionDays

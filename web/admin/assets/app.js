@@ -1276,12 +1276,14 @@
         var engines = normalizeEngines(res[2]);
         wrap.appendChild(buildStatBand(stats));
         var resource = stats.resources || {};
+        var jobBudget = resource.index_job_queue || null;
         var memHigh = Number(resource.heap_sys_mb || 0) >= 512;
         var diskPct = Number(resource.disk_used_percent || 0);
         var resourceCard = el('section', { class: 'card' },
           el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '资源与容量' })),
           el('div', { class: 'card-body' },
             el('p', { text: 'Go 堆 ' + fmtNumber(resource.heap_mb || 0) + ' MB 已分配 / ' + fmtNumber(resource.heap_sys_mb || 0) + ' MB 系统内存，' + fmtNumber(resource.heap_objects || 0) + ' 个对象；协程 ' + fmtNumber(resource.goroutines || 0) }),
+            jobBudget ? el('p', { text: '异步队列 URL 输入 ' + fmtNumber(jobBudget.in_use_urls || 0) + ' / ' + fmtNumber(jobBudget.max_urls || 0) + ' 条，' + (Number(jobBudget.in_use_url_bytes || 0) / 1048576).toFixed(1) + ' / ' + (Number(jobBudget.max_url_bytes || 0) / 1048576).toFixed(0) + ' MiB' }) : null,
             el('p', { text: '数据盘已用 ' + diskPct + '%，剩余 ' + fmtNumber(resource.disk_free_mb || 0) + ' MB / ' + fmtNumber(resource.disk_total_mb || 0) + ' MB' }),
             (memHigh || diskPct >= 85) ? el('p', { class: 'text-danger', role: 'alert', text: (memHigh ? 'Go 堆系统内存达到 512 MB。' : '') + (diskPct >= 85 ? '数据盘使用率达到 85%。' : '') }) : el('p', { text: '资源状态正常（堆系统内存阈值 512 MB，磁盘使用率阈值 85%）。' })));
         wrap.appendChild(resourceCard);

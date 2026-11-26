@@ -771,13 +771,13 @@ Agent 友好的能力清单（平台简介、端点、鉴权约定、四引擎�
 
 ## 6. 控制平面 `/api/*`（管理 API，JWT）
 
-异步任务启用时，`GET /api/index/check/jobs`、`GET /api/index/check/jobs/{id}`、`GET /api/index/check/jobs/{id}/results` 和 `DELETE /api/index/check/jobs/{id}` 接受登录会话。普通用户仅可访问本人提交的控制台任务，管理员可访问全部任务。结果接口支持与公网任务接口一致的分页和 CSV 参数。
+异步任务启用时，每个任务最多 5000 个 URL、单 URL 最长 2048 字节；全部未完成任务共享 `index_jobs.max_queued_urls`（默认 20000）和 `index_jobs.max_queued_url_bytes`（默认 32 MiB）待处理预算。预算耗尽时返回 503 `job_queue_full` 和 Retry-After，任务完成或取消后释放预算。`GET /api/index/check/jobs`、`GET /api/index/check/jobs/{id}`、`GET /api/index/check/jobs/{id}/results` 和 `DELETE /api/index/check/jobs/{id}` 接受登录会话。普通用户仅可访问本人提交的控制台任务，管理员可访问全部任务。结果接口支持与公网任务接口一致的分页和 CSV 参数。
 
 `POST /api/index/check/jobs` 需要 operator 或 admin 角色。请求体含 `key_id`、`urls` 和 `engines`，并要求 `Idempotency-Key` 请求头，长度 16–128 且不含空白。成功返回 202 和控制台任务链接，按 URL 原始条数与所选引擎数预扣绑定密钥配额。同一用户以相同幂等键和参数重试返回同一任务；参数不同返回 409，原任务已清理返回 410。提交的来源 IP 须满足密钥的 IP 限制。存储降级时拒绝新建带计费任务，避免使用不同账本。
 
 管理员可调用 `GET /api/index/check/jobs-retention-preview?days=30` 预估已结束任务的清理影响，返回 `days`、`jobs` 和 `bytes`。该接口只读取信息，实际结果可能随任务状态和文件变化。
 
-定时巡检通过 `POST /api/index/check/schedules` 创建（`name`、`key_id`、`urls`、`engines`、`frequency=daily|weekly`）；单计划最多 5000 个 URL、URL 最长 2048 字节；全局最多 100 个计划、每用户最多 20 个计划、所有计划累计最多 10000 个 URL。超出容量返回 `409 schedule_capacity_exceeded`。新计划一律暂停，需由 operator/admin 显式 PATCH `{ "enabled": true }`。GET 列出本人计划，管理员可查看全部；PATCH 启停、DELETE 删除。计划周期以 UTC 日/周计算，重启后从持久化计划继续；每周期用固定幂等键结算，密钥停用或过期时计划自动暂停。`index_jobs.schedule_enabled` 默认 false，关闭时保存与管理计划仍可用，但不会触发执行。
+定时巡检通过 `POST /api/index/check/schedules` 创建（`name`、`key_id`、`urls`、`engines`、`frequency=daily|weekly`）；单计划最多 5000 个 URL、URL 最长 2048 字节；全局最多 100 个计划、每用户最多 20 个计划、所有计划累计最多 10000 个 URL。超出容量返回 `409 schedule_capacity_exceeded`。新计划一律暂停，需由 operator/admin 显式 PATCH `{ "enabled": true }`。GET 列出本人计划，管理员可查看全部；PATCH 启停、DELETE 删除。计划周期以 UTC 日/周计算，重启后从持久化计划继续；每周期用固定幂等键结算，密钥停用或过期时计划自动暂停。`index_jobs.schedule_enabled` 默认 false，关闭时保存与管理计划仍可用，但不会触发执行。计划由已授权的管理操作触发，后续后台结算不依赖提交请求的来源 IP 白名单；API key 的有效状态、速率限制和每日配额仍生效。
 
 程序调用使用 `Authorization: Bearer <JWT>`，浏览器管理台使用登录时设置的 HttpOnly 会话 Cookie。凭据缺失、过期或无效时返回 `401 unauthorized`。修改密码会使旧 token 失效（见 §6.9）。管理 API 默认全局限速每分钟 60 个请求，超限返回 `429 rate_limited` 和 `Retry-After`。
 

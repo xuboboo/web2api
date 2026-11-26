@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -736,6 +737,25 @@ func (s *boltStore) PutSettings(values map[string][]byte) error {
 			}
 		}
 		return nil
+	})
+}
+
+func (s *boltStore) ListSettings(prefix string) (map[string][]byte, error) {
+	values := map[string][]byte{}
+	err := s.db.View(func(tx *bolt.Tx) error {
+		cursor := tx.Bucket(boltBucketName(bucketSettings)).Cursor()
+		prefixBytes := []byte(prefix)
+		for key, value := cursor.Seek(prefixBytes); key != nil && bytes.HasPrefix(key, prefixBytes); key, value = cursor.Next() {
+			values[string(key)] = append([]byte(nil), value...)
+		}
+		return nil
+	})
+	return values, err
+}
+
+func (s *boltStore) DeleteSetting(name string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(boltBucketName(bucketSettings)).Delete([]byte(name))
 	})
 }
 

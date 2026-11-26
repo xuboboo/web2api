@@ -190,6 +190,9 @@ func (p *Platform) RegisterSchedules(app fiber.Router) {
 		if err = p.putSchedules(items); err != nil {
 			return errInternal(c, err)
 		}
+		if err = p.store.DeleteSetting("schedule_baseline:" + v.ID); err != nil {
+			return errInternal(c, err)
+		}
 		return c.SendStatus(204)
 	})
 }
@@ -268,8 +271,18 @@ func (p *Platform) runDueSchedules() {
 			changed = true
 			continue
 		}
-		job, _, err := p.enqueueBilled(core.WithJobUser(core.WithJobOwner(context.Background(), key.ID), v.UserID), v.UserID, key.ID, "schedule-"+id+"-"+cycle, v.URLs, v.Engines, "")
+		idempotency := "schedule-" + id + "-" + cycle
+		jobID, _ := billedJobIdentity(v.UserID, key.ID, idempotency)
+		meta, _ := json.Marshal(scheduledJobNoticeMeta{ScheduleID: v.ID, UserID: v.UserID, CreatedAt: now})
+		metaKey := "scheduled_job:" + jobID
+		err = p.store.PutSetting(metaKey, meta)
+		var job *core.IndexJob
+		if err == nil {
+			ctx := withScheduledBilling(core.WithJobUser(core.WithJobOwner(context.Background(), key.ID), v.UserID))
+			job, _, err = p.enqueueBilled(ctx, v.UserID, key.ID, idempotency, v.URLs, v.Engines, "")
+		}
 		if err != nil {
+			_ = p.store.DeleteSetting(metaKey)
 			v.LastError = err.Error()
 			if strings.Contains(err.Error(), "quota_exceeded") || strings.Contains(err.Error(), "密钥已失效") {
 				v.Enabled = false
@@ -280,8 +293,6 @@ func (p *Platform) runDueSchedules() {
 			v.LastCycle = cycle
 			v.LastJobID = job.ID
 			v.LastError = ""
-			meta, _ := json.Marshal(v)
-			_ = p.store.PutSetting("scheduled_job:"+job.ID, meta)
 			v.NextAt = nextScheduleAt(v.NextAt, v.Frequency, now)
 		}
 		v.UpdatedAt = now

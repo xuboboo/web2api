@@ -5,11 +5,23 @@ import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/xuboboo/web2api/core"
+	"log"
+	"strings"
 	"time"
 )
 
 type scheduledJobResults interface {
 	JobResults(string) ([]core.IndexCheckURLResult, error)
+}
+
+type scheduledJobStatus interface {
+	IndexJobNotificationSnapshot(string) (*core.IndexJob, bool)
+}
+
+type scheduledJobNoticeMeta struct {
+	ScheduleID string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type Notice struct {
@@ -53,22 +65,27 @@ func (p *Platform) handleAcknowledgeNotice(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{"ok": true})
 }
-func (p *Platform) emitNotice(n Notice) {
+func (p *Platform) emitNotice(n Notice) error {
 	if n.ID == "" {
 		n.ID = "notice_" + newUserID()
 	}
 	if n.CreatedAt.IsZero() {
 		n.CreatedAt = time.Now().UTC()
 	}
-	_ = p.store.PutNotice(&n)
+	return p.store.PutNotice(&n)
 }
 
 func (p *Platform) completeNotice(jobID string, failed bool) {
+	// runDueSchedules holds this lock until it has persisted the job metadata.
+	// This closes the fast-job race where OnFinished could run before metadata
+	// was stored and silently lose the completion notice.
+	p.scheduleMu.Lock()
+	defer p.scheduleMu.Unlock()
 	raw, err := p.store.GetSetting("scheduled_job:" + jobID)
 	if err != nil || len(raw) == 0 {
 		return
 	}
-	var schedule scheduledJob
+	var schedule scheduledJobNoticeMeta
 	if json.Unmarshal(raw, &schedule) != nil {
 		return
 	}
@@ -80,9 +97,22 @@ func (p *Platform) completeNotice(jobID string, failed bool) {
 	if err != nil {
 		return
 	}
+	schedules, err := p.scheduleSettings()
+	if err != nil {
+		return
+	}
+	scheduleExists := false
+	for _, current := range schedules {
+		if current.ID == schedule.ScheduleID {
+			scheduleExists = true
+			break
+		}
+	}
 	previous := map[string]core.IndexCheckURLResult{}
-	if raw, e := p.store.GetSetting("schedule_baseline:" + schedule.ID); e == nil && len(raw) > 0 {
-		_ = json.Unmarshal(raw, &previous)
+	if scheduleExists {
+		if raw, e := p.store.GetSetting("schedule_baseline:" + schedule.ScheduleID); e == nil && len(raw) > 0 {
+			_ = json.Unmarshal(raw, &previous)
+		}
 	}
 	changed := 0
 	for _, row := range rows {
@@ -93,8 +123,12 @@ func (p *Platform) completeNotice(jobID string, failed bool) {
 			previous[row.URL] = row
 		}
 	}
-	baseline, _ := json.Marshal(previous)
-	_ = p.store.PutSetting("schedule_baseline:"+schedule.ID, baseline)
+	if scheduleExists {
+		baseline, _ := json.Marshal(previous)
+		if err = p.store.PutSetting("schedule_baseline:"+schedule.ScheduleID, baseline); err != nil {
+			return
+		}
+	}
 	if changed > 0 || failed {
 		kind, title, body := "verdict_changed", "巡检结论变化", fmt.Sprintf("%d 个 URL 的有效收录结论发生变化。", changed)
 		if failed {
@@ -102,7 +136,13 @@ func (p *Platform) completeNotice(jobID string, failed bool) {
 			title = "定时巡检失败"
 			body = fmt.Sprintf("任务 %s 执行失败或存在错误，结果已保留。", jobID)
 		}
-		p.emitNotice(Notice{UserID: schedule.UserID, Kind: kind, Title: title, Body: body, JobID: jobID})
+		if err = p.emitNotice(Notice{UserID: schedule.UserID, Kind: kind, Title: title, Body: body, JobID: jobID}); err != nil {
+			log.Printf("platform: store scheduled job notice %s: %v", jobID, err)
+			return
+		}
+	}
+	if err := p.store.DeleteSetting("scheduled_job:" + jobID); err != nil {
+		log.Printf("platform: delete scheduled job metadata %s: %v", jobID, err)
 	}
 }
 func rowFailedNotice(row core.IndexCheckURLResult) bool {
@@ -118,4 +158,33 @@ func rowFailedNotice(row core.IndexCheckURLResult) bool {
 }
 func (p *Platform) NotifyScheduledJobFinished(jobID string, failed bool) {
 	p.completeNotice(jobID, failed)
+}
+
+// RecoverScheduledNotices replays terminal scheduled jobs whose process
+// stopped after persisting completion but before writing their notice.
+func (p *Platform) RecoverScheduledNotices(jobs scheduledJobStatus) {
+	if jobs == nil || p.store == nil {
+		return
+	}
+	items, err := p.store.ListSettings("scheduled_job:")
+	if err != nil {
+		log.Printf("platform: list scheduled job metadata: %v", err)
+		return
+	}
+	for name, raw := range items {
+		jobID := strings.TrimPrefix(name, "scheduled_job:")
+		var meta scheduledJobNoticeMeta
+		if jobID == "" || json.Unmarshal(raw, &meta) != nil {
+			_ = p.store.DeleteSetting(name)
+			continue
+		}
+		job, ok := jobs.IndexJobNotificationSnapshot(jobID)
+		if !ok {
+			_ = p.store.DeleteSetting(name)
+			continue
+		}
+		if job.Status.Terminal() {
+			p.NotifyScheduledJobFinished(jobID, job.Status != core.IndexJobDone || job.Failed > 0)
+		}
+	}
 }

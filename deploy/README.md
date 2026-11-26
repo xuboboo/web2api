@@ -41,7 +41,7 @@ curl.exe -s https://radar.ydsdoa.cn/web-tool/health
 - 容器名 `serp`，镜像 `web2api:local`（构建自仓库 `Dockerfile`，运行时为 `chromedp/headless-shell`）
 - 官网入口 **`https://radar.ydsdoa.cn/web-tool/`**；管理控制台 **`https://radar.ydsdoa.cn/web-tool/console/`**（根路径 `/` 无任何路由）
 - 端口 `radar.ydsdoa.cn`（仅回环；需要外部访问时改 compose 里的映射或在前面加反向代理,见下文 nginx 示例）
-- `shm_size: 512mb`（Chrome 渲染所需共享内存；配合已启用的 `--disable-dev-shm-usage`，1.4G 小内存机器可安全使用。内存充足的机器可调回 `2gb`）、`init: true`（tini 回收 Chrome 子进程）
+- `shm_size: 512mb`（Chrome 渲染共享内存）、`mem_limit: 768m`、`cpus: 2.0`、`pids_limit: 128` 为容器资源上限；按目标主机压测结果可通过 `WEB2API_MEM_LIMIT`、`WEB2API_CPUS`、`WEB2API_PIDS_LIMIT` 覆盖。`init: true`（tini 回收 Chrome 子进程）
 - 配置以只读方式挂载：`../config.yaml:/usr/src/app/config.yaml:ro`
 - 健康检查：容器内 `wget --spider https://radar.ydsdoa.cn/web-tool/health`，30s 间隔
 - 日志：json-file，单文件 20MB × 3

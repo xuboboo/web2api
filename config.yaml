@@ -65,6 +65,8 @@ index_jobs:
   enabled: true
   dir: "" # 留空 = <platform.data_dir>/index_jobs
   max_urls: 5000 # 单次提交上限
+  max_queued_urls: 20000 # 全部排队/执行任务保留的 URL 总数上限
+  max_queued_url_bytes: 33554432 # URL 字符串总字节数上限（32 MiB），超限返回 503 + Retry-After
   retention_days: 0 # 已结束任务保留天数；0 表示长期保留，不自动删除
   schedule_enabled: false # 定时巡检总开关；新装默认关闭
   schedule_interval: 1h # 定时任务调度检查间隔

@@ -75,6 +75,86 @@ func TestIndexJobSubmitValidation(t *testing.T) {
 	}
 }
 
+func TestIndexJobQueueEnforcesAggregateURLBudgetAndReleasesIt(t *testing.T) {
+	eng := &indexEngineMock{name: "baidu", initialized: true}
+	m := NewIndexJobManager(t.TempDir(), []SearchEngine{eng}, nil, IndexJobOptions{
+		MaxURLs: 10, MaxQueuedURLs: 2, MaxQueuedURLBytes: 256,
+	})
+	first, apiErr := m.Submit(context.Background(), []string{"https://example.test/a", "https://example.test/b"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatalf("first submit: %+v", apiErr)
+	}
+	budget := m.URLBudget()
+	if budget.InUseURLs != 2 || budget.InUseURLBytes != int64(len("https://example.test/a")+len("https://example.test/b")) {
+		t.Fatalf("wrong resident URL budget after submit: %+v", budget)
+	}
+	if _, apiErr = m.Submit(context.Background(), []string{"https://example.test/c"}, []string{"baidu"}); apiErr == nil || apiErr.HTTPStatus != 503 || apiErr.ErrorCode != "job_queue_full" {
+		t.Fatalf("aggregate URL budget not enforced: %+v", apiErr)
+	}
+	if !m.Cancel(first.ID, "") {
+		t.Fatal("cancel first queued task failed")
+	}
+	if budget := m.URLBudget(); budget.InUseURLs != 0 || budget.InUseURLBytes != 0 {
+		t.Fatalf("cancel did not release URL budget: %+v", budget)
+	}
+	if _, apiErr = m.Submit(context.Background(), []string{"https://example.test/c"}, []string{"baidu"}); apiErr != nil {
+		t.Fatalf("budget not released after cancel: %+v", apiErr)
+	}
+}
+
+func TestIndexJobRecoveryReservesBudgetAndLoadsPayloadLazily(t *testing.T) {
+	dir := t.TempDir()
+	eng := &indexEngineMock{name: "baidu", initialized: true}
+	opts := IndexJobOptions{MaxURLs: 5, MaxQueuedURLs: 2, MaxQueuedURLBytes: 256}
+	beforeRestart := NewIndexJobManager(dir, []SearchEngine{eng}, nil, opts)
+	job, apiErr := beforeRestart.Submit(context.Background(), []string{"https://example.test/a", "https://example.test/b"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatalf("submit before restart: %+v", apiErr)
+	}
+	afterRestart := NewIndexJobManager(dir, []SearchEngine{eng}, nil, opts)
+	recovered := afterRestart.resume(context.Background())
+	if len(recovered) != 1 || recovered[0] != job.ID {
+		t.Fatalf("recovered IDs = %v", recovered)
+	}
+	state := afterRestart.jobs[job.ID]
+	state.mu.Lock()
+	lazy, payloadLoaded := state.lazyLoad, state.job.URLs != nil || state.pending != nil
+	state.mu.Unlock()
+	if !lazy || payloadLoaded {
+		t.Fatalf("recovery eagerly loaded URL payload: lazy=%v payloadLoaded=%v", lazy, payloadLoaded)
+	}
+	if got := afterRestart.URLBudget(); got.InUseURLs != 2 {
+		t.Fatalf("recovered backlog not reserved against budget: %+v", got)
+	}
+	if _, apiErr := afterRestart.Submit(context.Background(), []string{"https://example.test/c"}, []string{"baidu"}); apiErr == nil || apiErr.HTTPStatus != 503 {
+		t.Fatalf("new submit exceeded recovered budget: %+v", apiErr)
+	}
+	if err := afterRestart.hydrateRestoredJob(state); err != nil {
+		t.Fatal(err)
+	}
+	state.mu.Lock()
+	lazy, pendingCount := state.lazyLoad, len(state.pending)
+	state.mu.Unlock()
+	if lazy || pendingCount != 2 {
+		t.Fatalf("restored job hydration: lazy=%v pending=%d", lazy, pendingCount)
+	}
+	if !afterRestart.Cancel(job.ID, "") {
+		t.Fatal("cancel restored task failed")
+	}
+	if got := afterRestart.URLBudget(); got.InUseURLs != 0 || got.InUseURLBytes != 0 {
+		t.Fatalf("restored task cancellation did not release reservation: %+v", got)
+	}
+}
+
+func TestIndexJobRejectsOverlongURL(t *testing.T) {
+	eng := &indexEngineMock{name: "baidu", initialized: true}
+	m := NewIndexJobManager(t.TempDir(), []SearchEngine{eng}, nil, IndexJobOptions{})
+	raw := "https://example.test/" + strings.Repeat("a", DefaultIndexJobMaxURLBytes)
+	if _, apiErr := m.Submit(context.Background(), []string{raw}, []string{"baidu"}); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
+		t.Fatalf("overlong URL accepted: %+v", apiErr)
+	}
+}
+
 func TestIndexJobRunsToDone(t *testing.T) {
 	eng := &indexEngineMock{
 		name: "baidu", initialized: true,

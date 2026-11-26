@@ -19,11 +19,18 @@ import (
 // limiterIdleTTL bounds how long an idle bucket stays resident.
 const limiterIdleTTL = time.Hour
 
+// maxLimiterEntries bounds per-IP/per-key state even when a caller rotates
+// source addresses. New identities share one overflow bucket while the table
+// is saturated; this sacrifices per-identity precision only under pressure,
+// rather than allowing the limiter itself to exhaust memory.
+const maxLimiterEntries = 8192
+
 // limiterTable is a keyed set of token buckets with lazy expiry sweeping.
 type limiterTable struct {
-	mu    sync.Mutex
-	m     map[string]*tableEntry
-	swept time.Time
+	mu       sync.Mutex
+	m        map[string]*tableEntry
+	swept    time.Time
+	overflow *tableEntry
 }
 
 type tableEntry struct {
@@ -51,6 +58,9 @@ func (t *limiterTable) allow(key string, perMinute int, minBurst int) bool {
 				delete(t.m, k)
 			}
 		}
+		if t.overflow != nil && now.Sub(t.overflow.lastSeen) > limiterIdleTTL {
+			t.overflow = nil
+		}
 		t.swept = now
 	}
 	e, ok := t.m[key]
@@ -61,6 +71,13 @@ func (t *limiterTable) allow(key string, perMinute int, minBurst int) bool {
 		}
 		if burst > perMinute {
 			burst = perMinute
+		}
+		if len(t.m) >= maxLimiterEntries {
+			if t.overflow == nil {
+				t.overflow = &tableEntry{limiter: rate.NewLimiter(rate.Every(time.Minute/time.Duration(perMinute)), burst)}
+			}
+			t.overflow.lastSeen = now
+			return t.overflow.limiter.Allow()
 		}
 		e = &tableEntry{limiter: rate.NewLimiter(rate.Every(time.Minute/time.Duration(perMinute)), burst)}
 		t.m[key] = e

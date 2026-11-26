@@ -656,6 +656,13 @@ func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 			resources["disk_used_percent"] = (total - free) * 100 / total
 		}
 	}
+	if provider, ok := p.engineControl.(interface {
+		IndexJobURLBudget() (core.IndexJobURLBudget, bool)
+	}); ok {
+		if budget, enabled := provider.IndexJobURLBudget(); enabled {
+			resources["index_job_queue"] = budget
+		}
+	}
 	return c.JSON(fiber.Map{
 		"today_calls":        agg.TodayCalls,
 		"today_units":        agg.TodayUnits,

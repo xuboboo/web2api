@@ -15,7 +15,24 @@ import (
 // errors.Is to report a client error instead of an upstream failure.
 var ErrTargetNotAllowed = errors.New("target not allowed")
 
-var carrierGradeNATPrefix = netip.MustParsePrefix("100.64.0.0/10")
+var nonPublicSpecialPrefixes = func() []netip.Prefix {
+	values := []string{
+		// IPv4 special-purpose space not fully covered by IsPrivate/loopback/
+		// link-local checks. Block whole allocations conservatively, including
+		// the few globally reachable exceptions inside 192.0.0.0/24.
+		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24",
+		"192.88.99.0/24", "198.18.0.0/15", "198.51.100.0/24",
+		"203.0.113.0/24", "240.0.0.0/4",
+		// IPv6 translation, protocol, transition, and documentation prefixes.
+		"64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/23",
+		"2001:db8::/32", "2002::/16", "3fff::/20",
+	}
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefixes = append(prefixes, netip.MustParsePrefix(value))
+	}
+	return prefixes
+}()
 
 type netIPResolver interface {
 	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
@@ -158,14 +175,21 @@ func joinAddrs(addrs []netip.Addr) string {
 
 func isPublicIP(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	return ip.IsValid() &&
-		!ip.IsUnspecified() &&
-		!ip.IsLoopback() &&
-		!ip.IsPrivate() &&
-		!ip.IsLinkLocalUnicast() &&
-		!ip.IsLinkLocalMulticast() &&
-		!ip.IsMulticast() &&
-		!carrierGradeNATPrefix.Contains(ip)
+	if !ip.IsValid() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return false
+	}
+	for _, prefix := range nonPublicSpecialPrefixes {
+		if prefix.Contains(ip) {
+			return false
+		}
+	}
+	// Publicly allocated IPv6 unicast currently lives in 2000::/3. Reject
+	// reserved/unallocated unicast space outside that range by default.
+	if ip.Is6() && !netip.MustParsePrefix("2000::/3").Contains(ip) {
+		return false
+	}
+	return true
 }
 
 func ipMatchesNetwork(ip netip.Addr, network string) bool {
