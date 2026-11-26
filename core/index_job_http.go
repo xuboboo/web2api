@@ -135,12 +135,17 @@ func (s *Server) IndexJobResultsHandler(c *fiber.Ctx) error {
 		engines := s.jobEngineNames(job)
 		c.Set(fiber.HeaderContentType, "text/csv; charset=utf-8")
 		c.Set(fiber.HeaderContentDisposition, fmt.Sprintf("attachment; filename=%q", job.ID+".csv"))
+		jobID := job.ID
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			if f != nil {
-				defer f.Close()
+				defer func() {
+					if closeErr := f.Close(); closeErr != nil {
+						WithRequest(context.Background()).WithError(closeErr).WithField("job_id", jobID).Warn("cannot close job CSV snapshot")
+					}
+				}()
 			}
 			if err := StreamJobCSV(w, f, size, engines, offset, limit); err != nil {
-				WithRequest(context.Background()).WithError(err).WithField("job_id", job.ID).Warn("cannot stream job CSV")
+				WithRequest(context.Background()).WithError(err).WithField("job_id", jobID).Warn("cannot stream job CSV")
 			}
 		})
 		return nil
@@ -289,15 +294,4 @@ func pageParams(c *fiber.Ctx) (offset, limit int) {
 		}
 	}
 	return offset, limit
-}
-
-func pageRows(rows []IndexCheckURLResult, offset, limit int) []IndexCheckURLResult {
-	if offset >= len(rows) {
-		return []IndexCheckURLResult{}
-	}
-	rows = rows[offset:]
-	if limit > 0 && limit < len(rows) {
-		rows = rows[:limit]
-	}
-	return rows
 }

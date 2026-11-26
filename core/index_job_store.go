@@ -327,7 +327,7 @@ func (s *IndexJobStore) OpenResultsSnapshot(jobID string) (*os.File, int64, erro
 
 // StreamJobCSV writes a page from a fixed result snapshot in completion order.
 func StreamJobCSV(w io.Writer, f *os.File, size int64, engines []string, offset, limit int) error {
-	if _, err := io.WriteString(w, string(WriteCSV(nil, engines))); err != nil {
+	if _, err := w.Write(WriteCSV(nil, engines)); err != nil {
 		return err
 	}
 	if f == nil {

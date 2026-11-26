@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -66,6 +67,33 @@ func TestConsoleJobSubmissionChargesOnce(t *testing.T) {
 		t.Fatalf("quota failure left preparations: %+v", pending)
 	}
 }
+
+func TestPublicAsyncJobRejectsTooManyURLsWithContractReason(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	env.app = fiber.New(fiber.Config{ErrorHandler: core.JSONErrorMiddleware()})
+	env.p.RegisterAdmin(env.app, nil, nil)
+	opts := core.DefaultServerOptions()
+	opts.IndexJobDir = filepath.Join(t.TempDir(), "jobs")
+	srv := core.NewServerWithOptions("127.0.0.1", 0, opts, consoleJobEngine{})
+	t.Cleanup(func() { _ = srv.Shutdown() })
+	env.p.engineControl = srv
+	env.p.RegisterPublic(env.app, srv.IndexCheckHandler)
+	admin := login(t, env.app)
+	keyID, key := createKey(t, env, admin, "too-many", 100_000)
+	urls := make([]string, maxBilledIndexJobURLs+1)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://example.test/%d", i)
+	}
+	status, body, _ := doJSONErr(t, env.app, http.MethodPost, "/v1/index/check", map[string]any{"urls": urls}, keyHeaders(key))
+	if status != http.StatusBadRequest || body["reason"] != "TOO_MANY_URLS" {
+		t.Fatalf("too many URLs: status=%d body=%v", status, body)
+	}
+	stored, err := env.p.store.GetKeyByID(keyID)
+	if err != nil || stored == nil || stored.UsedTotal != 0 {
+		t.Fatalf("invalid oversized batch must not be billed: key=%+v err=%v", stored, err)
+	}
+}
+
 func TestConsoleJobRetryIsScopedAndBilledIdempotently(t *testing.T) {
 	env := newTestEnv(t, http.StatusOK, false)
 	env.app = fiber.New(fiber.Config{ErrorHandler: core.JSONErrorMiddleware()})

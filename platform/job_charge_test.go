@@ -70,7 +70,11 @@ func TestJobChargeAtomicAndIdempotent(t *testing.T) {
 				t.Fatal(err)
 			}
 			store = open()
-			defer store.Close()
+			defer func() {
+				if err := store.Close(); err != nil {
+					t.Errorf("close store: %v", err)
+				}
+			}()
 			rec := &UsageRecord{Time: now, KeyID: "job-key", Units: 2, Status: 202}
 			got, replayed, err := store.CommitJobCharge("test-marker", jobCharge{JobID: "different-proposed-id", Fingerprint: "request-1", KeyID: "job-key", Units: 2}, rec, "job-key", 2, now)
 			if err != nil || !replayed || got.JobID != "job-1" {

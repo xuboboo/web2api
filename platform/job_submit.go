@@ -12,6 +12,8 @@ import (
 	"github.com/xuboboo/web2api/core"
 )
 
+const maxBilledIndexJobURLs = 5000
+
 type consoleJobCoordinator interface {
 	PrepareBilledIndexJob(context.Context, []string, []string, string, string, string, int64) (*core.IndexJob, error)
 	ActivateBilledIndexJob(string, string, string) (*core.IndexJob, error)
@@ -72,8 +74,11 @@ func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency
 	if strings.HasPrefix(idempotency, "schedule-") {
 		idempotency = sha256Hex(idempotency)
 	}
-	if keyID == "" || len(urls) == 0 || len(urls) > 5000 {
-		return fail(400, "invalid_param", "须指定密钥和 1–5000 个 URL")
+	if keyID == "" || len(urls) == 0 {
+		return fail(400, "invalid_param", "须指定密钥和至少一个 URL")
+	}
+	if len(urls) > maxBilledIndexJobURLs {
+		return fail(400, "too_many_urls", fmt.Sprintf("单次任务最多接受 %d 个 URL", maxBilledIndexJobURLs))
 	}
 	var valid bool
 	engines, valid = ResolveEngines(engines)

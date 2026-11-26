@@ -425,7 +425,7 @@ func (p *Platform) AuthAny() fiber.Handler {
 				units := p.mcpChargeUnits(c)
 				asyncJob, idempotency := mcpAsyncSubmission(c.Body())
 				_, billedJobs := p.engineControl.(consoleJobCoordinator)
-				if units > 0 && !(asyncJob && billedJobs) {
+				if units > 0 && (!asyncJob || !billedJobs) {
 					release, err := p.reserveQuota(c, key.ID, int64(units))
 					if release == nil {
 						return err
@@ -452,7 +452,7 @@ func (p *Platform) AuthAny() fiber.Handler {
 				}
 				started := time.Now()
 				handlerErr := c.Next()
-				if status := c.Response().StatusCode(); status == fiber.StatusOK && handlerErr == nil && units > 0 && !(asyncJob && billedJobs) {
+				if status := c.Response().StatusCode(); status == fiber.StatusOK && handlerErr == nil && units > 0 && (!asyncJob || !billedJobs) {
 					endpoint := c.Route().Path
 					if endpoint == "" || endpoint == "/" {
 						endpoint = c.Path()
