@@ -13,6 +13,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +24,8 @@ import (
 
 // IndexJobOptions tunes the job runner.
 type IndexJobOptions struct {
+	// RetentionDays keeps terminal jobs for this many days; zero disables cleanup.
+	RetentionDays int
 	// MaxURLs caps one job (0 = DefaultIndexJobMaxURLs).
 	MaxURLs int
 	// Chunk is how many URLs are evaluated per progress write (0 = 1).
@@ -35,6 +40,7 @@ type IndexJobOptions struct {
 	MaxUnitRetries int
 	// WaitPollCap bounds one cooldown wait (0 = 60s).
 	WaitPollCap time.Duration
+	OnFinished  func(IndexJob)
 }
 
 // DefaultIndexJobMaxURLs is the per-job ceiling: one export is ~800 URLs, and
@@ -137,9 +143,10 @@ type IndexJobManager struct {
 	engines []SearchEngine
 	rs      *ResilientSearcher
 
-	mu    sync.Mutex
-	jobs  map[string]*jobState
-	queue chan string
+	mu       sync.Mutex
+	jobs     map[string]*jobState
+	queue    chan string
+	prepared int
 
 	lifecycle sync.Mutex
 	cancel    context.CancelFunc
@@ -177,6 +184,23 @@ func (m *IndexJobManager) Start(ctx context.Context) {
 	runCtx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 	recovered := m.resume(runCtx)
+	if m.opts.RetentionDays > 0 {
+		m.pruneExpired(time.Now())
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			ticker := time.NewTicker(12 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case now := <-ticker.C:
+					m.pruneExpired(now)
+				}
+			}
+		}()
+	}
 
 	m.wg.Add(1)
 	go func() {
@@ -189,6 +213,98 @@ func (m *IndexJobManager) Start(ctx context.Context) {
 		}
 		m.loop(runCtx)
 	}()
+}
+
+// pruneExpired removes only terminal jobs whose persisted completion time is
+// beyond the configured retention window. Live runner state is checked again
+// before deletion so cancellation cannot race a still-running worker.
+func (m *IndexJobManager) pruneExpired(now time.Time) {
+	if m.opts.RetentionDays <= 0 {
+		return
+	}
+	jobs, err := m.store.ListMetaSummaries()
+	if err != nil {
+		WithRequest(context.Background()).WithError(err).Warn("cannot list expired index jobs")
+		return
+	}
+	cutoff := now.AddDate(0, 0, -m.opts.RetentionDays)
+	for _, job := range jobs {
+		if job == nil || job.ID == "" || sanitizeJobID(job.ID) != job.ID || !job.Status.Terminal() || job.FinishedAt == nil || !job.FinishedAt.Before(cutoff) {
+			continue
+		}
+		m.mu.Lock()
+		st := m.jobs[job.ID]
+		if st != nil {
+			st.mu.Lock()
+			if st.running || !st.job.Status.Terminal() || st.job.FinishedAt == nil || !st.job.FinishedAt.Before(cutoff) {
+				st.mu.Unlock()
+				m.mu.Unlock()
+				continue
+			}
+		}
+		err := m.store.Delete(job.ID)
+		if err == nil {
+			delete(m.jobs, job.ID)
+		}
+		if st != nil {
+			st.mu.Unlock()
+		}
+		m.mu.Unlock()
+		if err != nil {
+			WithRequest(context.Background()).WithError(err).WithField("job_id", job.ID).Warn("cannot remove expired index job")
+		}
+	}
+}
+
+// RetentionPreview estimates what a retention policy would remove. It never
+// changes the store, and excludes jobs still held by an active worker.
+func (m *IndexJobManager) RetentionPreview(days int, now time.Time) (int, int64, error) {
+	if days <= 0 {
+		return 0, 0, fmt.Errorf("retention days must be positive")
+	}
+	jobs, err := m.store.ListMetaSummaries()
+	if err != nil {
+		return 0, 0, err
+	}
+	cutoff := now.AddDate(0, 0, -days)
+	count, size := 0, int64(0)
+	for _, job := range jobs {
+		if job == nil || !job.Status.Terminal() || job.FinishedAt == nil || !job.FinishedAt.Before(cutoff) {
+			continue
+		}
+		m.mu.Lock()
+		st := m.jobs[job.ID]
+		active := false
+		if st != nil {
+			st.mu.Lock()
+			active = st.running || !st.job.Status.Terminal() || st.job.FinishedAt == nil || !st.job.FinishedAt.Before(cutoff)
+			st.mu.Unlock()
+		}
+		m.mu.Unlock()
+		if active {
+			continue
+		}
+		var jobSize int64
+		err := filepath.WalkDir(m.store.jobDir(job.ID), func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type().IsRegular() {
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				jobSize += info.Size()
+			}
+			return nil
+		})
+		if err != nil {
+			return 0, 0, err
+		}
+		count++
+		size += jobSize
+	}
+	return count, size, nil
 }
 
 // Stop cancels the runner and every in-flight job.
@@ -208,7 +324,7 @@ func (m *IndexJobManager) Stop() {
 // resume reloads unfinished jobs from disk. Results already on disk stay
 // applied, so a restart continues where the previous process stopped.
 func (m *IndexJobManager) resume(ctx context.Context) []string {
-	metas, err := m.store.ListMeta()
+	metas, err := m.store.ListMetaSummaries()
 	if err != nil {
 		WithRequest(ctx).WithError(err).Error("cannot list index jobs for recovery")
 		return nil
@@ -218,6 +334,18 @@ func (m *IndexJobManager) resume(ctx context.Context) []string {
 	for i := len(metas) - 1; i >= 0; i-- {
 		meta := metas[i]
 		if meta.Status.Terminal() {
+			continue
+		}
+		meta, err = m.store.LoadMeta(meta.ID)
+		if err != nil {
+			WithRequest(ctx).WithError(err).Error("cannot load index job metadata for recovery")
+			continue
+		}
+		if meta.Status == IndexJobBillingPending {
+			m.mu.Lock()
+			m.jobs[meta.ID] = &jobState{job: *meta, pending: meta.URLs, attempts: map[string]int{}}
+			m.prepared++
+			m.mu.Unlock()
 			continue
 		}
 		rows, err := m.store.LoadResults(meta.ID)
@@ -259,6 +387,19 @@ func (m *IndexJobManager) resume(ctx context.Context) []string {
 // bound to the API key that paid for it: another key cannot read, list or cancel
 // it. An empty owner means an admin submission (JWT), which may see every job.
 func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []string) (*IndexJob, *APIError) {
+	return m.submit(ctx, urls, engines, "", "", "", 0)
+}
+
+// PrepareBilled stores a job without allowing the runner to execute it.
+// Repeating the same ID and fingerprint returns the existing job.
+func (m *IndexJobManager) PrepareBilled(ctx context.Context, urls []string, engines []string, id, marker, fingerprint string, units int64) (*IndexJob, *APIError) {
+	if id == "" || sanitizeJobID(id) != id || marker == "" || fingerprint == "" || units <= 0 || JobOwner(ctx) == "" {
+		return nil, errInvalidParam("invalid billing preparation")
+	}
+	return m.submit(ctx, urls, engines, id, marker, fingerprint, units)
+}
+
+func (m *IndexJobManager) submit(ctx context.Context, urls []string, engines []string, id, marker, fingerprint string, units int64) (*IndexJob, *APIError) {
 	if m == nil {
 		return nil, &APIError{HTTPStatus: 501, ErrorCode: "not_implemented", Reason: "NOT_IMPLEMENTED", Message: "index jobs are not enabled"}
 	}
@@ -288,20 +429,36 @@ func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []s
 
 	now := time.Now().UTC()
 	job := IndexJob{
-		ID:         newIndexJobID(now),
-		Status:     IndexJobQueued,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		OwnerKeyID: JobOwner(ctx),
-		Engines:    IndexCheckEngineNames(selected),
-		Total:      len(clean),
-		URLs:       clean,
+		ID:          newIndexJobID(now),
+		Status:      IndexJobQueued,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		OwnerKeyID:  JobOwner(ctx),
+		OwnerUserID: jobUser(ctx),
+		Engines:     IndexCheckEngineNames(selected),
+		Total:       len(clean),
+		URLs:        clean,
+	}
+	if marker != "" {
+		job.ID, job.Status = id, IndexJobBillingPending
+		job.BillingMarker, job.BillingFingerprint, job.BillingUnits = marker, fingerprint, units
 	}
 	// Submitters share the queue lock so the capacity check remains valid
 	// until this job is persisted and published to the runner.
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.queue) == cap(m.queue) {
+	if marker != "" {
+		if existing, err := m.store.LoadMeta(id); err == nil {
+			if existing.BillingMarker != marker || existing.BillingFingerprint != fingerprint || existing.OwnerKeyID != job.OwnerKeyID || existing.OwnerUserID != job.OwnerUserID || existing.BillingUnits != units {
+				return nil, &APIError{HTTPStatus: 409, ErrorCode: "conflict", Reason: "CONFLICT", Message: "idempotency key used for a different request"}
+			}
+			existing.URLs = nil
+			return existing, nil
+		} else if !os.IsNotExist(err) {
+			return nil, &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot read existing job"}
+		}
+	}
+	if len(m.queue)+m.prepared >= cap(m.queue) {
 		return nil, &APIError{HTTPStatus: 503, ErrorCode: "job_queue_full", Reason: "JOB_QUEUE_FULL", Message: "index job queue is full; retry later", RetryAfterSeconds: 60}
 	}
 	if err := m.store.SaveMeta(&job); err != nil {
@@ -309,11 +466,102 @@ func (m *IndexJobManager) Submit(ctx context.Context, urls []string, engines []s
 	}
 	st := &jobState{job: job, pending: clean, attempts: map[string]int{}}
 	m.jobs[job.ID] = st
-	m.queue <- job.ID
+	if marker != "" {
+		m.prepared++
+	} else {
+		m.queue <- job.ID
+	}
 
 	out := job
 	out.URLs = nil
 	return &out, nil
+}
+
+// ActivateBilled makes a prepared job runnable after the ledger commit.
+// Callers must verify the corresponding durable charge first.
+func (m *IndexJobManager) ActivateBilled(id, marker, fingerprint string) (*IndexJob, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.jobs[id]
+	if st == nil {
+		job, err := m.store.LoadMeta(id)
+		if err != nil {
+			return nil, err
+		}
+		if job.BillingMarker != marker || job.BillingFingerprint != fingerprint {
+			return nil, fmt.Errorf("job billing mismatch")
+		}
+		if job.Status != IndexJobBillingPending {
+			job.URLs = nil
+			return job, nil
+		}
+		return nil, fmt.Errorf("prepared job not loaded")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.job.BillingMarker != marker || st.job.BillingFingerprint != fingerprint {
+		return nil, fmt.Errorf("job billing mismatch")
+	}
+	if st.job.Status != IndexJobBillingPending {
+		out := st.job
+		out.URLs = nil
+		return &out, nil
+	}
+	if len(m.queue) >= cap(m.queue) {
+		return nil, fmt.Errorf("job queue full")
+	}
+	next := st.job
+	next.Status = IndexJobQueued
+	next.UpdatedAt = time.Now().UTC()
+	if err := m.store.SaveMeta(&next); err != nil {
+		return nil, err
+	}
+	st.job = next
+	m.prepared--
+	m.queue <- id
+	out := next
+	out.URLs = nil
+	return &out, nil
+}
+
+// DiscardPrepared removes an uncharged preparation after the caller has
+// confirmed that no charge was committed. It never deletes activated jobs.
+func (m *IndexJobManager) DiscardPrepared(id, marker, fingerprint string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.jobs[id]
+	if st == nil {
+		return fmt.Errorf("prepared job not found")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.job.Status != IndexJobBillingPending || st.job.BillingMarker != marker || st.job.BillingFingerprint != fingerprint {
+		return fmt.Errorf("job is not the matching preparation")
+	}
+	if err := m.store.Delete(id); err != nil {
+		return err
+	}
+	delete(m.jobs, id)
+	m.prepared--
+	return nil
+}
+
+// PendingBilledJobs returns the pending charge metadata needed for startup
+// reconciliation. Submitted URL lists stay in the store.
+func (m *IndexJobManager) PendingBilledJobs() []IndexJob {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	jobs := make([]IndexJob, 0, m.prepared)
+	for _, st := range m.jobs {
+		st.mu.Lock()
+		if st.job.Status == IndexJobBillingPending {
+			job := st.job
+			job.URLs = nil
+			jobs = append(jobs, job)
+		}
+		st.mu.Unlock()
+	}
+	return jobs
 }
 
 // Get returns one job's snapshot, but only when ownerKeyID may see it. A
@@ -325,7 +573,7 @@ func (m *IndexJobManager) Get(id, ownerKeyID string) (*IndexJob, bool) {
 	m.mu.Unlock()
 	if ok {
 		snap := st.snapshot()
-		if !jobVisibleTo(snap.OwnerKeyID, ownerKeyID) {
+		if !jobVisibleTo(snap.OwnerKeyID, snap.OwnerUserID, ownerKeyID) {
 			return nil, false
 		}
 		return &snap, true
@@ -335,7 +583,7 @@ func (m *IndexJobManager) Get(id, ownerKeyID string) (*IndexJob, bool) {
 	if err != nil {
 		return nil, false
 	}
-	if !jobVisibleTo(meta.OwnerKeyID, ownerKeyID) {
+	if !jobVisibleTo(meta.OwnerKeyID, meta.OwnerUserID, ownerKeyID) {
 		return nil, false
 	}
 	meta.URLs = nil
@@ -351,18 +599,18 @@ func (m *IndexJobManager) List(ownerKeyID string, limit int) []IndexJob {
 	}
 	m.mu.Unlock()
 
-	metas, _ := m.store.ListMeta()
+	metas, _ := m.store.ListMetaSummaries()
 	seen := make(map[string]bool, len(resident))
 	out := make([]IndexJob, 0, len(metas)+len(resident))
 	for _, job := range resident {
-		if !jobVisibleTo(job.OwnerKeyID, ownerKeyID) {
+		if !jobVisibleTo(job.OwnerKeyID, job.OwnerUserID, ownerKeyID) {
 			continue
 		}
 		seen[job.ID] = true
 		out = append(out, job)
 	}
 	for _, meta := range metas {
-		if seen[meta.ID] || !jobVisibleTo(meta.OwnerKeyID, ownerKeyID) {
+		if seen[meta.ID] || !jobVisibleTo(meta.OwnerKeyID, meta.OwnerUserID, ownerKeyID) {
 			continue
 		}
 		snap := *meta
@@ -381,6 +629,44 @@ func (m *IndexJobManager) Results(id string) ([]IndexCheckURLResult, error) {
 	return m.store.LoadResults(id)
 }
 
+// GetForUser applies console ownership independently of API key ownership.
+func (m *IndexJobManager) GetForUser(id, userID string, admin bool) (*IndexJob, bool) {
+	if !admin && userID == "" {
+		return nil, false
+	}
+	job, ok := m.Get(id, "")
+	if !ok || (!admin && job.OwnerUserID != userID) {
+		return nil, false
+	}
+	return job, true
+}
+
+// ListForUser returns console jobs visible to the authenticated user.
+func (m *IndexJobManager) ListForUser(userID string, admin bool, limit int) []IndexJob {
+	if !admin && userID == "" {
+		return []IndexJob{}
+	}
+	jobs := m.List("", 0)
+	visible := make([]IndexJob, 0)
+	for _, job := range jobs {
+		if admin || job.OwnerUserID == userID {
+			visible = append(visible, job)
+			if limit > 0 && len(visible) >= limit {
+				break
+			}
+		}
+	}
+	return visible
+}
+
+// CancelForUser rechecks console ownership before cancelling a queued job.
+func (m *IndexJobManager) CancelForUser(id, userID string, admin bool) (bool, error) {
+	if _, ok := m.GetForUser(id, userID, admin); !ok {
+		return false, nil
+	}
+	return m.cancelJob(id, "")
+}
+
 // Cancel stops a queued or running job owned by ownerKeyID.
 func (m *IndexJobManager) Cancel(id, ownerKeyID string) bool {
 	cancelled, _ := m.cancelJob(id, ownerKeyID)
@@ -395,7 +681,7 @@ func (m *IndexJobManager) cancelJob(id, ownerKeyID string) (bool, error) {
 		return false, nil
 	}
 	st.mu.Lock()
-	if !jobVisibleTo(st.job.OwnerKeyID, ownerKeyID) || st.job.Status.Terminal() {
+	if !jobVisibleTo(st.job.OwnerKeyID, st.job.OwnerUserID, ownerKeyID) || st.job.Status.Terminal() || st.job.Status == IndexJobBillingPending {
 		st.mu.Unlock()
 		return false, nil
 	}
@@ -443,7 +729,7 @@ func (m *IndexJobManager) runJob(parent context.Context, id string) {
 	}
 
 	st.mu.Lock()
-	if st.job.Status.Terminal() || st.running {
+	if st.job.Status != IndexJobQueued || st.running {
 		st.mu.Unlock()
 		return
 	}
@@ -666,10 +952,15 @@ func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr st
 	if lastErr != "" {
 		st.job.LastError = lastErr
 	}
+	finished := st.job
+	finished.URLs = nil
 	m.saveJobLocked(st)
 	st.releaseLocked()
 	st.mu.Unlock()
 	m.evictTerminal()
+	if m.opts.OnFinished != nil {
+		go m.opts.OnFinished(finished)
+	}
 }
 
 // EngineInterval reports the slowest selected engine's token interval, which is

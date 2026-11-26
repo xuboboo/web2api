@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 // newJobTestServer mounts the index routes the platform normally registers, so
@@ -38,6 +40,41 @@ func newJobTestServer(t *testing.T, withJobs bool) (*Server, *indexEngineMock) {
 	app.Get("/v1/index/check/jobs/:id/results", srv.IndexJobResultsHandler)
 	app.Delete("/v1/index/check/jobs/:id", srv.IndexJobCancelHandler)
 	return srv, eng
+}
+
+func TestConsoleJobHTTPIsolation(t *testing.T) {
+	srv, _ := newJobTestServer(t, true)
+	ctx := WithJobUser(WithJobOwner(context.Background(), "billing-key"), "alice")
+	job, apiErr := srv.jobs.Submit(ctx, []string{"https://example.test/a"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	app := srv.FiberApp()
+	principal := func(c *fiber.Ctx) error {
+		c.SetUserContext(WithConsoleJobAccess(c.UserContext(), c.Get("X-Test-User"), c.Get("X-Test-Admin") == "1"))
+		return c.Next()
+	}
+	app.Get("/api/index/check/jobs", principal, srv.IndexJobListHandler)
+	app.Get("/api/index/check/jobs/:id", principal, srv.IndexJobStatusHandler)
+	for _, tc := range []struct {
+		user, admin string
+		status      int
+	}{{"alice", "", 200}, {"bob", "", 404}, {"admin", "1", 200}, {"", "", 404}} {
+		req := httptest.NewRequest(http.MethodGet, "/api/index/check/jobs/"+job.ID, nil)
+		req.Header.Set("X-Test-User", tc.user)
+		req.Header.Set("X-Test-Admin", tc.admin)
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := readAll(t, resp)
+		if resp.StatusCode != tc.status {
+			t.Fatalf("user=%q status=%d want=%d body=%s", tc.user, resp.StatusCode, tc.status, body)
+		}
+		if tc.status == 200 && !strings.Contains(body, "/api/index/check/jobs/") {
+			t.Fatalf("console response has incorrect links: %s", body)
+		}
+	}
 }
 
 func postIndexCheck(t *testing.T, srv *Server, urls []string) *http.Response {
@@ -167,6 +204,31 @@ func TestIndexCheckSmallBatchStaysSynchronous(t *testing.T) {
 	}
 	if !strings.Contains(body, "\"results\"") {
 		t.Fatalf("sync body missing results: %s", body)
+	}
+}
+
+func TestIndexCheckSmallBatchExplicitAsync(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("jobs=%t", enabled), func(t *testing.T) {
+			srv, _ := newJobTestServer(t, enabled)
+			req := httptest.NewRequest(http.MethodPost, "/v1/index/check?async=1", strings.NewReader(`{"urls":["https://example.test/a"],"engines":["baidu"]}`))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := srv.FiberApp().Test(req, -1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := readAll(t, resp)
+			want := http.StatusAccepted
+			if !enabled {
+				want = http.StatusNotImplemented
+			}
+			if resp.StatusCode != want {
+				t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, want, body)
+			}
+			if enabled && !strings.Contains(body, `"job_id"`) {
+				t.Fatalf("missing job ID: %s", body)
+			}
+		})
 	}
 }
 

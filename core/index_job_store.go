@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,6 +29,8 @@ import (
 type IndexJobStatus string
 
 const (
+	// IndexJobBillingPending is durable but cannot execute until charged.
+	IndexJobBillingPending IndexJobStatus = "billing_pending"
 	// IndexJobQueued waits for the runner.
 	IndexJobQueued IndexJobStatus = "queued"
 	// IndexJobRunning is draining URLs.
@@ -62,14 +65,19 @@ type IndexJob struct {
 	// OwnerKeyID is the API key that submitted the batch. Job state is
 	// tenant-scoped: another key can neither read nor cancel it. Empty means an
 	// admin (JWT) submission, which is allowed to see every job.
-	OwnerKeyID string   `json:"owner_key_id,omitempty"`
-	Engines    []string `json:"engines"`
-	Total      int      `json:"total"`
-	Completed  int      `json:"completed"`
-	Indexed    int      `json:"indexed"`
-	NotIndexed int      `json:"not_indexed"`
-	Failed     int      `json:"failed"`
-	Retrying   int      `json:"retrying"`
+	OwnerKeyID string `json:"owner_key_id,omitempty"`
+	// OwnerUserID scopes console-created jobs independently of the billing key.
+	OwnerUserID        string   `json:"owner_user_id,omitempty"`
+	BillingMarker      string   `json:"billing_marker,omitempty"`
+	BillingFingerprint string   `json:"billing_fingerprint,omitempty"`
+	BillingUnits       int64    `json:"billing_units,omitempty"`
+	Engines            []string `json:"engines"`
+	Total              int      `json:"total"`
+	Completed          int      `json:"completed"`
+	Indexed            int      `json:"indexed"`
+	NotIndexed         int      `json:"not_indexed"`
+	Failed             int      `json:"failed"`
+	Retrying           int      `json:"retrying"`
 	// WaitSeconds is the remaining cooldown the runner is waiting out.
 	WaitSeconds int    `json:"wait_seconds,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
@@ -82,7 +90,7 @@ func (j *IndexJob) Progress() float64 {
 	if j == nil || j.Total == 0 {
 		return 0
 	}
-	done := j.Completed + j.Failed
+	done := j.Completed
 	if done > j.Total {
 		done = j.Total
 	}
@@ -94,7 +102,7 @@ func (j *IndexJob) ETA(interval time.Duration) time.Duration {
 	if j == nil || interval <= 0 {
 		return 0
 	}
-	remaining := j.Total - j.Completed - j.Failed
+	remaining := j.Total - j.Completed
 	if remaining <= 0 {
 		return 0
 	}
@@ -225,16 +233,26 @@ func (s *IndexJobStore) AppendResult(jobID string, row IndexCheckURLResult) erro
 
 // LoadResults returns every finished row in completion order.
 func (s *IndexJobStore) LoadResults(jobID string) ([]IndexCheckURLResult, error) {
+	return s.LoadResultsPage(jobID, 0, 0)
+}
+
+// LoadResultsPage reads only the requested valid rows in completion order.
+// A zero limit retains the existing unbounded result contract.
+func (s *IndexJobStore) LoadResultsPage(jobID string, offset, limit int) ([]IndexCheckURLResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := os.Open(filepath.Join(s.jobDir(jobID), "results.jsonl"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return []IndexCheckURLResult{}, nil
 		}
 		return nil, err
 	}
 	rows := make([]IndexCheckURLResult, 0, 64)
+	if offset < 0 {
+		offset = 0
+	}
+	seen := 0
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -247,9 +265,95 @@ func (s *IndexJobStore) LoadResults(jobID string) ([]IndexCheckURLResult, error)
 			// A torn tail line from a crash is the only expected corruption.
 			continue
 		}
+		if seen < offset {
+			seen++
+			continue
+		}
 		rows = append(rows, row)
+		if limit > 0 && len(rows) >= limit {
+			break
+		}
 	}
 	return rows, errors.Join(scanner.Err(), f.Close())
+}
+
+func verdictChanged(old, current IndexCheckURLResult) bool {
+	if len(old.Engines) != len(current.Engines) {
+		return true
+	}
+	for engine, next := range current.Engines {
+		previous, ok := old.Engines[engine]
+		if !ok {
+			return true
+		}
+		a, ae := previous.Verdict()
+		b, be := next.Verdict()
+		if (ae == nil) != (be == nil) {
+			return true
+		}
+		if ae != nil && be != nil {
+			if ae.Code != be.Code {
+				return true
+			}
+			continue
+		}
+		if a == nil || b == nil || a.Indexed != b.Indexed || a.Match != b.Match || a.MatchedResultURL != b.MatchedResultURL {
+			return true
+		}
+	}
+	return false
+}
+
+func JobVerdictChanged(old, current IndexCheckURLResult) bool { return verdictChanged(old, current) }
+
+// OpenResultsSnapshot opens a stable prefix while appends continue. The caller
+// closes the file after reading; no store lock is held during the download.
+func (s *IndexJobStore) OpenResultsSnapshot(jobID string) (*os.File, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, err := os.Open(filepath.Join(s.jobDir(jobID), "results.jsonl"))
+	if os.IsNotExist(err) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return nil, 0, errors.Join(err, f.Close())
+	}
+	return f, info.Size(), nil
+}
+
+// StreamJobCSV writes a page from a fixed result snapshot in completion order.
+func StreamJobCSV(w io.Writer, f *os.File, size int64, engines []string, offset, limit int) error {
+	if _, err := io.WriteString(w, string(WriteCSV(nil, engines))); err != nil {
+		return err
+	}
+	if f == nil {
+		return nil
+	}
+	scanner := bufio.NewScanner(io.NewSectionReader(f, 0, size))
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	seen, written := 0, 0
+	for scanner.Scan() {
+		var row IndexCheckURLResult
+		if json.Unmarshal(scanner.Bytes(), &row) != nil {
+			continue
+		}
+		if seen < offset {
+			seen++
+			continue
+		}
+		if _, err := io.WriteString(w, csvJobRow(row, engines)); err != nil {
+			return err
+		}
+		written++
+		if limit > 0 && written >= limit {
+			break
+		}
+	}
+	return scanner.Err()
 }
 
 // LoadMeta reads one job's metadata.
@@ -269,6 +373,16 @@ func (s *IndexJobStore) LoadMeta(jobID string) (*IndexJob, error) {
 
 // ListMeta returns every stored job, newest first.
 func (s *IndexJobStore) ListMeta() ([]*IndexJob, error) {
+	return s.listMeta(true)
+}
+
+// ListMetaSummaries discards URL lists before retaining each entry, keeping
+// history scans bounded by metadata rather than all submitted URL lists.
+func (s *IndexJobStore) ListMetaSummaries() ([]*IndexJob, error) {
+	return s.listMeta(false)
+}
+
+func (s *IndexJobStore) listMeta(includeURLs bool) ([]*IndexJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, err := os.ReadDir(s.dir)
@@ -290,6 +404,12 @@ func (s *IndexJobStore) ListMeta() ([]*IndexJob, error) {
 		var job IndexJob
 		if err := json.Unmarshal(payload, &job); err != nil {
 			continue
+		}
+		if job.ID != entry.Name() || sanitizeJobID(job.ID) != job.ID {
+			continue
+		}
+		if !includeURLs {
+			job.URLs = nil
 		}
 		jobs = append(jobs, &job)
 	}
@@ -315,33 +435,36 @@ func WriteCSV(rows []IndexCheckURLResult, engines []string) []byte {
 	b.WriteString(strings.Join(header, ","))
 	b.WriteString("\r\n")
 	for _, row := range rows {
-		fields := []string{SpreadsheetCSVCell(row.URL)}
-		for _, engine := range engines {
-			outcome, ok := row.Engines[engine]
-			if !ok {
-				fields = append(fields, "", "", "", "", "")
-				continue
-			}
-			success, engineErr := outcome.Verdict()
-			if engineErr != nil {
-				fields = append(fields, "", "", "", "", SpreadsheetCSVCell(engineErr.Code))
-				continue
-			}
-			if success == nil {
-				fields = append(fields, "", "", "", "", "")
-				continue
-			}
-			fields = append(fields,
-				fmt.Sprintf("%t", success.Indexed),
-				SpreadsheetCSVCell(success.Match),
-				SpreadsheetCSVCell(success.MatchedResultURL),
-				fmt.Sprintf("%d", success.TotalResults),
-				"")
-		}
-		b.WriteString(strings.Join(fields, ","))
-		b.WriteString("\r\n")
+		b.WriteString(csvJobRow(row, engines))
 	}
 	return []byte(b.String())
+}
+
+func csvJobRow(row IndexCheckURLResult, engines []string) string {
+	fields := []string{SpreadsheetCSVCell(row.URL)}
+	for _, engine := range engines {
+		outcome, ok := row.Engines[engine]
+		if !ok {
+			fields = append(fields, "", "", "", "", "")
+			continue
+		}
+		success, engineErr := outcome.Verdict()
+		if engineErr != nil {
+			fields = append(fields, "", "", "", "", SpreadsheetCSVCell(engineErr.Code))
+			continue
+		}
+		if success == nil {
+			fields = append(fields, "", "", "", "", "")
+			continue
+		}
+		fields = append(fields,
+			fmt.Sprintf("%t", success.Indexed),
+			SpreadsheetCSVCell(success.Match),
+			SpreadsheetCSVCell(success.MatchedResultURL),
+			fmt.Sprintf("%d", success.TotalResults),
+			"")
+	}
+	return strings.Join(fields, ",") + "\r\n"
 }
 
 // SpreadsheetCSVCell quotes a text field and prevents spreadsheet formula

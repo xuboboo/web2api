@@ -16,6 +16,7 @@ package platform
 //     call.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -422,7 +423,9 @@ func (p *Platform) AuthAny() fiber.Handler {
 					return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().APIRatePerMinute))
 				}
 				units := p.mcpChargeUnits(c)
-				if units > 0 {
+				asyncJob, idempotency := mcpAsyncSubmission(c.Body())
+				_, billedJobs := p.engineControl.(consoleJobCoordinator)
+				if units > 0 && !(asyncJob && billedJobs) {
 					release, err := p.reserveQuota(c, key.ID, int64(units))
 					if release == nil {
 						return err
@@ -435,9 +438,21 @@ func (p *Platform) AuthAny() fiber.Handler {
 				// Scope async jobs to the paying key (core.JobOwner): the MCP
 				// check_indexed tool submits through this context.
 				c.SetUserContext(core.WithJobOwner(c.UserContext(), key.ID))
+				if asyncJob && billedJobs {
+					if header := c.Get("Idempotency-Key"); header != "" {
+						idempotency = header
+					}
+					if idempotency == "" {
+						idempotency = "mcp-" + newUserID()
+					}
+					c.SetUserContext(core.WithIndexJobSubmission(c.UserContext(), func(ctx context.Context, urls, engines []string) (*core.IndexJob, error) {
+						job, _, err := p.enqueueBilled(ctx, "", key.ID, idempotency, urls, engines, c.IP())
+						return job, err
+					}))
+				}
 				started := time.Now()
 				handlerErr := c.Next()
-				if status := c.Response().StatusCode(); status == fiber.StatusOK && handlerErr == nil && units > 0 {
+				if status := c.Response().StatusCode(); status == fiber.StatusOK && handlerErr == nil && units > 0 && !(asyncJob && billedJobs) {
 					endpoint := c.Route().Path
 					if endpoint == "" || endpoint == "/" {
 						endpoint = c.Path()
@@ -523,6 +538,22 @@ func mcpToolUnits(body []byte) int {
 	default:
 		return 0
 	}
+}
+
+func mcpAsyncSubmission(body []byte) (bool, string) {
+	var req struct {
+		Method string `json:"method"`
+		Params struct {
+			Name      string `json:"name"`
+			Arguments struct {
+				URLs []string `json:"urls"`
+			} `json:"arguments"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(body, &req) != nil || req.Method != "tools/call" || req.Params.Name != "check_indexed" {
+		return false, ""
+	}
+	return len(req.Params.Arguments.URLs) > 20, ""
 }
 
 // resolveChargeEngines mirrors ResolveEngines sizing (default engines = 4)

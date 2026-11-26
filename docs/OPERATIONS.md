@@ -6,6 +6,8 @@
 
 ## 1. 日常巡检（每天 5 分钟）
 
+Windows 本机可运行 `./deploy/sample-memory.ps1 -DurationSeconds 1800 -IntervalSeconds 10` 采样监听 7000 的 Web2API 及其子进程。CSV 包含进程树工作集、私有内存和系统空闲内存。可用 `-Port` 指定隔离实例，用 `-OutputPath` 指定新文件；脚本不会覆盖已有文件。工作集相加可能重复计算共享页，应结合私有内存和系统空闲内存判断。
+
 ```bash
 BASE=http://127.0.0.1:7070/web-tool      # 按实际地址替换
 KEY=<某个有效 API Key>

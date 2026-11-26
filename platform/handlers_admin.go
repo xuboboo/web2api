@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,7 @@ func (p *Platform) RegisterAdmin(app fiber.Router, indexCheck fiber.Handler, eng
 	limiter := p.adminRateGuard()
 
 	app.Post("/api/auth/login", limiter, p.handleLogin)
+	p.RegisterSchedules(app)
 	app.Post("/api/auth/password", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handlePasswordChange)
 	app.Post("/api/auth/logout", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleLogout)
 	app.Post("/api/auth/refresh", limiter, p.jwtGuard(), p.requireRole(RoleViewer), p.handleAuthRefresh)
@@ -644,6 +646,16 @@ func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 		byEngine[engine] = s
 	}
 
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	resources := fiber.Map{"goroutines": runtime.NumGoroutine(), "heap_mb": mem.Alloc / 1024 / 1024, "heap_sys_mb": mem.Sys / 1024 / 1024, "heap_objects": mem.HeapObjects}
+	if total, free, e := dataDiskSpace(p.cfg.DataDir); e == nil {
+		resources["disk_total_mb"] = total
+		resources["disk_free_mb"] = free
+		if total > 0 {
+			resources["disk_used_percent"] = (total - free) * 100 / total
+		}
+	}
 	return c.JSON(fiber.Map{
 		"today_calls":        agg.TodayCalls,
 		"today_units":        agg.TodayUnits,
@@ -654,6 +666,7 @@ func (p *Platform) handleStatsOverview(c *fiber.Ctx) error {
 		"by_engine":          byEngine,
 		"today_calls_all":    agg.TodayCallsAll,
 		"rejected_today_24h": agg.Rejected24h,
+		"resources":          resources,
 	})
 }
 

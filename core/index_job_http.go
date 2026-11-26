@@ -13,6 +13,7 @@ package core
 // what lets one submission cover an entire export without the client pacing it.
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"strconv"
@@ -96,7 +97,12 @@ func (s *Server) IndexJobListHandler(c *fiber.Ctx) error {
 			limit = n
 		}
 	}
-	jobs := s.jobs.List(JobOwner(c.UserContext()), limit)
+	var jobs []IndexJob
+	if principal, ok := consoleJobPrincipal(c.UserContext()); ok {
+		jobs = s.jobs.ListForUser(principal.userID, principal.admin, limit)
+	} else {
+		jobs = s.jobs.List(JobOwner(c.UserContext()), limit)
+	}
 	views := make([]indexJobView, 0, len(jobs))
 	for i := range jobs {
 		views = append(views, s.jobView(c, &jobs[i]))
@@ -120,18 +126,28 @@ func (s *Server) IndexJobResultsHandler(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	rows, readErr := s.jobs.Results(job.ID)
-	if readErr != nil {
-		return &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot read job results"}
-	}
 	offset, limit := pageParams(c)
-	rows = pageRows(rows, offset, limit)
-
 	if strings.EqualFold(strings.TrimSpace(c.Query("format")), "csv") {
+		f, size, err := s.jobs.Store().OpenResultsSnapshot(job.ID)
+		if err != nil {
+			return &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot read job results"}
+		}
 		engines := s.jobEngineNames(job)
 		c.Set(fiber.HeaderContentType, "text/csv; charset=utf-8")
 		c.Set(fiber.HeaderContentDisposition, fmt.Sprintf("attachment; filename=%q", job.ID+".csv"))
-		return c.Send(WriteCSV(rows, engines))
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			if f != nil {
+				defer f.Close()
+			}
+			if err := StreamJobCSV(w, f, size, engines, offset, limit); err != nil {
+				WithRequest(context.Background()).WithError(err).WithField("job_id", job.ID).Warn("cannot stream job CSV")
+			}
+		})
+		return nil
+	}
+	rows, readErr := s.jobs.Store().LoadResultsPage(job.ID, offset, limit)
+	if readErr != nil {
+		return &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot read job results"}
 	}
 	return c.JSON(fiber.Map{
 		"job_id":  job.ID,
@@ -149,18 +165,34 @@ func (s *Server) IndexJobCancelHandler(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	cancelled, err := s.jobs.cancelJob(job.ID, JobOwner(c.UserContext()))
+	var cancelled bool
+	if principal, ok := consoleJobPrincipal(c.UserContext()); ok {
+		cancelled, err = s.jobs.CancelForUser(job.ID, principal.userID, principal.admin)
+	} else {
+		cancelled, err = s.jobs.cancelJob(job.ID, JobOwner(c.UserContext()))
+	}
 	if err != nil {
 		return &APIError{HTTPStatus: 500, ErrorCode: "internal_error", Reason: "INTERNAL", Message: "cannot persist job cancellation"}
 	}
 	if !cancelled {
 		return &APIError{HTTPStatus: 409, ErrorCode: "conflict", Reason: "CONFLICT", Message: "job already finished"}
 	}
-	updated, _ := s.jobs.Get(job.ID, JobOwner(c.UserContext()))
+	updated, _ := s.lookupJob(c)
 	if updated == nil {
 		updated = job
 	}
 	return c.JSON(s.jobView(c, updated))
+}
+
+// IndexJobRetryHandler queues a separately billed retry for URLs with at least
+// one engine error; the original task and verdicts remain immutable.
+func (s *Server) IndexJobRetryHandler(c *fiber.Ctx) error {
+	job, err := s.RetryFailedIndexJob(c.UserContext(), strings.TrimSpace(c.Params("id")))
+	if err != nil {
+		return err
+	}
+	c.Status(fiber.StatusAccepted)
+	return c.JSON(s.jobView(c, job))
 }
 
 // lookupJob resolves :id or returns the 404/501 error to render.
@@ -169,7 +201,13 @@ func (s *Server) lookupJob(c *fiber.Ctx) (*IndexJob, error) {
 		return nil, &APIError{HTTPStatus: 501, ErrorCode: "not_implemented", Reason: "NOT_IMPLEMENTED", Message: "index jobs are not enabled"}
 	}
 	id := strings.TrimSpace(c.Params("id"))
-	job, ok := s.jobs.Get(id, JobOwner(c.UserContext()))
+	var job *IndexJob
+	var ok bool
+	if principal, console := consoleJobPrincipal(c.UserContext()); console {
+		job, ok = s.jobs.GetForUser(id, principal.userID, principal.admin)
+	} else {
+		job, ok = s.jobs.Get(id, JobOwner(c.UserContext()))
+	}
 	if !ok {
 		return nil, &APIError{HTTPStatus: 404, ErrorCode: "not_found", Reason: "NOT_FOUND", Message: "job not found"}
 	}
@@ -227,6 +265,10 @@ func (s *Server) jobEngineNames(job *IndexJob) []string {
 func jobURLs(c *fiber.Ctx, id string) (poll, results, csv string) {
 	prefix := ""
 	if path := c.Path(); path != "" {
+		if idx := strings.Index(path, "/api/index/check/jobs"); idx >= 0 {
+			poll = path[:idx] + "/api/index/check/jobs/" + id
+			return poll, poll + "/results", poll + "/results?format=csv"
+		}
 		if idx := strings.Index(path, "/v1/index/check"); idx >= 0 {
 			prefix = path[:idx]
 		}

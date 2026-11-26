@@ -65,6 +65,9 @@ index_jobs:
   enabled: true
   dir: "" # 留空 = <platform.data_dir>/index_jobs
   max_urls: 5000 # 单次提交上限
+  retention_days: 0 # 已结束任务保留天数；0 表示长期保留，不自动删除
+  schedule_enabled: false # 定时巡检总开关；新装默认关闭
+  schedule_interval: 1h # 定时任务调度检查间隔
   chunk: 1 # 每处理 N 条落一次进度（1 = 每条都落，进度条按 URL 前进）
   max_unit_retries: 6 # 被冷却/验证码挡住的 URL 重试次数
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -34,7 +35,7 @@ func newBoltStore(path string) (*boltStore, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, name := range []string{bucketKeys, bucketUsage, bucketSettings, bucketSessions, bucketUsageDaily, bucketUsers, bucketBlacklist} {
+		for _, name := range []string{bucketKeys, bucketUsage, bucketSettings, bucketSessions, bucketUsageDaily, bucketUsers, bucketBlacklist, bucketNotices} {
 			if _, err := tx.CreateBucketIfNotExists(boltBucketName(name)); err != nil {
 				return fmt.Errorf("create bucket %s: %w", name, err)
 			}
@@ -174,49 +175,106 @@ func (s *boltStore) DeleteKey(id string) (bool, error) {
 
 func (s *boltStore) RecordUsage(rec *UsageRecord, keyID string, units int64, consume bool, at time.Time) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		settings := tx.Bucket(boltBucketName(bucketSettings))
-		seq := uint64(1)
-		if raw := settings.Get([]byte(settingUsageSeq)); raw != nil {
-			seq = binary.BigEndian.Uint64(raw) + 1
-		}
-		seqBuf := make([]byte, 8)
-		binary.BigEndian.PutUint64(seqBuf, seq)
-		if err := settings.Put([]byte(settingUsageSeq), seqBuf); err != nil {
-			return err
-		}
-		rec.Seq = int64(seq)
+		return s.recordUsageTx(tx, rec, keyID, units, consume, at)
+	})
+}
 
-		usage := tx.Bucket(boltBucketName(bucketUsage))
-		rawRec, err := json.Marshal(rec)
+func (s *boltStore) recordUsageTx(tx *bolt.Tx, rec *UsageRecord, keyID string, units int64, consume bool, at time.Time) error {
+	settings := tx.Bucket(boltBucketName(bucketSettings))
+	seq := uint64(1)
+	if raw := settings.Get([]byte(settingUsageSeq)); raw != nil {
+		seq = binary.BigEndian.Uint64(raw) + 1
+	}
+	seqBuf := make([]byte, 8)
+	binary.BigEndian.PutUint64(seqBuf, seq)
+	if err := settings.Put([]byte(settingUsageSeq), seqBuf); err != nil {
+		return err
+	}
+	rec.Seq = int64(seq)
+
+	usage := tx.Bucket(boltBucketName(bucketUsage))
+	rawRec, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	if err := usage.Put([]byte(fmt.Sprintf("%020d", seq)), rawRec); err != nil {
+		return err
+	}
+
+	// S4-GAP 性能项(b): maintain the per-day count index in the SAME
+	// transaction, so aggregates never need a full-table scan.
+	if err := s.indexUsageLocked(tx, rec); err != nil {
+		return err
+	}
+
+	// Update the key counters in the same transaction.
+	keys := tx.Bucket(boltBucketName(bucketKeys))
+	if rawKey := keys.Get([]byte(keyID)); rawKey != nil {
+		var k APIKey
+		if err := json.Unmarshal(rawKey, &k); err != nil {
+			return fmt.Errorf("corrupt key record: %w", err)
+		}
+		applyKeyUsage(&k, units, consume, at)
+		rawUpdated, err := json.Marshal(&k)
 		if err != nil {
 			return err
 		}
-		if err := usage.Put([]byte(fmt.Sprintf("%020d", seq)), rawRec); err != nil {
+		return keys.Put([]byte(k.ID), rawUpdated)
+	}
+	return nil
+}
+
+// CommitJobCharge is atomic across the idempotency marker, quota ledger and key.
+func (s *boltStore) CommitJobCharge(marker string, charge jobCharge, rec *UsageRecord, keyID string, units int64, at time.Time) (jobCharge, bool, error) {
+	if err := validateJobCharge(marker, charge, rec, keyID, units); err != nil {
+		return jobCharge{}, false, err
+	}
+	oldSeq := rec.Seq
+	var result jobCharge
+	replayed := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		settings := tx.Bucket(boltBucketName(bucketSettings))
+		if raw := settings.Get([]byte(marker)); raw != nil {
+			if err := json.Unmarshal(raw, &result); err != nil {
+				return fmt.Errorf("corrupt job charge marker: %w", err)
+			}
+			if result.Fingerprint != charge.Fingerprint || result.KeyID != keyID || result.Units != units {
+				return errJobChargeConflict
+			}
+			replayed = true
+			return nil
+		}
+		rawKey := tx.Bucket(boltBucketName(bucketKeys)).Get([]byte(keyID))
+		if rawKey == nil {
+			return errJobChargeKeyUnavailable
+		}
+		var key APIKey
+		if err := json.Unmarshal(rawKey, &key); err != nil {
+			return fmt.Errorf("corrupt key record: %w", err)
+		}
+		if key.Status != KeyStatusActive || (key.ExpiresAt != nil && !at.Before(*key.ExpiresAt)) {
+			return errJobChargeKeyUnavailable
+		}
+		if units <= 0 || (key.DailyQuota > 0 && units > key.DailyQuota-usedTodayUnits(&key, at)) {
+			return errJobChargeQuotaExceeded
+		}
+		if err := s.recordUsageTx(tx, rec, keyID, units, true, at); err != nil {
 			return err
 		}
-
-		// S4-GAP 性能项(b): maintain the per-day count index in the SAME
-		// transaction, so aggregates never need a full-table scan.
-		if err := s.indexUsageLocked(tx, rec); err != nil {
+		data, err := json.Marshal(charge)
+		if err != nil {
 			return err
 		}
-
-		// Update the key counters in the same transaction.
-		keys := tx.Bucket(boltBucketName(bucketKeys))
-		if rawKey := keys.Get([]byte(keyID)); rawKey != nil {
-			var k APIKey
-			if err := json.Unmarshal(rawKey, &k); err != nil {
-				return fmt.Errorf("corrupt key record: %w", err)
-			}
-			applyKeyUsage(&k, units, consume, at)
-			rawUpdated, err := json.Marshal(&k)
-			if err != nil {
-				return err
-			}
-			return keys.Put([]byte(k.ID), rawUpdated)
+		if err := settings.Put([]byte(marker), data); err != nil {
+			return err
 		}
+		result = charge
 		return nil
 	})
+	if err != nil {
+		rec.Seq = oldSeq
+	}
+	return result, replayed, err
 }
 
 // ---------------------------------------------------------------------------
@@ -679,6 +737,90 @@ func (s *boltStore) PutSettings(values map[string][]byte) error {
 		}
 		return nil
 	})
+}
+
+func (s *boltStore) ListNotices(userID string, limit int) ([]Notice, error) {
+	rows := []Notice{}
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(boltBucketName(bucketNotices)).ForEach(func(_, raw []byte) error {
+			var n Notice
+			if err := json.Unmarshal(raw, &n); err != nil {
+				return err
+			}
+			if userID == "" || n.UserID == userID {
+				rows = append(rows, n)
+			}
+			return nil
+		})
+	})
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, err
+}
+func (s *boltStore) PutNotice(n *Notice) error {
+	raw, err := json.Marshal(n)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(boltBucketName(bucketNotices))
+		if err := b.Put([]byte(n.ID), raw); err != nil {
+			return err
+		}
+		if b.Stats().KeyN <= 1000 {
+			return nil
+		}
+		rows := make([]Notice, 0, b.Stats().KeyN)
+		if err := b.ForEach(func(_, value []byte) error {
+			var row Notice
+			if err := json.Unmarshal(value, &row); err != nil {
+				return err
+			}
+			rows = append(rows, row)
+			return nil
+		}); err != nil {
+			return err
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
+		for _, row := range rows[:len(rows)-1000] {
+			if err := b.Delete([]byte(row.ID)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+func (s *boltStore) AcknowledgeNotice(userID, id string, at time.Time) (bool, error) {
+	ok := false
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(boltBucketName(bucketNotices))
+		raw := b.Get([]byte(id))
+		if raw == nil {
+			return nil
+		}
+		var n Notice
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return err
+		}
+		if userID != "" && n.UserID != userID {
+			return nil
+		}
+		if n.AcknowledgedAt == nil {
+			n.AcknowledgedAt = &at
+			payload, err := json.Marshal(n)
+			if err != nil {
+				return err
+			}
+			if err = b.Put([]byte(id), payload); err != nil {
+				return err
+			}
+		}
+		ok = true
+		return nil
+	})
+	return ok, err
 }
 
 func (s *boltStore) Close() error {

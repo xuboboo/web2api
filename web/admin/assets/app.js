@@ -40,6 +40,7 @@
     '#/engines': { title: '引擎状态', desc: '四大搜索引擎的运行、冷却与熔断状态,支持强制恢复与强制冷却。' },
     '#/keys': { title: 'API 密钥', desc: '公网 API 鉴权密钥的创建、配额与启停管理。' },
     '#/usage': { title: '使用日志', desc: '每次收录查询与搜索调用的明细记录,支持按密钥筛选。' },
+    '#/jobs': { title: '批量任务', desc: '提交批次、查看进度与结果，并管理定时巡检计划。' },
     '#/playground': { title: '在线调试', desc: '在面板内发起一次真实收录查询,结果与 POST /v1/index/check 完全一致。' },
     '#/agents': { title: 'Agent 集成', desc: 'MCP 端点与 Claude / Dify / n8n / LangChain 的接入配置。' },
     '#/docs': { title: 'API 文档', desc: '全部 REST 端点、MCP 工具与错误码的完整说明。' },
@@ -48,7 +49,7 @@
     '#/logs': { title: '系统日志', desc: '服务与审计日志检索、日志配置查看及过期日志清理。' },
     '#/blacklist': { title: '黑名单', desc: '按 IP / CIDR 屏蔽来源,支持到期时间与命中统计。' }
   };
-  var ROUTE_RE = /^#\/(overview|engines|keys|usage|playground|agents|docs|settings|users|logs|blacklist)$/;
+  var ROUTE_RE = /^#\/(overview|engines|keys|usage|jobs|playground|agents|docs|settings|users|logs|blacklist)$/;
 
   var ENGINE_LABEL = { baidu: '百度', sogou: '搜狗', so360: '360 搜索', bing: '必应' };
   var ENGINE_ORDER = ['baidu', 'sogou', 'so360', 'bing'];
@@ -665,6 +666,7 @@
   function api(method, path, body, opts) {
     opts = opts || {};
     var headers = { 'Accept': 'application/json' };
+    Object.keys(opts.headers || {}).forEach(function (name) { headers[name] = opts.headers[name]; });
     if (body !== undefined && body !== null) headers['Content-Type'] = 'application/json';
     var token = getToken();
     if (token) headers['Authorization'] = 'Bearer ' + token;
@@ -926,6 +928,7 @@
     else if (hash === '#/engines') pageEngines(root, actions);
     else if (hash === '#/keys') pageKeys(root, actions);
     else if (hash === '#/usage') pageUsage(root, actions);
+    else if (hash === '#/jobs') pageJobs(root);
     else if (hash === '#/users') pageUsers(root, actions);
     else if (hash === '#/logs') pageLogs(root, actions);
     else if (hash === '#/blacklist') pageBlacklist(root, actions);
@@ -942,6 +945,267 @@
     root.classList.remove('page-anim');
     void root.offsetWidth;
     root.classList.add('page-anim');
+  }
+
+  function pageJobs(root) {
+    var statuses = { billing_pending: '等待计费确认', queued: '排队中', running: '运行中', waiting: '等待中', done: '已完成', cancelled: '已取消', failed: '失败' };
+    var card = el('section', { class: 'card' });
+    var detail = el('section', { class: 'card' });
+    var selected = '';
+    var offset = 0;
+    var pageSize = 50;
+    var requestSeq = 0;
+    var detailSeq = 0;
+    var keys = [];
+    var scheduleKey = null;
+    var pending = null;
+    var keySelect = el('select', { class: 'input', 'aria-label': '计费密钥' });
+    var urlsInput = el('textarea', { class: 'input', rows: '7', placeholder: '每行一个 http/https URL，最多 5000 条', 'aria-label': '批量 URL' });
+    var enginesInput = el('select', { class: 'input', 'aria-label': '查询引擎' },
+      el('option', { value: 'baidu', text: '百度' }), el('option', { value: 'bing', text: 'Bing' }), el('option', { value: 'baidu,bing', text: '百度 + Bing' }));
+    var preview = el('p', { role: 'status' });
+    var submit = el('button', { class: 'btn btn-primary', type: 'button', text: '提交批量任务', onclick: submitJob });
+    var csv = el('input', { type: 'file', accept: '.csv,text/csv', 'aria-label': '导入 CSV' });
+    csv.addEventListener('change', function () {
+      var file = csv.files[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { toast('CSV 请控制在 2 MB 内', 'error'); return; }
+      file.text().then(function (text) {
+        // RFC 4180 quoted fields, including escaped quotes and embedded newlines.
+        var rows = [], row = [], field = '', quoted = false;
+        text = text.replace(/^\uFEFF/, '');
+        for (var i = 0; i < text.length; i++) {
+          var c = text[i];
+          if (c === '"') { if (quoted && text[i + 1] === '"') { field += '"'; i++; } else quoted = !quoted; }
+          else if (!quoted && (c === ',' || c === '\n' || c === '\r')) {
+            row.push(field); field = '';
+            if (c !== ',') { rows.push(row); row = []; if (c === '\r' && text[i + 1] === '\n') i++; }
+          } else field += c;
+        }
+        if (quoted) throw new Error('CSV 引号未闭合');
+        if (field || row.length) { row.push(field); rows.push(row); }
+        var column = rows.length ? rows[0].findIndex(function (v) { return /^(url|网址|链接)$/i.test(v.trim()); }) : -1;
+        var values = (column >= 0 ? rows.slice(1) : rows).filter(function (r) { return r.some(function (v) { return v.trim(); }); }).map(function (r) { return (r[column >= 0 ? column : 0] || '').trim(); });
+        if (values.length > 5000) throw new Error('CSV 超过 5000 条');
+        urlsInput.value = values.join('\n'); updatePreview();
+      }).catch(function (err) { toast(err.message, 'error'); });
+    });
+    [urlsInput, keySelect, enginesInput].forEach(function (node) { node.addEventListener('input', updatePreview); });
+    root.appendChild(el('section', { class: 'card' }, el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '创建批量任务' })),
+      el('div', { class: 'card-body' }, el('label', null, '计费密钥', keySelect), el('label', null, '查询引擎', enginesInput),
+        el('label', null, 'URL 列表', urlsInput), el('label', null, 'CSV 导入（URL 列或首列）', csv), preview, submit)));
+    api('GET', '/api/keys').then(function (data) {
+      if (!alive()) return;
+      keys = Array.isArray(data) ? data : (data.items || data.keys || []);
+      keys.filter(isKeyUsableForSubmission).forEach(function (k) { keySelect.appendChild(el('option', { value: k.id, text: k.name + ' · ' + (k.daily_quota ? '日额度 ' + k.daily_quota : '不限额度') })); });
+      populateScheduleKey();
+      updatePreview();
+    }).catch(function (err) { preview.textContent = err.message; submit.disabled = true; });
+
+    function isKeyUsableForSubmission(key) {
+      if (!key || key.status !== 'active') return false;
+      if (!key.expires_at) return true;
+      var expiry = new Date(key.expires_at).getTime();
+      return !isNaN(expiry) && expiry > Date.now();
+    }
+
+    function populateScheduleKey() {
+      if (!scheduleKey) return;
+      while (scheduleKey.firstChild) scheduleKey.removeChild(scheduleKey.firstChild);
+      keys.filter(isKeyUsableForSubmission).forEach(function (k) { scheduleKey.appendChild(el('option', { value: k.id, text: k.name })); });
+    }
+
+    function validatedInput() {
+      var lines = urlsInput.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+      var seen = new Set(), valid = [], invalid = [], duplicates = 0;
+      lines.forEach(function (s, i) {
+        try {
+          var u = new URL(s);
+          if (!/^https?:$/.test(u.protocol) || !u.hostname || u.username || u.password) throw new Error();
+          if (seen.has(s)) duplicates++; else { seen.add(s); valid.push(s); }
+        } catch (_) { invalid.push(i + 1); }
+      });
+      return { urls: valid, invalid: invalid, duplicates: duplicates, count: lines.length, engines: enginesInput.value.split(',') };
+    }
+    function updatePreview() {
+      var v = validatedInput();
+      var units = v.urls.length * v.engines.length;
+      preview.textContent = '有效 ' + v.urls.length + ' 条，重复 ' + v.duplicates + ' 条（提交时去重），预计 ' + units + ' 查询单元。' +
+        (v.invalid.length ? '无效行：' + v.invalid.slice(0, 12).join('、') : '') + (v.count > 5000 ? '超过 5000 条上限。' : '');
+      submit.disabled = !keySelect.value || !v.urls.length || v.invalid.length > 0 || v.count > 5000;
+    }
+    function submitJob() {
+      var v = validatedInput();
+      if (!keySelect.value || !v.urls.length || v.invalid.length || v.count > 5000) return;
+      var payload = { key_id: keySelect.value, urls: v.urls, engines: v.engines };
+      var signature = JSON.stringify(payload);
+      if (!pending || pending.signature !== signature) pending = { signature: signature, key: crypto.randomUUID() };
+      submit.disabled = true;
+      api('POST', '/api/index/check/jobs', payload, { headers: { 'Idempotency-Key': pending.key } }).then(function (data) {
+        if (!alive()) return;
+        pending = null; selected = data.job_id; offset = 0;
+        toast('任务已提交', 'success'); loadJobs(); loadDetail();
+      }).catch(function (err) { if (alive()) toast(err.message + '；相同参数再次提交将复用幂等键', 'error'); })
+        .finally(function () { if (alive()) updatePreview(); });
+    }
+    var refresh = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '刷新', onclick: loadJobs });
+    root.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '任务列表' }), refresh));
+    root.appendChild(card);
+    root.appendChild(detail);
+
+    var scheduleCard = el('section', { class: 'card' });
+    root.appendChild(scheduleCard);
+    loadSchedules();
+
+    function loadSchedules() {
+      api('GET', '/api/index/check/schedules').then(function (data) {
+        if (!alive()) return;
+        scheduleCard.innerHTML = '';
+        var items = data && Array.isArray(data.items) ? data.items : [];
+        var scheduleName = el('input', { class: 'input', maxlength: '100', placeholder: '计划名称', 'aria-label': '计划名称' });
+        var scheduleURLs = el('textarea', { class: 'input', rows: '3', placeholder: '每行一个 URL', 'aria-label': '计划 URL' });
+        var scheduleFrequency = el('select', { class: 'input', 'aria-label': '巡检周期' }, el('option', { value: 'daily', text: '每日' }), el('option', { value: 'weekly', text: '每周' }));
+        var createSchedule = el('button', { class: 'btn btn-primary btn-sm', type: 'button', text: '创建暂停计划', onclick: function () {
+          var urls = scheduleURLs.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+          var selectedScheduleKey = scheduleKey ? scheduleKey.value : '';
+          if (!scheduleName.value.trim() || !selectedScheduleKey || !urls.length || urls.length > 5000) { toast('请填写计划名、可用计费密钥和 1–5000 个 URL', 'error'); return; }
+          api('POST', '/api/index/check/schedules', { name: scheduleName.value.trim(), key_id: selectedScheduleKey, urls: urls, engines: enginesInput.value.split(','), frequency: scheduleFrequency.value }).then(loadSchedules).catch(function (e) { toast(e.message, 'error'); });
+        } });
+        scheduleCard.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '定时巡检' })));
+        scheduleCard.appendChild(el('div', { class: 'card-body' }, el('label', null, '计划名称', scheduleName), el('label', null, '计费密钥', keySelect.cloneNode(true)), el('label', null, '周期', scheduleFrequency), el('label', null, 'URL 列表', scheduleURLs), createSchedule));
+        scheduleKey = scheduleCard.querySelector('select[aria-label="计费密钥"]');
+        populateScheduleKey();
+        var rows = items.map(function (item) {
+          var toggle = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: item.enabled ? '暂停' : '启用', onclick: function () {
+            api('PATCH', '/api/index/check/schedules/' + encodeURIComponent(item.id), { enabled: !item.enabled }).then(loadSchedules).catch(function (e) { toast(e.message, 'error'); });
+          } });
+          var remove = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '删除', onclick: function () {
+            confirmDialog({ title: '删除计划', message: '确定删除该定时巡检计划吗？', confirmText: '删除' }).then(function (yes) {
+              if (yes) api('DELETE', '/api/index/check/schedules/' + encodeURIComponent(item.id)).then(loadSchedules).catch(function (e) { toast(e.message, 'error'); });
+            });
+          } });
+          return el('tr', null, el('td', { text: item.name }), el('td', { text: item.frequency }), el('td', { text: item.enabled ? '运行中' : '已暂停' }), el('td', { text: fmtDateTime(item.next_at) }), el('td', { text: item.last_error || item.last_job_id || '—' }), el('td', null, toggle, remove));
+        });
+        scheduleCard.appendChild(rows.length ? el('div', { class: 'table-scroll' }, el('table', { class: 'table' }, el('thead', null, el('tr', null, ['计划', '周期', '状态', '下次运行', '最近结果', '操作'].map(function (x) { return el('th', { text: x }); }))), el('tbody', null, rows))) : emptyNode('暂无定时计划', '创建计划后仍需手动启用。'));
+      }).catch(function (e) { if (alive()) toast(e.message, 'error'); });
+    }
+
+    function alive() { return root.isConnected && location.hash === '#/jobs'; }
+    function loadJobs() {
+      var seq = ++requestSeq;
+      api('GET', '/api/index/check/jobs?limit=500').then(function (data) {
+        if (!alive() || seq !== requestSeq) return;
+        card.innerHTML = '';
+        var jobs = data && Array.isArray(data.jobs) ? data.jobs : [];
+        if (!jobs.length) {
+          card.appendChild(emptyNode('暂无任务', '任务提交后可在这里查看进度和结果。'));
+          return;
+        }
+        var body = el('tbody');
+        jobs.forEach(function (job) {
+          var button = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '查看', onclick: function () {
+            selected = String(job.job_id || '');
+            offset = 0;
+            loadDetail();
+          } });
+          body.appendChild(el('tr', null,
+            el('td', { class: 'td-mono', text: job.job_id || '—' }),
+            el('td', { text: statuses[job.status] || job.status || '—' }),
+            el('td', { text: String(job.completed || 0) + ' / ' + String(job.total || 0) }),
+            el('td', { text: String(job.failed || 0) }),
+            el('td', { text: fmtDateTime(job.created_at) }),
+            el('td', null, button)));
+        });
+        card.appendChild(el('div', { class: 'table-scroll' }, el('table', { class: 'table' },
+          el('thead', null, el('tr', null, ['任务', '状态', '进度', '失败', '创建时间', '操作'].map(function (label) { return el('th', { text: label }); }))), body)));
+      }).catch(function (err) {
+        if (!alive() || seq !== requestSeq) return;
+        card.innerHTML = '';
+        card.appendChild(errorNode(err, loadJobs));
+      });
+    }
+
+    function downloadCSV(id) {
+      fetch(API_BASE + '/api/index/check/jobs/' + encodeURIComponent(id) + '/results?format=csv', {
+        credentials: 'same-origin', headers: { 'Authorization': 'Bearer ' + getToken() }
+      }).then(function (res) {
+        if (res.status === 401) onUnauthorized();
+        if (!res.ok) throw new Error('下载失败(HTTP ' + res.status + ')');
+        return res.blob();
+      }).then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var a = el('a', { href: url, download: id + '.csv' });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      }).catch(function (err) { toast(err.message, 'error'); });
+    }
+
+    function loadDetail() {
+      var id = selected;
+      if (!id) return;
+      var seq = ++detailSeq;
+      var pageOffset = offset;
+      var path = '/api/index/check/jobs/' + encodeURIComponent(id);
+      detail.innerHTML = '';
+      detail.appendChild(loadingNode());
+      Promise.all([api('GET', path), api('GET', path + '/results?offset=' + pageOffset + '&limit=' + pageSize)]).then(function (data) {
+        if (!alive() || selected !== id || seq !== detailSeq) return;
+        var job = data[0] || {};
+        var rows = data[1] && Array.isArray(data[1].results) ? data[1].results : [];
+        detail.innerHTML = '';
+        var actions = [el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '下载 CSV', onclick: function () { downloadCSV(id); } })];
+        if (Number(job.failed || 0) > 0 && ['queued','running','waiting','billing_pending'].indexOf(job.status) === -1) {
+          actions.push(el('button',{class:'btn btn-ghost btn-sm',type:'button',text:'重跑失败项',onclick:function(){confirmDialog({title:'重跑失败项',message:'将为原任务中至少一个引擎返回错误的 URL 创建新任务，并按新任务用量计费。',confirmText:'重跑'}).then(function(yes){if(!yes)return;api('POST','/api/index/check/jobs/'+encodeURIComponent(id)+'/retry',{}, {headers:{'Idempotency-Key':crypto.randomUUID()}}).then(function(retryJob){toast('失败项已创建新任务 '+(retryJob.job_id||''),'success');loadJobs();}).catch(function(e){toast(e.message,'error');});});}}));
+        }
+        if (['queued', 'running', 'waiting'].indexOf(job.status) !== -1) {
+          actions.push(el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '取消任务', onclick: function () {
+            confirmDialog({ title: '取消任务', message: '已完成的结果会保留。确定取消剩余任务吗？', confirmText: '取消任务' }).then(function (yes) {
+              if (!yes) return;
+              api('DELETE', path).then(function () { toast('任务已取消', 'success'); loadJobs(); loadDetail(); }).catch(function (err) { toast(err.message, 'error'); });
+            });
+          } }));
+        }
+        detail.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '任务详情' }), el('div', { class: 'row-actions' }, actions)));
+        detail.appendChild(el('div', { class: 'card-body' },
+          el('p', { text: id + ' · ' + (statuses[job.status] || job.status || '—') + ' · ' + (job.completed || 0) + ' / ' + (job.total || 0) }),
+          job.last_error ? el('p', { text: '原因：' + job.last_error }) : null,
+          job.wait_seconds ? el('p', { text: '预计等待 ' + job.wait_seconds + ' 秒' }) : null));
+        if (!rows.length) {
+          detail.appendChild(emptyNode('暂无结果', '任务执行后可在这里查看。'));
+          return;
+        }
+        var tbody = el('tbody');
+        rows.forEach(function (row) {
+          var outcomes = Object.keys(row.engines || {}).map(function (name) {
+            var result = row.engines[name] || {};
+            var value = result.error ? ('失败：' + (result.error.code || '未知错误')) : (result.indexed ? '已收录' : '未命中');
+            return (ENGINE_LABEL[name] || name) + '：' + value;
+          }).join(' · ');
+          tbody.appendChild(el('tr', null, el('td', { text: row.url || '—' }), el('td', { text: outcomes || '—' })));
+        });
+        detail.appendChild(el('div', { class: 'table-scroll' }, el('table', { class: 'table' },
+          el('thead', null, el('tr', null, el('th', { text: 'URL' }), el('th', { text: '引擎结果' }))), tbody)));
+        var previous = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '上一页', onclick: function () { offset = Math.max(0, offset - pageSize); loadDetail(); } });
+        var next = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '下一页', onclick: function () { offset += rows.length; loadDetail(); } });
+        previous.disabled = offset === 0;
+        next.disabled = rows.length < pageSize;
+        detail.appendChild(el('div', { class: 'card-body row-actions' }, previous, el('span', { text: '从第 ' + (offset + 1) + ' 条开始' }), next));
+      }).catch(function (err) {
+        if (!alive() || selected !== id || seq !== detailSeq) return;
+        detail.innerHTML = '';
+        detail.appendChild(errorNode(err, loadDetail));
+      });
+    }
+    loadJobs();
+    updatePreview();
+    // A route-scoped timeout stops on navigation and skips hidden tabs.
+    setTimeout(function poll() {
+      if (!alive()) return;
+      if (!document.hidden) { loadJobs(); if (selected) loadDetail(); }
+      setTimeout(poll, 15000);
+    }, 15000);
   }
 
   /* ================= 通用节点 ================= */
@@ -1011,6 +1275,16 @@
         var series = extractTimeseries(res[1]);
         var engines = normalizeEngines(res[2]);
         wrap.appendChild(buildStatBand(stats));
+        var resource = stats.resources || {};
+        var memHigh = Number(resource.heap_sys_mb || 0) >= 512;
+        var diskPct = Number(resource.disk_used_percent || 0);
+        var resourceCard = el('section', { class: 'card' },
+          el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '资源与容量' })),
+          el('div', { class: 'card-body' },
+            el('p', { text: 'Go 堆 ' + fmtNumber(resource.heap_mb || 0) + ' MB 已分配 / ' + fmtNumber(resource.heap_sys_mb || 0) + ' MB 系统内存，' + fmtNumber(resource.heap_objects || 0) + ' 个对象；协程 ' + fmtNumber(resource.goroutines || 0) }),
+            el('p', { text: '数据盘已用 ' + diskPct + '%，剩余 ' + fmtNumber(resource.disk_free_mb || 0) + ' MB / ' + fmtNumber(resource.disk_total_mb || 0) + ' MB' }),
+            (memHigh || diskPct >= 85) ? el('p', { class: 'text-danger', role: 'alert', text: (memHigh ? 'Go 堆系统内存达到 512 MB。' : '') + (diskPct >= 85 ? '数据盘使用率达到 85%。' : '') }) : el('p', { text: '资源状态正常（堆系统内存阈值 512 MB，磁盘使用率阈值 85%）。' })));
+        wrap.appendChild(resourceCard);
         var grid = el('div', { class: 'grid-2' },
           buildChartCard(series),
           buildEngineCard(engines));
@@ -5000,12 +5274,20 @@ async def run():
     });
   }
 
+  function bindNotices() {
+    var btn=$('#btn-notices'); if(!btn)return;
+    function refresh(){api('GET','/api/notices').then(function(data){var items=data&&Array.isArray(data.items)?data.items:[];var unread=items.filter(function(n){return !n.acknowledged_at;});var count=$('#notice-count');if(count)count.textContent=String(unread.length);btn.title=unread.map(function(n){return n.title+': '+n.body;}).join('\n')||'暂无未读通知';}).catch(function(){});}
+    btn.addEventListener('click',function(){api('GET','/api/notices').then(function(data){var items=data.items||[];if(!items.length){toast('暂无站内通知','info');return;}confirmDialog({title:'站内通知',message:items.slice(0,8).map(function(n){return (n.acknowledged_at?'✓ ':'• ')+n.title+'：'+n.body;}).join('\n'),confirmText:'全部确认'}).then(function(ok){if(ok){Promise.all(items.filter(function(n){return !n.acknowledged_at;}).map(function(n){return api('POST','/api/notices/'+encodeURIComponent(n.id)+'/ack');})).then(refresh).catch(function(e){toast(e.message,'error');});}});}).catch(function(e){toast(e.message,'error');});});
+    refresh();setInterval(refresh,60000);
+  }
+
   function boot() {
     initTheme();
     bindThemeButtons();
     bindSidebarToggle();
     bindLogin();
     bindLogout();
+    bindNotices();
     bindSearchHotkey();
     window.addEventListener('hashchange', renderRoute);
 

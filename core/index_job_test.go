@@ -470,6 +470,51 @@ func TestIndexJobIsScopedToOwner(t *testing.T) {
 	}
 }
 
+func TestConsoleJobOwnershipIsIndependentOfBillingKey(t *testing.T) {
+	eng := &indexEngineMock{name: "baidu", initialized: true}
+	m := NewIndexJobManager(t.TempDir(), []SearchEngine{eng}, nil, IndexJobOptions{})
+	ctx := WithJobUser(WithJobOwner(context.Background(), "key_a"), "user_a")
+	job, apiErr := m.Submit(ctx, []string{"https://example.test/a"}, []string{"baidu"})
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	if job.OwnerKeyID != "key_a" || job.OwnerUserID != "user_a" {
+		t.Fatalf("owners not persisted: %+v", job)
+	}
+	if _, ok := m.Get(job.ID, "key_a"); ok {
+		t.Fatal("billing key must not expose console-owned job")
+	}
+	if _, ok := m.GetForUser(job.ID, "user_b", false); ok {
+		t.Fatal("other user can read job")
+	}
+	if _, ok := m.GetForUser(job.ID, "", false); ok {
+		t.Fatal("empty user can read job")
+	}
+	if _, ok := m.GetForUser(job.ID, "user_a", false); !ok {
+		t.Fatal("submitting user cannot read job")
+	}
+	if _, ok := m.GetForUser(job.ID, "admin", true); !ok {
+		t.Fatal("admin cannot read job")
+	}
+	if got := m.ListForUser("user_b", false, 10); len(got) != 0 {
+		t.Fatalf("other user listed %d jobs", len(got))
+	}
+	if cancelled, err := m.CancelForUser(job.ID, "user_b", false); err != nil || cancelled {
+		t.Fatalf("other user cancelled job: cancelled=%v err=%v", cancelled, err)
+	}
+	if cancelled, err := m.CancelForUser(job.ID, "user_a", false); err != nil || !cancelled {
+		t.Fatalf("owner cannot cancel job: cancelled=%v err=%v", cancelled, err)
+	}
+	// Eviction and process restart must preserve the same isolation.
+	reopened := NewIndexJobManager(m.store.Dir(), []SearchEngine{eng}, nil, IndexJobOptions{})
+	if _, ok := reopened.GetForUser(job.ID, "user_a", false); !ok {
+		t.Fatal("stored job lost its console owner")
+	}
+	if _, ok := reopened.Get(job.ID, "key_a"); ok {
+		t.Fatal("stored console job became visible to billing key")
+	}
+}
+
 // A finished job must stop holding its submitted URL list in memory, while
 // staying readable (the record is on disk).
 func TestIndexJobReleasesMemoryWhenDone(t *testing.T) {
@@ -523,6 +568,91 @@ func TestIndexJobProgressChunkDefaultsToPerURL(t *testing.T) {
 	}
 }
 
+func TestIndexJobProgressCountsFailedRowsOnce(t *testing.T) {
+	job := IndexJob{Total: 10, Completed: 4, Failed: 2}
+	if got := job.Progress(); got != 0.4 {
+		t.Fatalf("progress = %v, want 0.4", got)
+	}
+	if got := job.ETA(10 * time.Second); got != 60*time.Second {
+		t.Fatalf("ETA = %v, want 60s", got)
+	}
+}
+
+func TestPreparedBillingJobWaitsAcrossRestart(t *testing.T) {
+	eng := &indexEngineMock{
+		name: "baidu", initialized: true,
+		serpFn: func(_ context.Context, target string, _ Query) ([]SearchResult, error) {
+			return []SearchResult{{Rank: 1, URL: target, Title: "self"}}, nil
+		},
+	}
+	dir := t.TempDir()
+	rs := NewResilientSearcher([]SearchEngine{eng}, DefaultResilientConfig())
+	m := NewIndexJobManager(dir, []SearchEngine{eng}, rs, IndexJobOptions{})
+	m.Start(context.Background())
+	ctx := WithJobUser(WithJobOwner(context.Background(), "key_a"), "alice")
+	job, apiErr := m.PrepareBilled(ctx, []string{"https://example.test/a"}, []string{"baidu"}, "job_staged", "marker", "fingerprint", 1)
+	if apiErr != nil || job.Status != IndexJobBillingPending {
+		t.Fatalf("prepare: job=%+v error=%v", job, apiErr)
+	}
+	m.Stop()
+	if len(eng.calls()) != 0 {
+		t.Fatal("unbilled task ran before restart")
+	}
+	reopened := NewIndexJobManager(dir, []SearchEngine{eng}, rs, IndexJobOptions{})
+	reopened.Start(context.Background())
+	defer reopened.Stop()
+	retry, apiErr := reopened.PrepareBilled(ctx, []string{"https://example.test/a"}, []string{"baidu"}, "job_staged", "marker", "fingerprint", 1)
+	if apiErr != nil || retry.ID != job.ID || retry.Status != IndexJobBillingPending {
+		t.Fatalf("retry: job=%+v error=%v", retry, apiErr)
+	}
+	if _, apiErr = reopened.PrepareBilled(ctx, []string{"https://example.test/b"}, []string{"baidu"}, "job_staged", "marker", "different", 1); apiErr == nil || apiErr.HTTPStatus != 409 {
+		t.Fatalf("conflicting request error=%v", apiErr)
+	}
+	if len(eng.calls()) != 0 {
+		t.Fatal("unbilled task ran during recovery")
+	}
+	pending := reopened.PendingBilledJobs()
+	if len(pending) != 1 || pending[0].ID != job.ID || pending[0].URLs != nil {
+		t.Fatalf("pending reconciliation records=%+v", pending)
+	}
+	if err := reopened.DiscardPrepared(job.ID, "marker", "wrong"); err == nil {
+		t.Fatal("discard accepted mismatched fingerprint")
+	}
+	if _, err := reopened.ActivateBilled(job.ID, "marker", "fingerprint"); err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, reopened, job.ID, 5*time.Second)
+	if got := len(eng.calls()); got != 1 {
+		t.Fatalf("engine calls=%d, want 1", got)
+	}
+	if _, err := reopened.ActivateBilled(job.ID, "marker", "fingerprint"); err != nil {
+		t.Fatalf("repeated activation: %v", err)
+	}
+	if err := reopened.DiscardPrepared(job.ID, "marker", "fingerprint"); err == nil {
+		t.Fatal("discard removed an activated job")
+	}
+}
+
+func TestPreparedBillingReservesQueueCapacity(t *testing.T) {
+	eng := &indexEngineMock{name: "baidu", initialized: true}
+	m := NewIndexJobManager(t.TempDir(), []SearchEngine{eng}, nil, IndexJobOptions{})
+	m.queue = make(chan string, 1)
+	ctx := WithJobOwner(context.Background(), "key")
+	_, apiErr := m.PrepareBilled(ctx, []string{"https://example.test/a"}, []string{"baidu"}, "job_a", "marker", "hash", 1)
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	if _, apiErr = m.Submit(ctx, []string{"https://example.test/b"}, []string{"baidu"}); apiErr == nil || apiErr.ErrorCode != "job_queue_full" {
+		t.Fatalf("preparation failed to reserve capacity: %v", apiErr)
+	}
+	if err := m.DiscardPrepared("job_a", "marker", "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if _, apiErr = m.Submit(ctx, []string{"https://example.test/b"}, []string{"baidu"}); apiErr != nil {
+		t.Fatalf("discard failed to release capacity: %v", apiErr)
+	}
+}
+
 func TestIndexJobStoreCRUD(t *testing.T) {
 	dir := t.TempDir()
 	store := NewIndexJobStore(dir)
@@ -539,6 +669,13 @@ func TestIndexJobStoreCRUD(t *testing.T) {
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list: %v len=%d", err, len(list))
 	}
+	summaries, err := store.ListMetaSummaries()
+	if err != nil || len(summaries) != 1 || summaries[0].URLs != nil {
+		t.Fatalf("summaries: %v %+v", err, summaries)
+	}
+	if len(list[0].URLs) != 1 {
+		t.Fatal("full metadata listing no longer retains URLs")
+	}
 	if err := store.Delete(job.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -548,5 +685,86 @@ func TestIndexJobStoreCRUD(t *testing.T) {
 	// Path traversal attempts must not escape the store root.
 	if _, err := store.LoadMeta("../../etc/passwd"); err == nil {
 		t.Fatal("sanitized id still resolved")
+	}
+}
+
+func TestIndexJobStoreResultsPage(t *testing.T) {
+	store := NewIndexJobStore(t.TempDir())
+	for _, url := range []string{"https://example.test/1", "https://example.test/2", "https://example.test/3"} {
+		if err := store.AppendResult("job_page", IndexCheckURLResult{URL: url}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := store.LoadResultsPage("job_page", 1, 1)
+	if err != nil || len(rows) != 1 || rows[0].URL != "https://example.test/2" {
+		t.Fatalf("page: rows=%+v err=%v", rows, err)
+	}
+	rows, err = store.LoadResultsPage("job_page", 3, 1)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("past end: rows=%+v err=%v", rows, err)
+	}
+	rows, err = store.LoadResultsPage("job_page", 1, 0)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("unbounded: rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestIndexJobCSVSnapshot(t *testing.T) {
+	store := NewIndexJobStore(t.TempDir())
+	first := IndexCheckURLResult{URL: "=https://example.test/first"}
+	second := IndexCheckURLResult{URL: "https://example.test/second"}
+	if err := store.AppendResult("job_csv", first); err != nil {
+		t.Fatal(err)
+	}
+	f, size, err := store.OpenResultsSnapshot("job_csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := store.AppendResult("job_csv", second); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := StreamJobCSV(&out, f, size, []string{"baidu"}, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	want := string(WriteCSV([]IndexCheckURLResult{first}, []string{"baidu"}))
+	if out.String() != want {
+		t.Fatalf("snapshot CSV = %q, want %q", out.String(), want)
+	}
+}
+
+func TestIndexJobRetentionProtectsActiveAndUnfinishedJobs(t *testing.T) {
+	m := NewIndexJobManager(t.TempDir(), nil, nil, IndexJobOptions{RetentionDays: 30})
+	now := time.Now().UTC()
+	old := now.AddDate(0, 0, -31)
+	jobs := []IndexJob{
+		{ID: "expired", Status: IndexJobDone, FinishedAt: &old},
+		{ID: "running", Status: IndexJobRunning, FinishedAt: &old},
+		{ID: "recent", Status: IndexJobDone, FinishedAt: &now},
+		{ID: "no_finish", Status: IndexJobFailed},
+		{ID: "active_worker", Status: IndexJobCancelled, FinishedAt: &old},
+	}
+	for _, job := range jobs {
+		if err := m.store.SaveMeta(&job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.jobs["active_worker"] = &jobState{job: jobs[4], running: true}
+	count, size, err := m.RetentionPreview(30, now)
+	if err != nil || count != 1 || size <= 0 {
+		t.Fatalf("preview count=%d size=%d err=%v", count, size, err)
+	}
+	if _, err := m.store.LoadMeta("expired"); err != nil {
+		t.Fatalf("preview removed data: %v", err)
+	}
+	m.pruneExpired(now)
+	if _, err := m.store.LoadMeta("expired"); !os.IsNotExist(err) {
+		t.Fatalf("expired job still exists: %v", err)
+	}
+	for _, id := range []string{"running", "recent", "no_finish", "active_worker"} {
+		if _, err := m.store.LoadMeta(id); err != nil {
+			t.Fatalf("protected job %s: %v", id, err)
+		}
 	}
 }
