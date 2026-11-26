@@ -96,29 +96,28 @@ go test -p 1 -count=1 -timeout=900s -tags=integration ./...
 
 ## 2. 平台契约冒烟：`deploy/e2e.mjs`
 
-针对固定 `/web-tool` 前缀下整个平台的契约面，零依赖（Node 18+ 内置 fetch）。默认目标 `http://127.0.0.1:7000`（自动追加 `/web-tool`）；公网示例需显式传参。需要服务已在运行。
+需要 Node 18+ 和运行中的服务。脚本会自动追加 `/web-tool`。默认模式只读，检查 JSON 健康和就绪响应、官网文档入口、OpenAPI、`llms.txt` 和未鉴权调用的 401。适用于线上探测，也能识别将所有路径返回 HTML 的反代配置错误。
 
 ```bash
 node deploy/e2e.mjs http://127.0.0.1:7000
-# 或
-WEB2API_BASE_URL=http://127.0.0.1:7000 node deploy/e2e.mjs
-# 追加一次真实引擎收录判定（依赖引擎可用性,默认跳过）
-E2E_LIVE_INDEX_CHECK=1 node deploy/e2e.mjs
-# 人工环境跳过登录锁定测试(避免套件结束后 admin@本机IP 被锁 15 分钟)
-E2E_SKIP_LOCKOUT=1 node deploy/e2e.mjs
+# 使用临时数据卷并保留默认任务上限 5000。此模式会创建密钥、强制冷却、锁定管理员。
+# 独立实例启动时将 WEB2API_SECURITY_ADMIN_RATE_PER_IP 和同前缀的 ADMIN_RATE_PER_MINUTE 设为 300。
+E2E_ISOLATED=1 node deploy/e2e.mjs http://127.0.0.1:17000
+# 追加依赖真实引擎的配额、别名、查询和 Playground 检查。
+E2E_ISOLATED=1 E2E_LIVE_INDEX_CHECK=1 node deploy/e2e.mjs http://127.0.0.1:17000
 ```
 
 | 分组 | 覆盖内容 |
 | --- | --- |
-| `infra` | 根路径无路由（404，含 `/mcp` 只在 `/web-tool` 下）、`/web-tool/health` 引擎清单、`/web-tool/ready` `/stats`、官网 `/web-tool/` 与管理控制台 `/web-tool/console/` 及各自静态资源 |
+| `infra` | 根路径无路由（404，含 `/mcp` 只在 `/web-tool` 下）、`/health` 引擎清单、`/stats` 拒绝匿名调用、官网与控制台静态资源 |
 | `admin` | 登录成功/失败（401）、`/web-tool/api/me`、统计端点与 `/web-tool/api/engines` |
 | `keys` | 创建（`sk-w2a-` 格式、完整 key 仅一次）、列表字段、停用→401、重启用、删除→401 |
-| `public` | 401 信封、429 配额（`daily_quota=1` 第二次超额，含 `Retry-After` 头）、400 `EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM`、`/web-tool/v1/engines`、别名 `360`、（可选）真实收录判定 |
+| `public` | 401 信封、400 `EMPTY_QUERY/TOO_MANY_URLS/INVALID_PARAM`、`/web-tool/v1/engines`。实网模式追加 429 配额、别名 `360` 和真实收录判定 |
 | `agent` | MCP 握手链：未鉴权 401 → `initialize`（protocolVersion `2025-06-18`、serverInfo、`Mcp-Session-Id` 头）→ `notifications/initialized`（204）→ `tools/list`（6 工具 + inputSchema）→ `tools/call get_quota`；`/web-tool/openapi.yaml`（3.1 声明）与 `/web-tool/llms.txt` |
-| `stability` | 冷却状态机：`cooldown/force` → `/web-tool/api/engines` 显示 `cooldown/until/reason/consecutive_blocks` → 冷却引擎 search 与 `/web-tool/v1/index/check` 快速失败 503 `engine_cooldown` + `Retry-After` → `cooldown/reset` 恢复；`/web-tool/api/playground/check` 与 `/web-tool/v1/index/check` 同构 |
-| `security` | 登录连续失败锁定：失败达阈值（默认 5 次）后 429 `too_many_attempts` + `Retry-After`，锁定期内正确凭据同样 429。⚠ 该分组**最后执行**且会锁定 admin@<本机IP> 一个锁定窗口（默认 15 分钟）；`E2E_SKIP_LOCKOUT=1` 可跳过 |
+| `stability` | 强制冷却、引擎状态和 503 `engine_cooldown`、`Retry-After`、解除冷却。实网模式追加 Playground 检查 |
+| `security` | 连续错误凭据达到阈值后返回 429 `too_many_attempts` 和 `Retry-After`。随后正确凭据也返回 429。最后执行，默认锁定该账号 15 分钟，可用 `E2E_SKIP_LOCKOUT=1` 跳过 |
 
-退出码：存在契约失败时为 1，可直接接入 CI。报告写入 `deploy/e2e-results/platform-<时间戳>.json`。管理员凭据可用 `WEB2API_ADMIN_USER` / `WEB2API_ADMIN_PASSWORD` 覆盖（须与 config.yaml 一致）。
+契约失败时退出码为 1。报告写入 `deploy/e2e-results/platform-<时间戳>.json` 并标记运行模式。独立模式从 `WEB2API_ADMIN_USER` 和 `WEB2API_ADMIN_PASSWORD` 读取测试凭据，通过 HTTPS 或回环 HTTP 连接。
 
 ## 3. 低节流稳态观测：`deploy/steady-check.mjs`
 
@@ -130,6 +129,7 @@ STEADY_ENGINES=baidu,sogou node deploy/steady-check.mjs ...   # 自定义引擎�
 ```
 
 目标地址自动追加 `/web-tool` 前缀。输出逐次请求的状态与耗时，最后给出每引擎成功率；失败率 > 20% 时退出码为 1。
+默认部署启用数据面鉴权，先将测试密钥存入环境变量 `WEB2API_API_KEY`。携带密钥时使用 HTTPS 或回环 HTTP。
 
 ## 4. 运行建议
 

@@ -80,6 +80,7 @@ jobs:
             test -z "$(find /usr/src/app/data -mindepth 1 -print -quit)"
             test ! -e /usr/src/app/secret.key
             test ! -e /usr/src/app/web2api.db
+            test -s /usr/share/doc/web2api/LICENSE
           '
 
       - name: Run container health, security, and HTTPS smoke tests
@@ -101,6 +102,8 @@ jobs:
             --mount "source=$volume,target=/usr/src/app/data" \
             -p 127.0.0.1:17000:7000 \
             -e WEB2API_PLATFORM_ADMIN_PASSWORD="$smoke_password" \
+            -e WEB2API_SECURITY_ADMIN_RATE_PER_IP=300 \
+            -e WEB2API_SECURITY_ADMIN_RATE_PER_MINUTE=300 \
             web2api:audit-smoke serve
 
           for attempt in $(seq 1 30); do
@@ -111,6 +114,7 @@ jobs:
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = healthy
           curl --fail --silent --show-error http://127.0.0.1:17000/web-tool/health
+          docker exec "$name" /headless-shell/headless-shell --version
 
           inspect=$(docker inspect "$name")
           echo "$inspect" | jq -e '.[0].HostConfig.CapDrop | index("ALL") != null' >/dev/null
@@ -119,6 +123,8 @@ jobs:
           # The container must trust public certificates with the shipped
           # ca-certificates bundle; this exercises the final image's CA store.
           docker exec "$name" wget --quiet --tries=2 --spider https://example.com/
+
+          E2E_ISOLATED=1 WEB2API_ADMIN_PASSWORD="$smoke_password" node deploy/e2e.mjs http://127.0.0.1:17000
 
   # Publish on version tags (and manual dispatch from a tag ref).
   # No fork-secrets concern: this never runs for pull_request events.

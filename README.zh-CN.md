@@ -345,7 +345,7 @@ security:                 # 二期：控制平面加固
 go test ./...                                  # 单元测试（离线）
 go test -race -count=1 ./...                   # 竞态检测需 CGO；Windows 无本地 C 编译器时按 docs/TESTING.md 用
                                                # golang:1.26.11-bookworm + Chromium 运行库容器跑（已实测 11 包全绿，日志 qa/features-audit/race-final.log）
-node deploy/e2e.mjs https://radar.ydsdoa.cn      # 平台契约冒烟（含 MCP 握手、冷却恢复、openapi.yaml/llms.txt 断言）
+node deploy/e2e.mjs https://radar.ydsdoa.cn      # 公网只读检查（健康、文档、鉴权）
 node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000   # 引擎稳态观测
 ```
 
