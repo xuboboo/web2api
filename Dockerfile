@@ -12,8 +12,8 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w" -o /app/web2api .
 
-# `chromedp/headless-shell:stable` also works here
-FROM chromedp/headless-shell:stable@sha256:f7e7ac721b023cb8717f8108aef8b3e49995fb1e5a912f41e570c29e45d24961
+# Multi-architecture stable index verified 2026-11-26 (amd64 and arm64).
+FROM chromedp/headless-shell:stable@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
 
 WORKDIR /usr/src/app
 
@@ -27,6 +27,7 @@ RUN mkdir -p /usr/src/app/data \
   && chown chrome:chrome /usr/src/app /usr/src/app/data
 
 COPY --from=builder /app/web2api /usr/local/bin/web2api
+COPY LICENSE /usr/share/doc/web2api/LICENSE
 COPY --chown=chrome:chrome config.yaml ./config.yaml
 # Static panels served by the serve command: the marketing site at /web-tool/
 # (BasePath root) and the admin console at /web-tool/console/ (fixed sub-paths,

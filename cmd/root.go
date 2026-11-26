@@ -130,6 +130,10 @@ type IndexJobsConfig struct {
 	Chunk int `mapstructure:"chunk"`
 	// MaxUnitRetries retries a URL blocked by a transient engine condition.
 	MaxUnitRetries int `mapstructure:"max_unit_retries"`
+	// RetentionDays enables deletion of terminal jobs after this many days.
+	RetentionDays    int           `mapstructure:"retention_days"`
+	ScheduleEnabled  bool          `mapstructure:"schedule_enabled"`
+	ScheduleInterval time.Duration `mapstructure:"schedule_interval"`
 }
 
 type ResilienceConfig struct {
@@ -491,6 +495,8 @@ var knownConfigKeys = map[string]bool{
 	"index_jobs.enabled": true, "index_jobs.dir": true,
 	"index_jobs.max_urls": true, "index_jobs.chunk": true,
 	"index_jobs.max_unit_retries": true,
+	"index_jobs.retention_days":   true,
+	"index_jobs.schedule_enabled": true, "index_jobs.schedule_interval": true,
 
 	"resilience.max_retries": true, "resilience.allow_endpoint_fallback": true,
 	"circuit_breaker.failures": true, "circuit_breaker.recovery_seconds": true,
@@ -669,6 +675,9 @@ func setConfigDefaults(v *viper.Viper) {
 	v.SetDefault("index_jobs.max_urls", 5000)
 	v.SetDefault("index_jobs.chunk", 1)
 	v.SetDefault("index_jobs.max_unit_retries", 6)
+	v.SetDefault("index_jobs.retention_days", 0)
+	v.SetDefault("index_jobs.schedule_enabled", false)
+	v.SetDefault("index_jobs.schedule_interval", "1h")
 	// 收录查询的节奏与判定策略（见 docs/CONFIGURATION.md）：
 	// 标题探测消除 URL 短语漏判，Cookie 每 8 次轮换把验证码触发压到 ~1/130。
 	v.SetDefault("baidu.index_title_probe", true)

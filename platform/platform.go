@@ -58,8 +58,10 @@ type Platform struct {
 	// S4 rate-limit tables (B-02 per-key/unauth, B-05 per-IP admin).
 	ratelimits platformRateLimiters
 
-	quotaMu      sync.Mutex
-	pendingQuota map[string]int64
+	quotaMu         sync.Mutex
+	pendingQuota    map[string]int64
+	jobSubmissionMu sync.Mutex
+	scheduleMu      sync.Mutex
 
 	// Serializes session updates and revocations across store operations.
 	sessionMu sync.Mutex

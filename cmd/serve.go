@@ -227,6 +227,9 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		}
 		plat.SetSecurity(config.Security)
 		plat.SetVersion(version)
+		serv.SetIndexJobFinishedHook(func(job core.IndexJob) {
+			plat.NotifyScheduledJobFinished(job.ID, job.Status == core.IndexJobFailed || job.Failed > 0)
+		})
 		plat.SetAuditRotation(config.App.LogMaxMB, config.App.LogBackups)
 		plat.SetAuditRetention(config.App.LogRetentionDays)
 		if err := plat.SeedBlacklist(config.Security.Blacklist, "config"); err != nil {
@@ -238,6 +241,13 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		if err := enforceAdminPasswordSafety(plat); err != nil {
 			_ = plat.Close()
 			return nil, err
+		}
+		if err := plat.ReconcileBilledJobs(serv); err != nil {
+			_ = plat.Close()
+			return nil, fmt.Errorf("platform: reconcile billed jobs: %w", err)
+		}
+		if config.IndexJobs.ScheduleEnabled {
+			plat.StartScheduleRunner(context.Background(), config.IndexJobs.ScheduleInterval)
 		}
 		dataPlaneAuth.Store(plat)
 		// RegisterAdmin/RegisterPublic mount literal /api/* and /v1/* paths on
@@ -253,12 +263,15 @@ func mountPlatformAndPanel(serv *core.Server) (func() error, error) {
 		plat.RegisterPublic(root, serv.IndexCheckHandler)
 		// 批量收录任务(异步): >20 条走 job，同步契约不变。
 		if config.IndexJobs.Enabled {
-			plat.RegisterPublicJobs(root, platform.IndexJobHandlers{
+			jobHandlers := platform.IndexJobHandlers{
 				List:    serv.IndexJobListHandler,
 				Status:  serv.IndexJobStatusHandler,
 				Results: serv.IndexJobResultsHandler,
 				Cancel:  serv.IndexJobCancelHandler,
-			})
+				Retry:   serv.IndexJobRetryHandler,
+			}
+			plat.RegisterPublicJobs(root, jobHandlers)
+			plat.RegisterConsoleJobs(root, jobHandlers)
 		}
 		// Agent 平面(契约 C):POST /mcp + openapi.yaml + llms.txt,同样
 		// 根植于 BasePath。必须在 mountStaticPanels 之前注册,静态通配不覆盖这些路由。
@@ -632,6 +645,7 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 		opts.IndexJobMaxURLs = config.IndexJobs.MaxURLs
 		opts.IndexJobChunk = config.IndexJobs.Chunk
 		opts.IndexJobMaxRetries = config.IndexJobs.MaxUnitRetries
+		opts.IndexJobRetentionDays = config.IndexJobs.RetentionDays
 	}
 	return opts
 }

@@ -349,7 +349,7 @@ Engine and anti-scraping parameters (rate limits, fingerprints, circuit breakers
 go test ./...                                  # unit tests (offline)
 go test -race -count=1 ./...                   # race detector needs cgo; on Windows use the Docker Linux path in docs/TESTING.md
                                                # (already verified: 11 packages green, qa/features-audit/race-final.log)
-node deploy/e2e.mjs https://radar.ydsdoa.cn      # platform contract smoke (MCP handshake, cooldown recovery, openapi.yaml/llms.txt assertions)
+node deploy/e2e.mjs https://radar.ydsdoa.cn      # read-only public checks (health, docs, auth)
 node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000   # engine steady-state observation
 ```
 

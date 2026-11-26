@@ -10,7 +10,7 @@
 | --- | --- |
 | `docker-compose.yml` | 独立部署编排：从仓库根构建镜像、映射 `radar.ydsdoa.cn`、挂载 `config.yaml`、内置健康检查与日志轮转 |
 | `docker-compose.local.yaml` | 覆盖层：复用根目录 `docker-compose.yaml` 时改用本地镜像（一般不单独使用） |
-| `e2e.mjs` | 平台 E2E 冒烟套件(前缀/官网与控制台静态挂载/管理 API/公网 API 契约、MCP 握手链、冷却 force→503→reset、openapi.yaml/llms.txt、登录锁定;零依赖 Node 18+) |
+| `e2e.mjs` | 默认只读探针；`E2E_ISOLATED=1` 运行独立实例契约（Node 18+） |
 | `steady-check.mjs` | 低节流稳态观测脚本(对搜索引擎的持续可用性,冷却 503 单独标记) |
 | `run-e2e.ps1` | PowerShell 包装器 |
 | `e2e-results/` | 每次运行的 JSON 报告 |
@@ -104,12 +104,15 @@ proxies:
 ## 5. 测试
 
 ```powershell
-# 平台契约冒烟(前缀/官网与控制台/管理/公网 API + MCP 握手链 + 冷却 force→503→reset + 登录锁定;
-# E2E_LIVE_INDEX_CHECK=1 追加真实收录判定;E2E_SKIP_LOCKOUT=1 跳过锁定测试——
-# 该测试在套件末尾会锁定 admin@本机IP 默认 15 分钟)
+# 公开入口只读验收
 node deploy/e2e.mjs https://radar.ydsdoa.cn
 
-# 搜索引擎稳态观测(单 IP 建议放长间隔;引擎冷却 503 会被单独标记为 cooldown)
+# 完整契约验收（独立实例、临时数据卷、默认任务上限 5000）。
+# 此模式会创建密钥并测试引擎冷却及账号锁定。
+$env:E2E_ISOLATED = '1'
+try { node deploy/e2e.mjs http://127.0.0.1:17000 } finally { Remove-Item Env:E2E_ISOLATED }
+
+# 搜索引擎稳态观测（先把测试密钥设为 WEB2API_API_KEY，冷却 503 单独标记）
 node deploy/steady-check.mjs https://radar.ydsdoa.cn 3 20000
 
 # 单元测试

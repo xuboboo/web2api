@@ -1,10 +1,40 @@
 package platform
 
 import (
+	"errors"
 	"io"
 	"sort"
 	"time"
 )
+
+var (
+	errJobChargeConflict       = errors.New("job charge idempotency conflict")
+	errJobChargeKeyUnavailable = errors.New("job billing key unavailable")
+	errJobChargeQuotaExceeded  = errors.New("job billing quota exceeded")
+)
+
+// jobCharge records the stable relationship between a submission and its
+// ledger entry. Marker, usage record and key counters commit together.
+type jobCharge struct {
+	JobID       string `json:"job_id"`
+	Fingerprint string `json:"fingerprint"`
+	KeyID       string `json:"key_id"`
+	Units       int64  `json:"units"`
+}
+
+type jobChargeStore interface {
+	CommitJobCharge(marker string, charge jobCharge, rec *UsageRecord, keyID string, units int64, at time.Time) (jobCharge, bool, error)
+}
+
+func validateJobCharge(marker string, charge jobCharge, rec *UsageRecord, keyID string, units int64) error {
+	if marker == "" || charge.JobID == "" || charge.Fingerprint == "" || rec == nil || keyID == "" || units <= 0 || charge.KeyID != keyID || charge.Units != units {
+		return errors.New("invalid job charge")
+	}
+	if rec.KeyID != keyID || int64(rec.Units) != units || rec.Status != 202 {
+		return errors.New("job charge does not match usage record")
+	}
+	return nil
+}
 
 // Bucket names mandated by the product contract (bbolt buckets; the JSON
 // fallback mirrors them as fields of one document). usage_daily is the S4
@@ -17,6 +47,7 @@ const (
 	bucketUsageDaily = "usage_daily"
 	bucketUsers      = "users"
 	bucketBlacklist  = "blacklist"
+	bucketNotices    = "notices"
 
 	settingUsageSeq            = "usage_seq"
 	settingAdminHash           = "admin_password_hash"
@@ -127,6 +158,9 @@ type Store interface {
 	GetSetting(name string) ([]byte, error)
 	PutSetting(name string, value []byte) error
 	PutSettings(values map[string][]byte) error
+	ListNotices(userID string, limit int) ([]Notice, error)
+	PutNotice(notice *Notice) error
+	AcknowledgeNotice(userID, id string, at time.Time) (bool, error)
 
 	Close() error
 }

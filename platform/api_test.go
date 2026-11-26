@@ -67,6 +67,45 @@ type testEnv struct {
 	dir string
 }
 
+type retentionPreviewFake struct{ engineControlFake }
+
+func (f *retentionPreviewFake) IndexJobRetentionPreview(days int) (int, int64, error) {
+	return days, 1234, nil
+}
+
+func TestConsoleJobsRequireAuthenticatedUser(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	env.p.engineControl = &retentionPreviewFake{}
+	called := 0
+	env.p.RegisterConsoleJobs(env.app, IndexJobHandlers{List: func(c *fiber.Ctx) error {
+		called++
+		return c.JSON(fiber.Map{"ok": true})
+	}})
+	status, _ := doJSON(t, env.app, http.MethodGet, "/api/index/check/jobs", nil, nil)
+	if status != http.StatusUnauthorized || called != 0 {
+		t.Fatalf("anonymous request reached handler: status=%d calls=%d", status, called)
+	}
+	token := login(t, env.app)
+	status, _ = doJSON(t, env.app, http.MethodGet, "/api/index/check/jobs", nil, adminHeaders(token))
+	if status != http.StatusOK || called != 1 {
+		t.Fatalf("authenticated request failed: status=%d calls=%d", status, called)
+	}
+	status, preview := doJSON(t, env.app, http.MethodGet, "/api/index/check/jobs-retention-preview?days=30", nil, adminHeaders(token))
+	if status != http.StatusOK || preview["jobs"] != float64(30) || preview["bytes"] != float64(1234) {
+		t.Fatalf("preview: status=%d body=%v", status, preview)
+	}
+	status, _ = doJSON(t, env.app, http.MethodGet, "/api/index/check/jobs-retention-preview?days=0", nil, adminHeaders(token))
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid retention: status=%d", status)
+	}
+	createConsoleUser(t, env.app, token, "job_viewer", RoleViewer)
+	viewer := loginAs(t, env.app, "job_viewer", "pw-123456")
+	status, _ = doJSON(t, env.app, http.MethodGet, "/api/index/check/jobs-retention-preview?days=30", nil, adminHeaders(viewer))
+	if status != http.StatusForbidden {
+		t.Fatalf("viewer accessed retention preview: status=%d", status)
+	}
+}
+
 func newTestEnv(t *testing.T, indexStatus int, failBing bool) *testEnv {
 	t.Helper()
 	env := &testEnv{dir: t.TempDir()}

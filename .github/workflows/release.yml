@@ -67,11 +67,17 @@ jobs:
               # Shipping only the binary is not enough: the panels are served
               # from disk (web/site, web/admin), so a binary-only tarball gives
               # 404s on /web-tool/ and /web-tool/console/ (see docs/INSTALL.md §7).
-              tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN" web
+              tar --create --gzip --file="dist/web2api-${GOOS}-${GOARCH}-${VERSION}.tgz" "$BIN" web LICENSE
               rm -f "$BIN"
             done
           done
           ls -lh dist/
+
+      - name: Generate and verify archive checksums
+        working-directory: dist
+        run: |
+          sha256sum web2api-*.tgz > SHA256SUMS
+          sha256sum --check SHA256SUMS
 
       # Most changes land directly on main without PRs, and GitHub's
       # auto-generated notes only list merged PRs — so build the changelog
@@ -98,6 +104,9 @@ jobs:
       - name: Create GitHub release and upload binaries
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tgz
+          files: |
+            dist/*.tgz
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
           body_path: release_notes.md
           generate_release_notes: true

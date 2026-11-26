@@ -430,6 +430,7 @@ paths:
           百度默认每分钟 5 次、突发 1，20 条约需 4 分钟，实际耗时受响应和重试影响。
         * `urls` > 20 且开启 `index_jobs`:返回 **202** + `job_id`;之后用
           `GET /v1/index/check/jobs/{id}` 查进度、`/results` 取结果(可 `?format=csv`)。
+        * `async=1` 可将 1–20 条请求主动入队。任务队列关闭时返回 501。
         * 未开启任务队列时 > 20 返回 400 `TOO_MANY_URLS`。
 
         同步批次开始时若所选引擎全部已冷却，请求返回 503。若部分已冷却或批次执行中触发冷却，
@@ -437,6 +438,12 @@ paths:
         响应的 `meta.engines_cooldown` 列出仍在冷却中的引擎。
       security:
         - ApiKeyAuth: []
+      parameters:
+        - name: async
+          in: query
+          required: false
+          description: 设置为 1 时主动使用异步任务。
+          schema: { type: string, enum: ["1"] }
       requestBody:
         required: true
         content:

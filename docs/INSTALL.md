@@ -63,7 +63,7 @@ export WEB2API_SERVER_HOST=127.0.0.1 # 最小启动仅本机访问；公网部�
 
 | 部署方式 | 面板资源从哪来 |
 | --- | --- |
-| release tar 包（`dist/web2api-*.tgz`） | 包内已含 `web/`，解包后二进制与 `web/` 同级即可 |
+| release tar 包（`dist/web2api-*.tgz`） | 包内含 `web/` 和 `LICENSE`，解包后二进制与 `web/` 同级即可。用对应发布的 `SHA256SUMS` 校验下载的归档 |
 | 自己 `go build` | **必须**把仓库里的 `web/` 一起拷到二进制旁边（或工作目录下） |
 | Docker 镜像 | `Dockerfile` 已 `COPY web/site web/admin`，无需额外操作 |
 

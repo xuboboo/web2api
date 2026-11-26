@@ -192,6 +192,24 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 		}
 
 		if units > 0 {
+			if c.Method() == fiber.MethodPost && (len(urls) > 20 || c.Query("async") == "1") {
+				if p.engineControlJobsEnabled() {
+					idempotency := c.Get("Idempotency-Key")
+					if idempotency == "" {
+						idempotency = "rest-" + newUserID()
+					}
+					job, replayed, err := p.enqueueBilled(c.UserContext(), "", key.ID, idempotency, urls, engines, c.IP())
+					if err != nil {
+						return err
+					}
+					return c.Status(202).JSON(acceptedJob(job, replayed, "/v1/index/check/jobs/"))
+				}
+				// Legacy assemblies without an async queue preserve the historical
+				// too-many-URLs response and never enter billing.
+				if p.engineControl == nil || !p.engineControlJobsEnabled() {
+					return errBadRequest(c, "TOO_MANY_URLS")
+				}
+			}
 			release, err := p.reserveQuota(c, key.ID, int64(units))
 			if release == nil {
 				return err
@@ -217,6 +235,13 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 		}
 		return handlerErr
 	}
+}
+
+func (p *Platform) engineControlJobsEnabled() bool {
+	if control, ok := p.engineControl.(interface{ JobsEnabled() bool }); ok {
+		return control.JobsEnabled()
+	}
+	return false
 }
 
 // reserveQuota accounts for requests whose actual usage will only be

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type jsonStoreData struct {
 	Sessions  map[string]*AdminSession   `json:"sessions,omitempty"`  // S4-GAP 会话系统
 	Users     map[string]*User           `json:"users,omitempty"`     // 控制台用户与角色
 	Blacklist map[string]*BlacklistEntry `json:"blacklist,omitempty"` // IP/CIDR 黑名单
+	Notices   map[string]*Notice         `json:"notices,omitempty"`
 }
 
 func newJSONStore(path string) (*jsonStore, error) {
@@ -43,6 +45,7 @@ func newJSONStore(path string) (*jsonStore, error) {
 			Sessions:  map[string]*AdminSession{},
 			Users:     map[string]*User{},
 			Blacklist: map[string]*BlacklistEntry{},
+			Notices:   map[string]*Notice{},
 		},
 	}
 	raw, err := os.ReadFile(path)
@@ -67,6 +70,9 @@ func newJSONStore(path string) (*jsonStore, error) {
 		}
 		if s.data.Blacklist == nil {
 			s.data.Blacklist = map[string]*BlacklistEntry{}
+		}
+		if s.data.Notices == nil {
+			s.data.Notices = map[string]*Notice{}
 		}
 		return s, nil
 	}
@@ -215,6 +221,56 @@ func (s *jsonStore) RecordUsage(rec *UsageRecord, keyID string, units int64, con
 		return err
 	}
 	return nil
+}
+
+func (s *jsonStore) CommitJobCharge(marker string, charge jobCharge, rec *UsageRecord, keyID string, units int64, at time.Time) (jobCharge, bool, error) {
+	if err := validateJobCharge(marker, charge, rec, keyID, units); err != nil {
+		return jobCharge{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if encoded, ok := s.data.Settings[marker]; ok {
+		raw, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return jobCharge{}, false, fmt.Errorf("corrupt job charge marker: %w", err)
+		}
+		var result jobCharge
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return jobCharge{}, false, fmt.Errorf("corrupt job charge marker: %w", err)
+		}
+		if result.Fingerprint != charge.Fingerprint || result.KeyID != keyID || result.Units != units {
+			return jobCharge{}, false, errJobChargeConflict
+		}
+		return result, true, nil
+	}
+	key := s.data.Keys[keyID]
+	if key == nil || key.Status != KeyStatusActive || (key.ExpiresAt != nil && !at.Before(*key.ExpiresAt)) {
+		return jobCharge{}, false, errJobChargeKeyUnavailable
+	}
+	if units <= 0 || (key.DailyQuota > 0 && units > key.DailyQuota-usedTodayUnits(key, at)) {
+		return jobCharge{}, false, errJobChargeQuotaExceeded
+	}
+	raw, err := json.Marshal(charge)
+	if err != nil {
+		return jobCharge{}, false, err
+	}
+	oldSeq := rec.Seq
+	s.data.Seq++
+	rec.Seq = int64(s.data.Seq)
+	s.data.Usage = append(s.data.Usage, *rec)
+	updated := *key
+	applyKeyUsage(&updated, units, true, at)
+	s.data.Keys[keyID] = &updated
+	s.data.Settings[marker] = base64.StdEncoding.EncodeToString(raw)
+	if err := s.saveLocked(); err != nil {
+		s.data.Seq--
+		s.data.Usage = s.data.Usage[:len(s.data.Usage)-1]
+		rec.Seq = oldSeq
+		s.data.Keys[keyID] = key
+		delete(s.data.Settings, marker)
+		return jobCharge{}, false, err
+	}
+	return charge, false, nil
 }
 
 func (s *jsonStore) AllUsage() ([]UsageRecord, error) {
@@ -458,6 +514,72 @@ func (s *jsonStore) PutSettings(values map[string][]byte) error {
 		return err
 	}
 	return nil
+}
+
+func (s *jsonStore) ListNotices(userID string, limit int) ([]Notice, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows := []Notice{}
+	for _, n := range s.data.Notices {
+		if n != nil && (userID == "" || n.UserID == userID) {
+			rows = append(rows, *n)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+func (s *jsonStore) PutNotice(n *Notice) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.data.Notices[n.ID]
+	removed := map[string]*Notice{}
+	copy := *n
+	s.data.Notices[n.ID] = &copy
+	if len(s.data.Notices) > 1000 {
+		rows := make([]Notice, 0, len(s.data.Notices))
+		for _, row := range s.data.Notices {
+			if row != nil {
+				rows = append(rows, *row)
+			}
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
+		for _, row := range rows[:len(rows)-1000] {
+			removed[row.ID] = s.data.Notices[row.ID]
+			delete(s.data.Notices, row.ID)
+		}
+	}
+	if err := s.saveLocked(); err != nil {
+		if old == nil {
+			delete(s.data.Notices, n.ID)
+		} else {
+			s.data.Notices[n.ID] = old
+		}
+		for id, row := range removed {
+			s.data.Notices[id] = row
+		}
+		return err
+	}
+	return nil
+}
+func (s *jsonStore) AcknowledgeNotice(userID, id string, at time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.data.Notices[id]
+	if n == nil || (userID != "" && n.UserID != userID) {
+		return false, nil
+	}
+	old := n.AcknowledgedAt
+	if old == nil {
+		n.AcknowledgedAt = &at
+	}
+	if err := s.saveLocked(); err != nil {
+		n.AcknowledgedAt = old
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *jsonStore) Close() error {

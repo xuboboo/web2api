@@ -542,9 +542,11 @@ func TestPanelAddressLogUnwrapsWildcardHost(t *testing.T) {
 // answers not_implemented for every browser-mode engine (regression guard for
 // the assembly bug found in live smoke testing).
 func TestPooledBrowserEngineForwardsCheckIndexed(t *testing.T) {
-	// This is a capability-forwarding test; it has no UI assertions and must
-	// also run on Linux CI runners without X11/$DISPLAY.
-	pool := newBrowserPool(core.BrowserOpts{IsHeadless: true}, "", nil, 1, 0)
+	// The engine mocks only exercise capability forwarding. A cached browser
+	// entry keeps the test offline and leaves actual launches to integration tests.
+	pool := &browserPool{browsers: map[string]*pooledBrowser{
+		directBrowserKey: {browser: &core.Browser{}},
+	}}
 	wrapper := &pooledBrowserEngine{
 		name: "baidu",
 		factory: func(b core.Browser, opts core.SearchEngineOptions) core.SearchEngine {

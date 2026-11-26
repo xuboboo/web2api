@@ -9,9 +9,16 @@
  * 该引擎不发真实请求，观测值不代表引擎健康度。
  *
  *   node deploy/steady-check.mjs [baseUrl] [rounds] [intervalMs]
+ *   WEB2API_API_KEY 用于开启数据面鉴权的实例。
  */
 // 整个应用固定部署在 /web-tool 子路径之下(健康端点与搜索端点一致)。
 const BASE = (process.env.WEB2API_BASE_URL || process.argv[2] || 'http://127.0.0.1:7000').replace(/\/+$/, '') + '/web-tool';
+const target = new URL(BASE);
+const apiKey = process.env.WEB2API_API_KEY;
+if (apiKey && target.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)) {
+  throw new Error('An API key requires HTTPS or loopback HTTP');
+}
+const headers = apiKey ? { 'X-API-Key': apiKey } : {};
 const ROUNDS = Number(process.argv[3] || 3);
 const INTERVAL = Number(process.argv[4] || 30000);
 const engines = (process.env.STEADY_ENGINES || 'baidu,sogou,360,bing').split(',');
@@ -25,7 +32,9 @@ for (let round = 0; round < ROUNDS; round++) {
     const started = Date.now();
     let status = 0, organic = 0, err = '', cooldown = false;
     try {
-      const res = await fetch(BASE + '/' + engine + '/search?text=' + encodeURIComponent(text) + '&limit=5');
+      const res = await fetch(BASE + '/' + engine + '/search?text=' + encodeURIComponent(text) + '&limit=5', {
+        headers, redirect: 'manual', signal: AbortSignal.timeout(120_000),
+      });
       status = res.status;
       const body = await res.text();
       try {

@@ -74,6 +74,12 @@ type Server struct {
 	jobs *IndexJobManager
 }
 
+func (s *Server) SetIndexJobFinishedHook(hook func(IndexJob)) {
+	if s != nil && s.jobs != nil {
+		s.jobs.opts.OnFinished = hook
+	}
+}
+
 // ServerOptions configures HTTP server middleware and resilience behavior.
 type ServerOptions struct {
 	// CacheTTL controls response cache entry lifetime. Zero disables caching.
@@ -146,6 +152,9 @@ type ServerOptions struct {
 	// IndexJobMaxRetries retries a URL blocked by a transient engine condition
 	// such as a cooldown or a captcha (0 = 6).
 	IndexJobMaxRetries int
+	// IndexJobRetentionDays removes completed jobs older than this many days; 0 disables cleanup.
+	IndexJobRetentionDays int
+	IndexJobOnFinished    func(IndexJob)
 }
 
 // DefaultServerOptions returns production-oriented defaults for cache, CORS,
@@ -237,8 +246,10 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	if opts.IndexJobDir != "" {
 		serv.jobs = NewIndexJobManager(opts.IndexJobDir, searchEngines, serv.resilient, IndexJobOptions{
 			MaxURLs:        opts.IndexJobMaxURLs,
+			RetentionDays:  opts.IndexJobRetentionDays,
 			Chunk:          opts.IndexJobChunk,
 			MaxUnitRetries: opts.IndexJobMaxRetries,
+			OnFinished:     opts.IndexJobOnFinished,
 		})
 		serv.jobs.Start(context.Background())
 		logrus.WithFields(logrus.Fields{
@@ -1235,7 +1246,11 @@ func (s *Server) IndexCheckHandler(c *fiber.Ctx) error {
 	// 批量提交: keeping the ≤20 sync contract means existing callers need no
 	// change; a bigger batch becomes a job instead of a 400, so one submission
 	// can cover a whole export and the server owns the pacing.
-	if len(urls) > MaxIndexCheckURLs {
+	forceAsync := c.Method() == fiber.MethodPost && c.Query("async") == "1" && !IsPlaygroundIndexCheckPath(c.Path())
+	if forceAsync && s.jobs == nil {
+		return &APIError{HTTPStatus: 501, ErrorCode: "not_implemented", Reason: "NOT_IMPLEMENTED", Message: "index jobs are not enabled"}
+	}
+	if len(urls) > MaxIndexCheckURLs || forceAsync {
 		// The console playground renders the synchronous envelope only, so it
 		// keeps the 20-URL ceiling instead of receiving a job it cannot follow.
 		if s.jobs == nil || IsPlaygroundIndexCheckPath(c.Path()) {

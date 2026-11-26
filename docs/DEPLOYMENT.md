@@ -151,7 +151,12 @@ server {
     client_max_body_size 10m;          # 与 Fiber BodyLimit 对齐
     proxy_request_buffering off;
 
-    location / {
+    location = /web-tool {
+        return 308 /web-tool/$is_args$args;
+    }
+
+    location ^~ /web-tool/ {
+        # No URI suffix: preserve /web-tool/ when forwarding to the app.
         proxy_pass http://127.0.0.1:7000;
         proxy_set_header Host              $host;
         # Overwrite, not append: client-supplied forwarding headers are untrusted.
@@ -163,6 +168,8 @@ server {
 ```
 
 > 开了反代后必须设 `security.trust_proxy_headers: true`，并把实际反代地址/CIDR 写入 `security.trusted_proxies`（默认只信任本机 `127.0.0.1/32` 与 `::1/128`）。应用只从受信来源读取被 Nginx 覆盖的 `X-Real-IP`；否则限速、登录审计和来源限制看到的是反代地址。不要把客户端传来的转发头直接当作真实 IP。
+
+共享域名应将上述 `location` 放进现有的 TLS `server`，保留其它应用的规则。绑定 `security.metrics_token`，或在公网反代单独拦截 `/web-tool/metrics`。改动后运行 `node deploy/e2e.mjs https://radar.ydsdoa.cn`，同时检查状态码和响应内容。仅检查 HTTP 200 会把其它应用的 HTML 当成健康响应。
 
 ## 6. 服务启停与升级
 

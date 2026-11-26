@@ -52,6 +52,7 @@ const (
 	AuditActionBlacklistHit    = "blacklist.hit"
 	AuditActionBackupExport    = "backup.export"
 	AuditActionUsageExport     = "usage.export"
+	AuditActionNotice          = "notice.created"
 )
 
 // shortSID renders a session id for audit targets (前 12 位,避免 64 位 hex
@@ -82,12 +83,25 @@ func (p *Platform) auditFrom(c *fiber.Ctx, actor, action, target, result string)
 	audit.Append(AuditEntry{
 		TS:        time.Now(),
 		Actor:     actor,
-		IP:        c.IP(),
+		IP:        requestIP(c),
 		Action:    action,
 		Target:    target,
 		Result:    result,
-		RequestID: strings.TrimSpace(c.Get("X-Request-ID")),
+		RequestID: requestID(c),
 	})
+}
+
+func requestIP(c *fiber.Ctx) string {
+	if c == nil {
+		return ""
+	}
+	return c.IP()
+}
+func requestID(c *fiber.Ctx) string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Get("X-Request-ID"))
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +276,13 @@ func (p *Platform) handleRuntime(c *fiber.Ctx) error {
 		"goroutines":     runtime.NumGoroutine(),
 		"memory_mb":      mem.Alloc / 1024 / 1024,
 		"uptime_seconds": int64(time.Since(p.started).Seconds()),
+		"heap_sys_mb":    mem.Sys / 1024 / 1024,
+		"heap_inuse_mb":  mem.HeapInuse / 1024 / 1024,
+		"heap_objects":   mem.HeapObjects,
+	}
+	if total, free, err := dataDiskSpace(p.cfg.DataDir); err == nil {
+		resp["disk_total_mb"] = total
+		resp["disk_free_mb"] = free
 	}
 	if v := p.Version(); v != "" {
 		resp["version"] = v
