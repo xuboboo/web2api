@@ -739,9 +739,13 @@
   var modalStack = [];
 
   function openModal(opts) {
+    var previousFocus = document.activeElement;
     var overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    var modal = el('div', { class: 'modal' + (opts.wide ? ' modal-wide' : ''), role: 'dialog', 'aria-modal': 'true' });
+    var modal = el('div', {
+      class: 'modal' + (opts.wide ? ' modal-wide' : ''), role: 'dialog',
+      'aria-modal': 'true', 'aria-label': opts.title || '对话框', tabindex: '-1'
+    });
 
     var closeBtn = null;
     var head = el('div', { class: 'modal-head' }, el('h2', { class: 'modal-title', text: opts.title || '' }));
@@ -760,9 +764,12 @@
 
     function close() {
       var i = modalStack.indexOf(close);
-      if (i >= 0) modalStack.splice(i, 1);
+      if (i < 0) return;
+      var wasTop = i === modalStack.length - 1;
+      modalStack.splice(i, 1);
       document.removeEventListener('keydown', onKey, true);
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      if (wasTop && previousFocus && previousFocus.isConnected) previousFocus.focus();
       if (typeof opts.onClose === 'function') opts.onClose();
     }
     function onKey(e) {
@@ -771,6 +778,20 @@
         if (opts.dismissable === false) return;
         e.preventDefault();
         close();
+      }
+      if (e.key !== 'Tab') return;
+      var controls = Array.from(modal.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')).filter(function (node) {
+        return node.tabIndex >= 0 && !node.matches(':disabled') && node.getClientRects().length > 0 && getComputedStyle(node).visibility === 'visible';
+      });
+      if (!controls.length) {
+        e.preventDefault();
+        modal.focus();
+        return;
+      }
+      var index = controls.indexOf(document.activeElement);
+      if (index < 0 || (e.shiftKey ? index === 0 : index === controls.length - 1)) {
+        e.preventDefault();
+        controls[e.shiftKey ? controls.length - 1 : 0].focus();
       }
     }
 
@@ -782,6 +803,7 @@
       });
     }
     modalStack.push(close);
+    modal.focus();
     return { overlay: overlay, close: close };
   }
 
@@ -824,8 +846,17 @@
 
   /* ================= 6. Hash 路由与视图切换 ================= */
 
+  var refreshNotices = function () {};
+  var noticeSession = 0;
+
   function showLogin() {
     clearPageTimers();
+    noticeSession++;
+    while (modalStack.length) modalStack[modalStack.length - 1]();
+    var noticeCount = $('#notice-count');
+    if (noticeCount) noticeCount.textContent = '0';
+    var noticeButton = $('#btn-notices');
+    if (noticeButton) noticeButton.setAttribute('aria-label', '站内通知');
     var login = $('#view-login');
     var app = $('#app');
     if (app) app.classList.add('hidden');
@@ -849,7 +880,9 @@
     var login = $('#view-login');
     var app = $('#app');
     if (login) login.classList.add('hidden');
+    var opening = app && app.classList.contains('hidden');
     if (app) app.classList.remove('hidden');
+    if (opening) refreshNotices();
     var name = state.username || 'admin';
     var un = $('#topbar-username');
     if (un) un.textContent = name;
@@ -948,6 +981,7 @@
   }
 
   function pageJobs(root) {
+    var writable = currentRole() !== 'viewer';
     var statuses = { billing_pending: '等待计费确认', queued: '排队中', running: '运行中', waiting: '等待中', done: '已完成', cancelled: '已取消', failed: '失败' };
     var card = el('section', { class: 'card' });
     var detail = el('section', { class: 'card' });
@@ -959,9 +993,11 @@
     var keys = [];
     var scheduleKey = null;
     var pending = null;
+    var submitting = false;
+    var retryRequests = new Map();
     var keySelect = el('select', { class: 'input', 'aria-label': '计费密钥' });
     var urlsInput = el('textarea', { class: 'input', rows: '7', placeholder: '每行一个 http/https URL，最多 5000 条', 'aria-label': '批量 URL' });
-    var enginesInput = el('select', { class: 'input', 'aria-label': '查询引擎' },
+    var enginesInput = el('select', { class: 'input', 'aria-label': '批量查询引擎' },
       el('option', { value: 'baidu', text: '百度' }), el('option', { value: 'bing', text: 'Bing' }), el('option', { value: 'baidu,bing', text: '百度 + Bing' }));
     var preview = el('p', { role: 'status' });
     var submit = el('button', { class: 'btn btn-primary', type: 'button', text: '提交批量任务', onclick: submitJob });
@@ -991,10 +1027,10 @@
       }).catch(function (err) { toast(err.message, 'error'); });
     });
     [urlsInput, keySelect, enginesInput].forEach(function (node) { node.addEventListener('input', updatePreview); });
-    root.appendChild(el('section', { class: 'card' }, el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '创建批量任务' })),
+    if (writable) root.appendChild(el('section', { class: 'card' }, el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '创建批量任务' })),
       el('div', { class: 'card-body' }, el('label', null, '计费密钥', keySelect), el('label', null, '查询引擎', enginesInput),
         el('label', null, 'URL 列表', urlsInput), el('label', null, 'CSV 导入（URL 列或首列）', csv), preview, submit)));
-    api('GET', '/api/keys').then(function (data) {
+    if (writable) api('GET', '/api/keys').then(function (data) {
       if (!alive()) return;
       keys = Array.isArray(data) ? data : (data.items || data.keys || []);
       keys.filter(isKeyUsableForSubmission).forEach(function (k) { keySelect.appendChild(el('option', { value: k.id, text: k.name + ' · ' + (k.daily_quota ? '日额度 ' + k.daily_quota : '不限额度') })); });
@@ -1032,21 +1068,26 @@
       var units = v.urls.length * v.engines.length;
       preview.textContent = '有效 ' + v.urls.length + ' 条，重复 ' + v.duplicates + ' 条（提交时去重），预计 ' + units + ' 查询单元。' +
         (v.invalid.length ? '无效行：' + v.invalid.slice(0, 12).join('、') : '') + (v.count > 5000 ? '超过 5000 条上限。' : '');
-      submit.disabled = !keySelect.value || !v.urls.length || v.invalid.length > 0 || v.count > 5000;
+      submit.disabled = submitting || !keySelect.value || !v.urls.length || v.invalid.length > 0 || v.count > 5000;
     }
     function submitJob() {
       var v = validatedInput();
-      if (!keySelect.value || !v.urls.length || v.invalid.length || v.count > 5000) return;
+      if (submitting || !keySelect.value || !v.urls.length || v.invalid.length || v.count > 5000) return;
       var payload = { key_id: keySelect.value, urls: v.urls, engines: v.engines };
       var signature = JSON.stringify(payload);
       if (!pending || pending.signature !== signature) pending = { signature: signature, key: crypto.randomUUID() };
-      submit.disabled = true;
+      submitting = true;
+      setBtnLoading(submit, true, '提交中…');
       api('POST', '/api/index/check/jobs', payload, { headers: { 'Idempotency-Key': pending.key } }).then(function (data) {
         if (!alive()) return;
         pending = null; selected = data.job_id; offset = 0;
         toast('任务已提交', 'success'); loadJobs(); loadDetail();
       }).catch(function (err) { if (alive()) toast(err.message + '；相同参数再次提交将复用幂等键', 'error'); })
-        .finally(function () { if (alive()) updatePreview(); });
+        .finally(function () {
+          submitting = false;
+          setBtnLoading(submit, false);
+          if (alive()) updatePreview();
+        });
     }
     var refresh = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '刷新', onclick: loadJobs });
     root.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '任务列表' }), refresh));
@@ -1058,23 +1099,34 @@
     loadSchedules();
 
     function loadSchedules() {
-      api('GET', '/api/index/check/schedules').then(function (data) {
+      return api('GET', '/api/index/check/schedules').then(function (data) {
         if (!alive()) return;
         scheduleCard.innerHTML = '';
         var items = data && Array.isArray(data.items) ? data.items : [];
         var scheduleName = el('input', { class: 'input', maxlength: '100', placeholder: '计划名称', 'aria-label': '计划名称' });
         var scheduleURLs = el('textarea', { class: 'input', rows: '3', placeholder: '每行一个 URL', 'aria-label': '计划 URL' });
         var scheduleFrequency = el('select', { class: 'input', 'aria-label': '巡检周期' }, el('option', { value: 'daily', text: '每日' }), el('option', { value: 'weekly', text: '每周' }));
+        var scheduleEngines = enginesInput.cloneNode(true);
+        scheduleEngines.setAttribute('aria-label', '巡检查询引擎');
+        scheduleKey = el('select', { class: 'input', 'aria-label': '巡检计费密钥' });
         var createSchedule = el('button', { class: 'btn btn-primary btn-sm', type: 'button', text: '创建暂停计划', onclick: function () {
           var urls = scheduleURLs.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
           var selectedScheduleKey = scheduleKey ? scheduleKey.value : '';
           if (!scheduleName.value.trim() || !selectedScheduleKey || !urls.length || urls.length > 5000) { toast('请填写计划名、可用计费密钥和 1–5000 个 URL', 'error'); return; }
-          api('POST', '/api/index/check/schedules', { name: scheduleName.value.trim(), key_id: selectedScheduleKey, urls: urls, engines: enginesInput.value.split(','), frequency: scheduleFrequency.value }).then(loadSchedules).catch(function (e) { toast(e.message, 'error'); });
+          setBtnLoading(createSchedule, true, '创建中…');
+          api('POST', '/api/index/check/schedules', { name: scheduleName.value.trim(), key_id: selectedScheduleKey, urls: urls, engines: scheduleEngines.value.split(','), frequency: scheduleFrequency.value })
+            .then(function () { toast('已创建暂停计划', 'success'); return loadSchedules(); })
+            .catch(function (e) { toast(e.message, 'error'); })
+            .finally(function () { setBtnLoading(createSchedule, false); });
         } });
         scheduleCard.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '定时巡检' })));
-        scheduleCard.appendChild(el('div', { class: 'card-body' }, el('label', null, '计划名称', scheduleName), el('label', null, '计费密钥', keySelect.cloneNode(true)), el('label', null, '周期', scheduleFrequency), el('label', null, 'URL 列表', scheduleURLs), createSchedule));
-        scheduleKey = scheduleCard.querySelector('select[aria-label="计费密钥"]');
-        populateScheduleKey();
+        if (data && data.runner_enabled === false) {
+          scheduleCard.appendChild(el('p', { class: 'card-body muted', text: '当前实例未启用定时调度。已启用的计划会在服务开启定时调度后执行。' }));
+        }
+        if (writable) {
+          scheduleCard.appendChild(el('div', { class: 'card-body' }, el('label', null, '计划名称', scheduleName), el('label', null, '计费密钥', scheduleKey), el('label', null, '查询引擎', scheduleEngines), el('label', null, '周期', scheduleFrequency), el('label', null, 'URL 列表', scheduleURLs), createSchedule));
+          populateScheduleKey();
+        }
         var rows = items.map(function (item) {
           var toggle = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: item.enabled ? '暂停' : '启用', onclick: function () {
             api('PATCH', '/api/index/check/schedules/' + encodeURIComponent(item.id), { enabled: !item.enabled }).then(loadSchedules).catch(function (e) { toast(e.message, 'error'); });
@@ -1084,13 +1136,18 @@
               if (yes) api('DELETE', '/api/index/check/schedules/' + encodeURIComponent(item.id)).then(loadSchedules).catch(function (e) { toast(e.message, 'error'); });
             });
           } });
-          return el('tr', null, el('td', { text: item.name }), el('td', { text: item.frequency }), el('td', { text: item.enabled ? '运行中' : '已暂停' }), el('td', { text: fmtDateTime(item.next_at) }), el('td', { text: item.last_error || item.last_job_id || '—' }), el('td', null, toggle, remove));
+          return el('tr', null, el('td', { text: item.name }), el('td', { text: { daily: '每日', weekly: '每周' }[item.frequency] || item.frequency }), el('td', { text: item.enabled ? '已启用' : '已暂停' }), el('td', { text: fmtDateTime(item.next_at) }), el('td', { text: item.last_error || item.last_job_id || '—' }), el('td', null, writable ? [toggle, remove] : '—'));
         });
         scheduleCard.appendChild(rows.length ? el('div', { class: 'table-scroll' }, el('table', { class: 'table' }, el('thead', null, el('tr', null, ['计划', '周期', '状态', '下次运行', '最近结果', '操作'].map(function (x) { return el('th', { text: x }); }))), el('tbody', null, rows))) : emptyNode('暂无定时计划', '创建计划后仍需手动启用。'));
-      }).catch(function (e) { if (alive()) toast(e.message, 'error'); });
+      }).catch(function (e) {
+        if (!alive()) return;
+        scheduleCard.innerHTML = '';
+        scheduleCard.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '定时巡检' })));
+        scheduleCard.appendChild(errorNode(e, loadSchedules));
+      });
     }
 
-    function alive() { return root.isConnected && location.hash === '#/jobs'; }
+    function alive() { return card.isConnected && isLoggedIn() && location.hash === '#/jobs'; }
     function loadJobs() {
       var seq = ++requestSeq;
       api('GET', '/api/index/check/jobs?limit=500').then(function (data) {
@@ -1156,8 +1213,11 @@
         var rows = data[1] && Array.isArray(data[1].results) ? data[1].results : [];
         detail.innerHTML = '';
         var actions = [el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '下载 CSV', onclick: function () { downloadCSV(id); } })];
-        if (Number(job.failed || 0) > 0 && ['queued','running','waiting','billing_pending'].indexOf(job.status) === -1) {
-          actions.push(el('button',{class:'btn btn-ghost btn-sm',type:'button',text:'重跑失败项',onclick:function(){confirmDialog({title:'重跑失败项',message:'将为原任务中至少一个引擎返回错误的 URL 创建新任务，并按新任务用量计费。',confirmText:'重跑'}).then(function(yes){if(!yes)return;api('POST','/api/index/check/jobs/'+encodeURIComponent(id)+'/retry',{}, {headers:{'Idempotency-Key':crypto.randomUUID()}}).then(function(retryJob){toast('失败项已创建新任务 '+(retryJob.job_id||''),'success');loadJobs();}).catch(function(e){toast(e.message,'error');});});}}));
+        if (writable && Number(job.failed || 0) > 0 && ['queued','running','waiting','billing_pending'].indexOf(job.status) === -1) {
+          actions.push(el('button', {
+            class: 'btn btn-ghost btn-sm', type: 'button', text: '重跑失败项',
+            onclick: function () { retryFailedJob(id, path); }
+          }));
         }
         if (['queued', 'running', 'waiting'].indexOf(job.status) !== -1) {
           actions.push(el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '取消任务', onclick: function () {
@@ -1172,7 +1232,7 @@
           el('p', { text: id + ' · ' + (statuses[job.status] || job.status || '—') + ' · ' + (job.completed || 0) + ' / ' + (job.total || 0) }),
           job.last_error ? el('p', { text: '原因：' + job.last_error }) : null,
           job.wait_seconds ? el('p', { text: '预计等待 ' + job.wait_seconds + ' 秒' }) : null));
-        if (!rows.length) {
+        if (!rows.length && pageOffset === 0) {
           detail.appendChild(emptyNode('暂无结果', '任务执行后可在这里查看。'));
           return;
         }
@@ -1185,26 +1245,46 @@
           }).join(' · ');
           tbody.appendChild(el('tr', null, el('td', { text: row.url || '—' }), el('td', { text: outcomes || '—' })));
         });
-        detail.appendChild(el('div', { class: 'table-scroll' }, el('table', { class: 'table' },
+        if (rows.length) detail.appendChild(el('div', { class: 'table-scroll' }, el('table', { class: 'table' },
           el('thead', null, el('tr', null, el('th', { text: 'URL' }), el('th', { text: '引擎结果' }))), tbody)));
         var previous = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '上一页', onclick: function () { offset = Math.max(0, offset - pageSize); loadDetail(); } });
         var next = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '下一页', onclick: function () { offset += rows.length; loadDetail(); } });
         previous.disabled = offset === 0;
-        next.disabled = rows.length < pageSize;
-        detail.appendChild(el('div', { class: 'card-body row-actions' }, previous, el('span', { text: '从第 ' + (offset + 1) + ' 条开始' }), next));
+        next.disabled = rows.length < pageSize || pageOffset + rows.length >= Number(job.completed || 0);
+        detail.appendChild(el('div', { class: 'card-body row-actions' }, previous, el('span', { text: rows.length ? '第 ' + (pageOffset + 1) + '–' + (pageOffset + rows.length) + ' 条' : '此页暂无结果' }), next));
       }).catch(function (err) {
         if (!alive() || selected !== id || seq !== detailSeq) return;
         detail.innerHTML = '';
         detail.appendChild(errorNode(err, loadDetail));
       });
     }
+    function retryFailedJob(id, path) {
+      var attempt = retryRequests.get(id);
+      if (attempt && attempt.busy) return;
+      if (!attempt) {
+        attempt = { key: crypto.randomUUID(), busy: false };
+        retryRequests.set(id, attempt);
+      }
+      attempt.busy = true;
+      confirmDialog({ title: '重跑失败项', message: '将为原任务中至少一个引擎返回错误的 URL 创建新任务，并按新任务用量计费。', confirmText: '重跑' })
+        .then(function (yes) {
+          if (!yes || !alive()) return;
+          return api('POST', path + '/retry', {}, { headers: { 'Idempotency-Key': attempt.key } })
+            .then(function (job) {
+              retryRequests.delete(id);
+              if (!alive()) return;
+              toast('失败项已创建新任务 ' + (job.job_id || ''), 'success');
+              loadJobs();
+            });
+        })
+        .catch(function (error) { if (alive()) toast(error.message, 'error'); })
+        .finally(function () { attempt.busy = false; });
+    }
     loadJobs();
     updatePreview();
-    // A route-scoped timeout stops on navigation and skips hidden tabs.
-    setTimeout(function poll() {
+    setPageInterval(function () {
       if (!alive()) return;
       if (!document.hidden) { loadJobs(); if (selected) loadDetail(); }
-      setTimeout(poll, 15000);
     }, 15000);
   }
 
@@ -3583,10 +3663,10 @@ async def run():
         el('td', { text: r[2] }),
         tdDesc));
     });
-    return el('table', { class: 'param-table' },
+    return el('div', { class: 'param-table-scroll' }, el('table', { class: 'param-table' },
       el('thead', null, el('tr', null,
         el('th', { text: '参数' }), el('th', { text: '类型' }), el('th', { text: '必填' }), el('th', { text: '说明' }))),
-      tbody);
+      tbody));
   }
 
   function fieldTable(rows) {
@@ -3596,9 +3676,9 @@ async def run():
       tdDesc.innerHTML = r[1]; // 受控静态文案
       tbody.appendChild(el('tr', null, el('td', null, el('code', { text: r[0] })), tdDesc));
     });
-    return el('table', { class: 'param-table' },
+    return el('div', { class: 'param-table-scroll' }, el('table', { class: 'param-table' },
       el('thead', null, el('tr', null, el('th', { text: '字段' }), el('th', { text: '说明' }))),
-      tbody);
+      tbody));
   }
 
   /* 错误码表(HTTP / error / 说明,三列) */
@@ -3612,10 +3692,10 @@ async def run():
         el('td', null, el('code', { text: r[1] })),
         tdDesc));
     });
-    return el('table', { class: 'param-table' },
+    return el('div', { class: 'param-table-scroll' }, el('table', { class: 'param-table' },
       el('thead', null, el('tr', null,
         el('th', { text: 'HTTP' }), el('th', { text: 'error / code' }), el('th', { text: '说明' }))),
-      tbody);
+      tbody));
   }
 
   function codeBlock(lang, code) {
@@ -5277,10 +5357,75 @@ async def run():
   }
 
   function bindNotices() {
-    var btn=$('#btn-notices'); if(!btn)return;
-    function refresh(){api('GET','/api/notices').then(function(data){var items=data&&Array.isArray(data.items)?data.items:[];var unread=items.filter(function(n){return !n.acknowledged_at;});var count=$('#notice-count');if(count)count.textContent=String(unread.length);btn.title=unread.map(function(n){return n.title+': '+n.body;}).join('\n')||'暂无未读通知';}).catch(function(){});}
-    btn.addEventListener('click',function(){api('GET','/api/notices').then(function(data){var items=data.items||[];if(!items.length){toast('暂无站内通知','info');return;}confirmDialog({title:'站内通知',message:items.slice(0,8).map(function(n){return (n.acknowledged_at?'✓ ':'• ')+n.title+'：'+n.body;}).join('\n'),confirmText:'全部确认'}).then(function(ok){if(ok){Promise.all(items.filter(function(n){return !n.acknowledged_at;}).map(function(n){return api('POST','/api/notices/'+encodeURIComponent(n.id)+'/ack');})).then(refresh).catch(function(e){toast(e.message,'error');});}});}).catch(function(e){toast(e.message,'error');});});
-    refresh();setInterval(refresh,60000);
+    var btn = $('#btn-notices');
+    var count = $('#notice-count');
+    if (!btn || !count) return;
+    var sequence = 0;
+
+    function current(session) {
+      return session === noticeSession && isLoggedIn();
+    }
+
+    function fetchNotices() {
+      var request = ++sequence;
+      var session = noticeSession;
+      return api('GET', '/api/notices', null, { skipAuthRedirect: true }).then(function (data) {
+        if (!current(session)) return [];
+        var items = data && Array.isArray(data.items) ? data.items : [];
+        if (request === sequence) {
+          var unread = items.filter(function (item) { return !item.acknowledged_at; }).length;
+          count.textContent = String(unread);
+          btn.setAttribute('aria-label', '站内通知，未读 ' + unread + ' 条');
+        }
+        return items;
+      });
+    }
+
+    refreshNotices = function () {
+      if (isLoggedIn()) return fetchNotices().catch(function () {});
+    };
+
+    btn.addEventListener('click', function () {
+      if (btn.getAttribute('aria-busy') === 'true') return;
+      var session = noticeSession;
+      btn.setAttribute('aria-busy', 'true');
+      fetchNotices().then(function (items) {
+        if (!current(session)) return;
+        if (!items.length) { toast('暂无站内通知', 'info'); return; }
+        var list = el('ul', { class: 'notice-list' }, items.map(function (item) {
+          var title = el('strong', { text: item.title });
+          var status = el('span', { class: 'muted', text: item.acknowledged_at ? '已确认' : '未确认' });
+          var action = item.acknowledged_at ? null : el('button', {
+            class: 'btn btn-secondary btn-sm', type: 'button', text: '确认',
+            'aria-label': '确认通知：' + item.title,
+            onclick: function () {
+              setBtnLoading(action, true, '确认中…');
+              api('POST', '/api/notices/' + encodeURIComponent(item.id) + '/ack', null, { skipAuthRedirect: true })
+                .then(function () {
+                  if (!current(session)) return;
+                  status.textContent = '已确认';
+                  if (document.activeElement === action) {
+                    status.setAttribute('tabindex', '-1');
+                    status.focus();
+                  }
+                  action.remove();
+                  refreshNotices();
+                })
+                .catch(function (error) {
+                  if (current(session)) toast(error.message, 'error');
+                })
+                .finally(function () { if (action.isConnected) setBtnLoading(action, false); });
+            }
+          });
+          return el('li', null, title, el('p', { text: item.body }),
+            el('div', { class: 'row-actions' }, status, action));
+        }));
+        openModal({ title: '站内通知', body: el('div', { class: 'modal-body' }, list), wide: true });
+      }).catch(function (error) {
+        if (current(session)) toast(error.message, 'error');
+      }).finally(function () { btn.removeAttribute('aria-busy'); });
+    });
+    setInterval(function () { if (!document.hidden) refreshNotices(); }, 60000);
   }
 
   function boot() {
@@ -5312,14 +5457,15 @@ async def run():
     api('GET', '/api/me', null, { skipAuthRedirect: true })
       .then(function (me) {
         meVerified = true; // 服务端确认会话有效:F5 后由此恢复登录态
+        var previousRole = state.role;
         applyMe(me); // 角色 / user_id 落全局;未知角色按 viewer 兼容
         if (bootRendered) {
           showApp(); // 顶栏用户名/头像用 /api/me 的权威值刷新,页面数据已在首轮加载
           /* 首屏先渲染的历史行为保留;若本次 /api/me 带来受限角色,
            * 重新渲染当前管理页以移除写操作(admin 不重复拉取数据)。 */
           var h = location.hash || '';
-          if (state.role !== 'admin' &&
-              (h === '#/users' || h === '#/logs' || h === '#/blacklist')) {
+          if ((previousRole !== state.role && h === '#/jobs') ||
+              (state.role !== 'admin' && (h === '#/users' || h === '#/logs' || h === '#/blacklist'))) {
             renderRoute();
           }
           return;
