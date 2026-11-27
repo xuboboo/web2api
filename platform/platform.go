@@ -63,6 +63,7 @@ type Platform struct {
 	pendingQuota     map[string]int64
 	jobSubmissionMu  sync.Mutex
 	scheduleMu       sync.Mutex
+	scheduleRunning  atomic.Bool
 	usagePruneMu     sync.Mutex
 	usagePruneCancel context.CancelFunc
 	usagePruneWG     sync.WaitGroup

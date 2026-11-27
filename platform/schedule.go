@@ -70,7 +70,7 @@ func (p *Platform) RegisterSchedules(app fiber.Router) {
 				out = append(out, v)
 			}
 		}
-		return c.JSON(fiber.Map{"items": out})
+		return c.JSON(fiber.Map{"items": out, "runner_enabled": p.scheduleRunning.Load()})
 	})
 	app.Post("/api/index/check/schedules", p.adminRateGuard(), p.jwtGuard(), p.requireRole(RoleOperator), func(c *fiber.Ctx) error {
 		var v scheduledJob
@@ -213,10 +213,14 @@ func scheduleCapacityExceeded(items map[string]scheduledJob, userID string, inco
 }
 
 func (p *Platform) StartScheduleRunner(ctx context.Context, interval time.Duration) {
+	if !p.scheduleRunning.CompareAndSwap(false, true) {
+		return
+	}
 	if interval <= 0 {
 		interval = time.Hour
 	}
 	go func() {
+		defer p.scheduleRunning.Store(false)
 		p.runDueSchedules()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

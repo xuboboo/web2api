@@ -1955,6 +1955,10 @@ html:not(.dark) .auth-warn, html:not(.dark) .key-note { color: #9a5408; }
   padding: 16px 24px 24px;
 }
 .confirm-msg { margin: 2px 0 6px; color: var(--muted-fg); line-height: 1.6; }
+.notice-list { list-style: none; margin: 0; padding: 0 0 16px; }
+.notice-list > li { padding: 12px 0; overflow-wrap: anywhere; }
+.notice-list > li + li { border-top: 1px solid var(--border); }
+.notice-list p { margin: 4px 0 8px; white-space: pre-wrap; }
 
 .key-box {
   background: var(--muted);
@@ -2140,6 +2144,7 @@ html.dark .toast { background: #000; border-color: hsl(0 0% 20%); }
 .docs-p a:hover, .docs-li a:hover { opacity: .8; }
 
 /* 参数表(hairline 范式:表头 12px muted-fg,行分隔 hairline,无竖线) */
+.param-table-scroll { min-width: 0; max-width: 100%; overflow-x: auto; }
 .param-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 14px; }
 .param-table th, .param-table td {
   border: none;
