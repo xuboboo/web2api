@@ -283,7 +283,7 @@ func (p *Platform) runDueSchedules() {
 		var job *core.IndexJob
 		if err == nil {
 			ctx := withScheduledBilling(core.WithJobUser(core.WithJobOwner(context.Background(), key.ID), v.UserID))
-			job, _, err = p.enqueueBilled(ctx, v.UserID, key.ID, idempotency, v.URLs, v.Engines, "")
+			job, _, err = p.enqueueBilled(ctx, v.UserID, key.ID, idempotency, v.URLs, v.Engines, "", false)
 		}
 		if err != nil {
 			_ = p.store.DeleteSetting(metaKey)

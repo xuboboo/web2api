@@ -198,7 +198,7 @@ func (p *Platform) APIKeyGuard() fiber.Handler {
 					if idempotency == "" {
 						idempotency = "rest-" + newUserID()
 					}
-					job, replayed, err := p.enqueueBilled(c.UserContext(), "", key.ID, idempotency, urls, engines, c.IP())
+					job, replayed, err := p.enqueueBilled(c.UserContext(), "", key.ID, idempotency, urls, engines, c.IP(), true)
 					if err != nil {
 						return err
 					}
@@ -383,20 +383,13 @@ func parseEngineStatsFromBody(body []byte) map[string]EngineStat {
 	return stats
 }
 
-// parseEngineStatsFromMCPBody derives per-engine attempt/success counts from an
-// MCP tools/call response body (T-02 与 writeUsage 同口径): the tool payload
-// rides in result.content[].text as a JSON string carrying the same
-// results[].engines envelope as /v1/index/check (check_indexed 走
-// serv.CheckIndexBatch,响应结构一致). Returns nil when the body is not a
-// text-bearing tool result or the payload has no per-engine section (web_search
-// 结果、工具级错误信封) — callers then charge the full requested units,
-// mirroring writeUsage's unparsed-envelope behavior.
-func parseEngineStatsFromMCPBody(body []byte) map[string]EngineStat {
-	if len(body) == 0 {
-		return nil
-	}
+// parseMCPUsage reports protocol or tool failures and decodes the same
+// per-engine results used by synchronous REST index checks.
+func parseMCPUsage(body []byte) (map[string]EngineStat, bool) {
 	var resp struct {
+		Error  *json.RawMessage `json:"error"`
 		Result struct {
+			IsError bool `json:"isError"`
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -404,17 +397,20 @@ func parseEngineStatsFromMCPBody(body []byte) map[string]EngineStat {
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil
+		return nil, false
+	}
+	if resp.Error != nil {
+		return nil, true
 	}
 	for _, item := range resp.Result.Content {
 		if item.Type != "text" || item.Text == "" {
 			continue
 		}
 		if stats := parseEngineStatsFromBody([]byte(item.Text)); stats != nil {
-			return stats
+			return stats, resp.Result.IsError
 		}
 	}
-	return nil
+	return nil, resp.Result.IsError
 }
 
 // adminSessionCookie is the httpOnly session cookie name (S4-B-12). The

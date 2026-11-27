@@ -1151,6 +1151,7 @@ curl -s -X POST "$BASE/api/logs/cleanup" -H "Authorization: Bearer $TOKEN"
 - 对计费敏感的批量任务建议：先小批量探测引擎健康度（`GET /web-tool/v1/engines` / `list_engines`），避开冷却与熔断中的引擎，再放大批量——冷却/熔断单元虽不计费，但整请求会因此缩水。
 - 配额维度：`daily_quota`（本地日重置，0 = 不限）与 `used_total`（累计）；用量日志（`/web-tool/api/usage`）逐笔记录计费 unit 数（units）、HTTP 状态与各引擎成功/失败数。
 - **并发配额（B-15）**：REST 和 MCP 在同一进程内按 API Key 共用在途配额。接收前检查已用量和在途预留，完成后按实际计费口径落账并释放预留。预留只存在于进程内，已入账的扣费和流水在同一存储事务提交。可用 `GET /api/reconcile` 核对用量。
+- **MCP 错误响应**：工具参数校验先于配额预留。同步收录复用执行端的 URL 校验，参数非法时返回 JSON-RPC `-32602`，即使当天配额已耗尽。JSON-RPC `error` 不扣费。`result.isError: true` 且无逐引擎明细时不扣费。有逐引擎明细时按成功单元计费。
 - 免费额度、QPS 分级等商用配额策略当前未实现；自托管场景配额即自我约束工具。
 
 ---

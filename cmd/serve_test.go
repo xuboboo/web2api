@@ -9,7 +9,64 @@ import (
 	"time"
 
 	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/platform"
 )
+
+func TestAdminPasswordSafetyForTrustedProxy(t *testing.T) {
+	isolateConfig(t)
+	config.Server.Host = "127.0.0.1"
+	cfg := platform.DefaultPlatformConfig()
+	cfg.DataDir = t.TempDir()
+	plat, err := platform.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestResource(t, plat)
+
+	if err := enforceAdminPasswordSafety(plat); err != nil {
+		t.Fatalf("direct loopback startup: %v", err)
+	}
+	config.Security.TrustProxyHeaders = true
+	if err := enforceAdminPasswordSafety(plat); err == nil {
+		t.Fatal("trusted proxy deployment must reject the shipped password")
+	}
+}
+
+func TestAdminPasswordSafetyChecksHistoricalAdministrator(t *testing.T) {
+	isolateConfig(t)
+	config.Server.Host = "127.0.0.1"
+	config.Security.TrustProxyHeaders = true
+	cfg := platform.DefaultPlatformConfig()
+	cfg.DataDir = t.TempDir()
+	plat, err := platform.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTestResource(t, plat)
+
+	oldUsername := cfg.AdminUsername
+	cfg.AdminUsername = "new-admin"
+	cfg.AdminPassword = "new-strong-password-2026"
+	plat, err = platform.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceAdminPasswordSafety(plat); err == nil {
+		closeTestResource(t, plat)
+		t.Fatal("startup must reject the historical active administrator's default password")
+	}
+	closeTestResource(t, plat)
+
+	cfg.AdminUsername = oldUsername
+	plat, err = platform.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestResource(t, plat)
+	if err := enforceAdminPasswordSafety(plat); err != nil {
+		t.Fatalf("startup after rotating the persisted administrator's password: %v", err)
+	}
+}
 
 func TestServeReturnsStartupErrors(t *testing.T) {
 	for _, raw := range []bool{false, true} {
@@ -409,7 +466,7 @@ func TestBuildFingerprintBrowserOptionsRespectsBlockConfig(t *testing.T) {
 	config.Server.Insecure = false
 	config.Server.IsDebug = false
 
-	opts := buildFingerprintBrowserOptions()
+	opts := buildBrowserOptions()
 	if len(opts.BlockResourceTypes) != 4 {
 		t.Fatalf("expected 4 blocked resource types, got %d", len(opts.BlockResourceTypes))
 	}

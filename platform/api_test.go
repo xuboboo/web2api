@@ -713,7 +713,7 @@ func TestDailyQuotaSharesPendingBudgetBetweenRESTAndMCP(t *testing.T) {
 		t.Fatal("REST request did not enter the handler")
 	}
 	status, body := doJSONRaw(t, env.app, http.MethodPost, "/mcp",
-		`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"web_search"},"id":1}`, keyHeaders(key))
+		mcpSearchBody, keyHeaders(key))
 	if status != http.StatusTooManyRequests || body["error"] != "quota_exceeded" {
 		t.Fatalf("concurrent MCP request returned %d, body %v", status, body)
 	}

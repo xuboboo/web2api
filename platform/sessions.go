@@ -60,6 +60,16 @@ func (p *Platform) createSession(ip, userAgent string, ttl time.Duration) (*Admi
 // createUserSession stores a fresh session bound to a console user. A nil user
 // creates a legacy session (no user id) for compatibility helpers.
 func (p *Platform) createUserSession(u *User, ip, userAgent string, ttl time.Duration) (*AdminSession, error) {
+	s := newUserSession(u, ip, userAgent, ttl)
+	p.sessionMu.Lock()
+	defer p.sessionMu.Unlock()
+	if err := p.store.PutSession(s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func newUserSession(u *User, ip, userAgent string, ttl time.Duration) *AdminSession {
 	now := time.Now()
 	s := &AdminSession{
 		ID:           newSessionID(),
@@ -72,12 +82,7 @@ func (p *Platform) createUserSession(u *User, ip, userAgent string, ttl time.Dur
 	if u != nil {
 		s.UserID = u.ID
 	}
-	p.sessionMu.Lock()
-	defer p.sessionMu.Unlock()
-	if err := p.store.PutSession(s); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return s
 }
 
 // sessionActive validates the persisted session on every authorization check.
@@ -157,11 +162,6 @@ func (p *Platform) revokeOtherSessions(keepID string) (int, error) {
 		revoked++
 	}
 	return revoked, nil
-}
-
-// revokeAllSessions revokes every stored session (password change).
-func (p *Platform) revokeAllSessions() (int, error) {
-	return p.revokeOtherSessions("")
 }
 
 // listSessions returns active (non-revoked, non-expired) sessions newest

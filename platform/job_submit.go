@@ -56,7 +56,7 @@ func (p *Platform) submitConsoleJob(c *fiber.Ctx) error {
 	if !valid || userID == "" {
 		return jobError(400, "invalid_param", "任务参数无效")
 	}
-	job, replayed, err := p.enqueueBilled(c.UserContext(), userID, strings.TrimSpace(body.KeyID), c.Get("Idempotency-Key"), urls, engines, c.IP())
+	job, replayed, err := p.enqueueBilled(c.UserContext(), userID, strings.TrimSpace(body.KeyID), c.Get("Idempotency-Key"), urls, engines, c.IP(), false)
 	if err != nil {
 		return err
 	}
@@ -69,8 +69,9 @@ func acceptedJob(job *core.IndexJob, replayed bool, prefix string) fiber.Map {
 }
 
 // enqueueBilled is shared by console, public async requests and schedules.
+// Only authenticated API routes that already consumed a key rate token set keyRateChecked.
 // The durable task is staged, then charged atomically, then made runnable.
-func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency string, urls, engines []string, ip string) (*core.IndexJob, bool, error) {
+func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency string, urls, engines []string, ip string, keyRateChecked bool) (*core.IndexJob, bool, error) {
 	fail := func(status int, code, msg string) (*core.IndexJob, bool, error) {
 		return nil, false, jobError(status, code, msg)
 	}
@@ -128,7 +129,7 @@ func (p *Platform) enqueueBilled(ctx context.Context, userID, keyID, idempotency
 	if !scheduled && !ipAllowedFor(key.AllowedIPs, ip) {
 		return fail(403, "forbidden", "计费密钥 IP 限制不允许当前入口")
 	}
-	if !p.allowKeyRate(key.ID) {
+	if !keyRateChecked && !p.allowKeyRate(key.ID) {
 		return fail(429, "rate_limited", "调用过于频繁，请稍后重试")
 	}
 	markerData, err := p.store.GetSetting(marker)

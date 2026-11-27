@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,16 +17,10 @@ import (
 	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/sirupsen/logrus"
 	browserprofile "github.com/xuboboo/web2api/core/browser"
-	"github.com/xuboboo/web2api/core/fpcheck"
-	"github.com/xuboboo/web2api/core/fpcheck/detectors"
 	"golang.org/x/time/rate"
 )
 
 var credentialedURLPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s/@]+(?::[^\s/@]*)?@[^\s]+`)
-
-// DefaultFingerprintArtifactDir is the artifact directory used when none is
-// configured. It is relative to the server's working directory at start time.
-var DefaultFingerprintArtifactDir = filepath.Join("core", "testdata")
 
 // BasePath is the fixed URL prefix the whole application is served under:
 // the admin panel, /v1/* public API, /api/* admin API, and the health/stats
@@ -93,12 +85,6 @@ type ServerOptions struct {
 	// AllowEndpointFallback allows dedicated engine routes to fall back to other
 	// healthy engines when the primary engine fails.
 	AllowEndpointFallback bool
-	// EnableDebugEndpoints enables debug-only routes such as fingerprint checks.
-	EnableDebugEndpoints bool
-	// FingerprintArtifactDir is where debug fingerprint screenshots are written.
-	FingerprintArtifactDir string
-	// FingerprintBrowserOpts are the defaults for debug fingerprint runs.
-	FingerprintBrowserOpts BrowserOpts
 	// Resilience defines retry/circuit-breaker/proxy strategy settings.
 	Resilience ResilientConfig
 	// RequestTimeout bounds wall-clock time of any request. Exceeding it
@@ -165,18 +151,12 @@ type ServerOptions struct {
 // and resilient search policies.
 func DefaultServerOptions() ServerOptions {
 	return ServerOptions{
-		CacheTTL:               5 * time.Minute,
-		CacheMaxSize:           1000,
-		EnableCORS:             true,
-		CORS:                   DefaultCORSConfig(),
-		AllowEndpointFallback:  false,
-		EnableDebugEndpoints:   false,
-		FingerprintArtifactDir: DefaultFingerprintArtifactDir,
-		FingerprintBrowserOpts: BrowserOpts{
-			IsHeadless: true,
-			Timeout:    30 * time.Second,
-		},
-		Resilience: DefaultResilientConfig(),
+		CacheTTL:              5 * time.Minute,
+		CacheMaxSize:          1000,
+		EnableCORS:            true,
+		CORS:                  DefaultCORSConfig(),
+		AllowEndpointFallback: false,
+		Resilience:            DefaultResilientConfig(),
 		// 30s matches the default engine timeout (app.timeout); the serve
 		// command re-derives from the configured values.
 		RequestTimeout: RequestTimeoutForRetries(30*time.Second, DefaultRetryConfig()),
@@ -302,9 +282,6 @@ func NewServerWithOptions(host string, port int, opts ServerOptions, searchEngin
 	serv.registerDataPlaneRoute(app, BasePath+"/stats/cache", serv.handleCacheStats)
 	serv.registerDataPlaneRoute(app, BasePath+"/stats/proxy", serv.handleProxyStats)
 	serv.registerDataPlaneRoute(app, BasePath+"/stats/cb", serv.handleCircuitBreakerStats)
-	if opts.EnableDebugEndpoints {
-		app.Get(BasePath+"/debug/fingerprint-check", serv.handleFingerprintCheck)
-	}
 
 	for _, engine := range searchEngines {
 		locEngine := engine
@@ -772,204 +749,6 @@ func (s *Server) handleCircuitBreakerStats(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) handleFingerprintCheck(c *fiber.Ctx) error {
-	requestCtx := withRequestUsage(c.UserContext(), "fingerprint")
-	c.SetUserContext(requestCtx)
-	defer setNetworkBytesHeader(c, requestCtx)
-	defer setBrowserProfileHeader(c, requestCtx)
-
-	if profileID := strings.TrimSpace(c.Get(useProfileHeader)); profileID != "" {
-		if _, ok := browserprofile.ProfileByID(profileID); !ok {
-			return errInvalidParam(fmt.Sprintf("%s: unknown profile id %q", useProfileHeader, profileID))
-		}
-		requestCtx = WithForcedProfileID(requestCtx, profileID)
-		c.SetUserContext(requestCtx)
-	}
-
-	req, err := s.parseFingerprintCheckRequest(c)
-	if err != nil {
-		return err
-	}
-
-	runCtx, cancel := context.WithTimeout(requestCtx, time.Duration(req.timeoutMs)*time.Millisecond)
-	defer cancel()
-
-	browser, err := NewBrowser(req.browserOpts)
-	if err != nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, fmt.Sprintf("failed to create debug browser: %v", err))
-	}
-	defer func() {
-		if closeErr := browser.Close(); closeErr != nil {
-			WithRequest(c.UserContext()).WithError(closeErr).Warn("failed to close debug fingerprint browser")
-		}
-	}()
-
-	artifactDir := defaultFingerprintArtifactDir(s.opts.FingerprintArtifactDir)
-
-	reports := make([]fpcheck.Report, 0, len(req.detectors))
-	for idx, detector := range req.detectors {
-		runOpts := fpcheck.RunOptions{
-			ArtifactDir: artifactDir,
-		}
-		if req.waitMs > 0 && idx == len(req.detectors)-1 {
-			runOpts.WaitBeforeExtract = time.Duration(req.waitMs) * time.Millisecond
-		}
-
-		report, runErr := fpcheck.RunWithOptions(runCtx, browser, detector, runOpts)
-		if runErr != nil {
-			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-				return fiber.NewError(fiber.StatusGatewayTimeout, fmt.Sprintf("fingerprint check timed out after %dms", req.timeoutMs))
-			}
-			return fiber.NewError(
-				fiber.StatusServiceUnavailable,
-				fmt.Sprintf("detector %s failed: %v", detector.Name(), runErr),
-			)
-		}
-		reports = append(reports, report)
-	}
-
-	return c.JSON(reports)
-}
-
-type fingerprintCheckRequest struct {
-	detectors   []fpcheck.Detector
-	timeoutMs   int
-	waitMs      int
-	browserOpts BrowserOpts
-}
-
-func (s *Server) parseFingerprintCheckRequest(c *fiber.Ctx) (fingerprintCheckRequest, error) {
-	detectorName := strings.TrimSpace(c.Query("detector", "all"))
-	customURL := strings.TrimSpace(c.Query("url", ""))
-	customSelector := strings.TrimSpace(c.Query("selector", ""))
-	selectedDetectors, err := detectors.SelectWithCustomSelector(detectorName, customURL, customSelector)
-	if err != nil {
-		return fingerprintCheckRequest{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-
-	headless, err := parseOptionalBoolQuery(c.Query("headless", ""), true)
-	if err != nil {
-		return fingerprintCheckRequest{}, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid headless query value: %v", err))
-	}
-	if !headless && strings.TrimSpace(os.Getenv("DISPLAY")) == "" {
-		WithRequest(c.UserContext()).Warn("headless=false ignored because DISPLAY is not set; forcing headless mode")
-		headless = true
-	}
-
-	timeoutMs, err := parsePositiveIntQuery(c.Query("timeout_ms", ""), 150000)
-	if err != nil {
-		return fingerprintCheckRequest{}, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid timeout_ms query value: %v", err))
-	}
-	waitMs, err := parseNonNegativeIntQuery(c.Query("wait_ms", ""), 0)
-	if err != nil {
-		return fingerprintCheckRequest{}, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid wait_ms query value: %v", err))
-	}
-
-	browserOpts := s.opts.FingerprintBrowserOpts
-	browserOpts.IsHeadless = headless
-	browserOpts.Timeout = time.Duration(timeoutMs) * time.Millisecond
-	browserOpts.LeavePageOpen = false
-	browserOpts.UserAgent = strings.TrimSpace(c.Query("user_agent", browserOpts.UserAgent))
-	browserOpts.LanguageCode = strings.TrimSpace(c.Query("language", browserOpts.LanguageCode))
-
-	// The ?proxy= query goes through the exact same gate as the X-Proxy-URL
-	// header so it cannot bypass AllowRequestProxyURL.
-	requestProxyURL := strings.TrimSpace(c.Query("proxy", ""))
-	if headerProxyURL := strings.TrimSpace(c.Get("X-Proxy-URL")); headerProxyURL != "" {
-		requestProxyURL = headerProxyURL
-	}
-	if requestProxyURL != "" {
-		if !s.opts.Resilience.Proxy.Proxies.AllowRequestProxyURL {
-			return fingerprintCheckRequest{}, &APIError{
-				HTTPStatus: fiber.StatusBadRequest,
-				ErrorCode:  "bad_request",
-				Reason:     ReasonRequestProxyURLDisabled,
-				Message:    "X-Proxy-URL is disabled by server configuration",
-			}
-		}
-		normalized, err := NormalizeProxyURL(requestProxyURL)
-		if err != nil {
-			return fingerprintCheckRequest{}, errInvalidParam(fmt.Sprintf("X-Proxy-URL: %v", err))
-		}
-		if IsAuthenticatedSocksProxyURL(normalized) {
-			return fingerprintCheckRequest{}, &APIError{
-				HTTPStatus: fiber.StatusBadRequest,
-				ErrorCode:  "bad_request",
-				Reason:     ReasonUnsupportedProxyScheme,
-				Message:    "authenticated SOCKS proxies are not supported in browser mode",
-			}
-		}
-		browserOpts.ProxyURL = normalized
-	}
-
-	insecureDefault := browserOpts.Insecure
-	if detectors.IsCustom(detectorName) {
-		insecureDefault = true
-	}
-	insecure, err := parseOptionalBoolQuery(c.Query("insecure", ""), insecureDefault)
-	if err != nil {
-		return fingerprintCheckRequest{}, fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid insecure query value: %v", err))
-	}
-	browserOpts.Insecure = insecure
-
-	return fingerprintCheckRequest{
-		detectors:   selectedDetectors,
-		timeoutMs:   timeoutMs,
-		waitMs:      waitMs,
-		browserOpts: browserOpts,
-	}, nil
-}
-
-func defaultFingerprintArtifactDir(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return DefaultFingerprintArtifactDir
-	}
-	return trimmed
-}
-
-func parseOptionalBoolQuery(raw string, defaultValue bool) (bool, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultValue, nil
-	}
-	value, err := strconv.ParseBool(raw)
-	if err != nil {
-		return false, err
-	}
-	return value, nil
-}
-
-func parsePositiveIntQuery(raw string, defaultValue int) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultValue, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	if value <= 0 {
-		return 0, fmt.Errorf("must be > 0")
-	}
-	return value, nil
-}
-
-func parseNonNegativeIntQuery(raw string, defaultValue int) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultValue, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	if value < 0 {
-		return 0, fmt.Errorf("must be >= 0")
-	}
-	return value, nil
-}
-
 // engineEndpointName maps an engine name to its public URL slug. 360 Search is
 // best known as "360"; serve /360/search and keep /so360/search working too.
 func engineEndpointName(name string) string {
@@ -1110,6 +889,11 @@ func (s *Server) validateRequestProxyURL(q *Query) error {
 		}
 	}
 
+	normalized, err := normalizeRequestProxyURL(q.ProxyURL)
+	if err != nil {
+		return errInvalidParam(fmt.Sprintf("X-Proxy-URL: %v", err))
+	}
+	q.ProxyURL = normalized
 	if s.opts.Resilience.Proxy.Runtime == ProxyRuntimeBrowser && IsAuthenticatedSocksProxyURL(q.ProxyURL) {
 		return &APIError{
 			HTTPStatus: fiber.StatusBadRequest,
@@ -1287,7 +1071,7 @@ func (s *Server) CheckIndexBatch(ctx context.Context, urls []string, engines []s
 	startedAt := time.Now()
 	requestCtx := withRequestUsage(ctx, "index_check")
 
-	urls, apiErr := validateIndexCheckURLs(urls)
+	urls, apiErr := ValidateIndexCheckURLs(urls)
 	if apiErr != nil {
 		WithRequest(requestCtx).WithField("reason", apiErr.Reason).Warn("Invalid index check parameters")
 		return nil, apiErr
@@ -1401,7 +1185,7 @@ func indexCheckHasUnitError(results []IndexCheckURLResult) bool {
 	return false
 }
 
-// validateIndexCheckURLs applies the platform URL rules (trim, 1..20 entries,
+// ValidateIndexCheckURLs applies the platform URL rules (trim, 1..20 entries,
 // absolute URL, http/https only) shared by the fiber request parser and
 // CheckIndexBatch, and collapses duplicates.
 //
@@ -1410,7 +1194,7 @@ func indexCheckHasUnitError(results []IndexCheckURLResult) bool {
 // path already collapsed them; the sync path did not, so 20 copies of one URL
 // cost 20 units while 21 copies cost 1 — the same input behaved differently
 // depending only on its size.
-func validateIndexCheckURLs(urls []string) ([]string, *APIError) {
+func ValidateIndexCheckURLs(urls []string) ([]string, *APIError) {
 	cleaned := make([]string, 0, len(urls))
 	for _, raw := range urls {
 		cleaned = append(cleaned, strings.TrimSpace(raw))

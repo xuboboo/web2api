@@ -730,14 +730,18 @@ func (s *boltStore) PutSetting(name string, value []byte) error {
 
 func (s *boltStore) PutSettings(values map[string][]byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(boltBucketName(bucketSettings))
-		for name, value := range values {
-			if err := bucket.Put([]byte(name), value); err != nil {
-				return err
-			}
-		}
-		return nil
+		return putSettingsTx(tx, values)
 	})
+}
+
+func putSettingsTx(tx *bolt.Tx, values map[string][]byte) error {
+	bucket := tx.Bucket(boltBucketName(bucketSettings))
+	for name, value := range values {
+		if err := bucket.Put([]byte(name), value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *boltStore) ListSettings(prefix string) (map[string][]byte, error) {

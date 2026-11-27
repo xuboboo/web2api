@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -244,6 +245,24 @@ func NormalizeProxyURL(raw string) (string, error) {
 	}
 
 	return parsed.String(), nil
+}
+
+// Request-supplied proxies use an IP literal so neither the HTTP client nor
+// Chromium can resolve the destination again after validation.
+func normalizeRequestProxyURL(raw string) (string, error) {
+	normalized, err := NormalizeProxyURL(raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", err
+	}
+	ip, err := netip.ParseAddr(parsed.Hostname())
+	if err != nil || ip.Zone() != "" || !isPublicIP(ip) {
+		return "", fmt.Errorf("request proxy host must be a public IP address")
+	}
+	return normalized, nil
 }
 
 func NormalizeProxyURLs(rawURLs []string) ([]string, error) {

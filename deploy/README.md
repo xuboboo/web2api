@@ -51,13 +51,7 @@ curl.exe -s https://radar.ydsdoa.cn/web-tool/health
 
 ### nginx 反向代理(不去前缀)
 
-```nginx
-location /web-tool/ {
-    proxy_pass http://127.0.0.1:7000;   # 不重写路径,原样透传 /web-tool 前缀
-    proxy_set_header Host $host;
-    proxy_read_timeout 120s;
-}
-```
+使用部署手册中的 TLS 反代示例，保留路径前缀并为管理路由配置来源白名单。[反代配置](../docs/DEPLOYMENT.md#5-反向代理tls-终结)
 
 ## 3. 本仓库的配置取值
 

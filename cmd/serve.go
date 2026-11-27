@@ -124,11 +124,15 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid proxy configuration: %w", err)
 	}
 
-	fingerprintBrowserOpts := buildFingerprintBrowserOptions()
+	if config.App.DebugEndpoints {
+		logrus.Warn("app.debug_endpoints 已停用，请使用本机 fingerprint-check 命令")
+	}
+
+	browserOpts := buildBrowserOptions()
 
 	if config.Server.IsRawRequests {
 		logrus.Warn("Browserless results are very inconsistent or may not even work!")
-		serverOpts := buildServerOptions(corsCfg, proxyCfg, fingerprintBrowserOpts)
+		serverOpts := buildServerOptions(corsCfg, proxyCfg)
 		var rawEngines []core.SearchEngine
 		for _, name := range enabledEngineNames("baidu", "sogou", "so360") {
 			rawEngines = append(rawEngines, &rawEngine{name: name})
@@ -143,7 +147,7 @@ func serve(cmd *cobra.Command, args []string) error {
 		return startServerWithPlatform(serv, nil)
 	}
 
-	baseOpts := fingerprintBrowserOpts
+	baseOpts := browserOpts
 	baseOpts.LeavePageOpen = config.App.IsLeaveHead
 	baseOpts.CaptchaSolverEnabled = captchaSolverEnabled
 	baseOpts.CaptchaSolverApiKey = captchaSolverAPIKey
@@ -153,7 +157,7 @@ func serve(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	serverOpts := buildServerOptions(corsCfg, proxyCfg, fingerprintBrowserOpts)
+	serverOpts := buildServerOptions(corsCfg, proxyCfg)
 	if err := probeIndexJobDir(serverOpts); err != nil {
 		if closeBrowsers != nil {
 			_ = closeBrowsers()
@@ -508,7 +512,7 @@ func registerRootSEOFile(app *fiber.App, route, file string) {
 	})
 }
 
-func buildFingerprintBrowserOptions() core.BrowserOpts {
+func buildBrowserOptions() core.BrowserOpts {
 	blockedResourceTypes := core.MustParseBlockedResourceTypes(config.App.BlockResources)
 
 	opts := core.BrowserOpts{
@@ -580,7 +584,7 @@ func earlyBlacklistGuard(c *fiber.Ctx) error {
 	return guard(c)
 }
 
-func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fingerprintBrowserOpts core.BrowserOpts) core.ServerOptions {
+func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig) core.ServerOptions {
 	retryCfg := core.RetryConfig{
 		MaxRetries:     config.Resilience.MaxRetries,
 		InitialBackoff: 1 * time.Second,
@@ -590,19 +594,16 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 	engineTimeout := time.Duration(config.App.Timeout) * time.Second
 
 	opts := core.ServerOptions{
-		CacheTTL:               time.Duration(config.Cache.TTLSeconds) * time.Second,
-		CacheMaxSize:           config.Cache.MaxSize,
-		IndexCheckCacheTTL:     time.Duration(config.Cache.IndexCheckTTLSeconds) * time.Second,
-		EnableCORS:             config.CORS.Enabled,
-		CORS:                   corsCfg,
-		MetricsToken:           config.Security.MetricsToken,
-		AllowEndpointFallback:  config.Resilience.AllowEndpointFallback,
-		EnableDebugEndpoints:   config.App.DebugEndpoints,
-		FingerprintArtifactDir: core.DefaultFingerprintArtifactDir,
-		FingerprintBrowserOpts: fingerprintBrowserOpts,
-		TrustProxyHeaders:      config.Security.TrustProxyHeaders,
-		TrustedProxies:         append([]string(nil), config.Security.TrustedProxies...),
-		RequestTimeout:         core.RequestTimeoutForRetries(engineTimeout, retryCfg),
+		CacheTTL:              time.Duration(config.Cache.TTLSeconds) * time.Second,
+		CacheMaxSize:          config.Cache.MaxSize,
+		IndexCheckCacheTTL:    time.Duration(config.Cache.IndexCheckTTLSeconds) * time.Second,
+		EnableCORS:            config.CORS.Enabled,
+		CORS:                  corsCfg,
+		MetricsToken:          config.Security.MetricsToken,
+		AllowEndpointFallback: config.Resilience.AllowEndpointFallback,
+		TrustProxyHeaders:     config.Security.TrustProxyHeaders,
+		TrustedProxies:        append([]string(nil), config.Security.TrustedProxies...),
+		RequestTimeout:        core.RequestTimeoutForRetries(engineTimeout, retryCfg),
 		// 收录批量(≤20 条 URL)的限流排队时间随单元数线性增长,基础
 		// 重试预算盖不住 20 条的尾部;批量路由放宽到独立上限,再由
 		// CheckIndexBatch 按实际单元数收窄。>20 条走 index_jobs 任务队列。
@@ -656,14 +657,19 @@ func buildServerOptions(corsCfg core.CORSConfig, proxyCfg core.ProxyConfig, fing
 const gracefulShutdownTimeout = 30 * time.Second
 
 // enforceAdminPasswordSafety refuses a network-exposed deployment that still
-// uses the shipped public admin password. Loopback development remains usable;
-// changing the password through config or WEB2API_PLATFORM_ADMIN_PASSWORD, or
-// having previously changed it in the console, satisfies the check.
+// has an active administrator using the shipped password.
 func enforceAdminPasswordSafety(plat *platform.Platform) error {
-	if plat == nil || isLoopbackHost(config.Server.Host) || !plat.UsesDefaultAdminPassword() {
+	if plat == nil || (isLoopbackHost(config.Server.Host) && !config.Security.TrustProxyHeaders) {
 		return nil
 	}
-	return fmt.Errorf("安全启动被拒绝: 服务绑定在 %q 且管理员密码仍为公开默认值；请设置 WEB2API_PLATFORM_ADMIN_PASSWORD（或 config.platform.admin_password）后重启", config.Server.Host)
+	usesDefault, err := plat.UsesDefaultAdminPassword()
+	if err != nil {
+		return fmt.Errorf("安全启动被拒绝: 无法检查管理员凭据: %w", err)
+	}
+	if !usesDefault {
+		return nil
+	}
+	return fmt.Errorf("安全启动被拒绝: 仍有启用的管理员使用出厂密码，请先更新该账号的密码")
 }
 
 // logSecurityPosture prints the startup SECURITY posture (S4-B-03 出厂安全

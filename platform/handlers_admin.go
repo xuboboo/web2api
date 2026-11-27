@@ -164,8 +164,10 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return errBadRequest(c, "INVALID_PARAM")
 	}
+	p.adminAuthMu.Lock()
 	u, err := p.store.GetUserByUsername(req.Username)
 	if err != nil {
+		p.adminAuthMu.Unlock()
 		return errInternal(c, err)
 	}
 	if u == nil {
@@ -173,8 +175,9 @@ func (p *Platform) handleLogin(c *fiber.Ctx) error {
 	}
 	usernameOK := u != nil && u.Status == UserStatusActive
 	if usernameOK {
-		p.adminAuthMu.Lock()
 		defer p.adminAuthMu.Unlock()
+	} else {
+		p.adminAuthMu.Unlock()
 	}
 	loginName := normalizeUsername(req.Username)
 	now := time.Now()
@@ -287,46 +290,22 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	if err != nil {
 		return errInternal(c, err)
 	}
-	// Non-admin accounts change only their own user record; the global admin
-	// credential/token_version stays untouched. Admin changes keep the original
-	// contract: settings hash override + global invalidation.
-	// Only the configured bootstrap admin owns the global credential settings.
-	// Other admins change just their own user record and sessions.
 	isAdmin := u.Role == RoleAdmin && u.Username == normalizeUsername(p.cfg.AdminUsername)
-	revoked := 0
-	if isAdmin {
-		if version >= 1<<30 {
-			return errInternal(c, fmt.Errorf("admin token version limit reached"))
-		}
-		version++
-		if err := p.store.PutSettings(map[string][]byte{
-			settingAdminHash:           hash,
-			settingAdminPasswordCustom: []byte("1"),
-			settingTokenVersion:        []byte(strconv.Itoa(version)),
-		}); err != nil {
-			return errInternal(c, err)
-		}
-		p.setAdminHash(hash)
-		revoked, err = p.revokeAllSessions()
-	} else {
-		revoked, err = p.revokeUserSessions(u.ID)
-	}
-	if err != nil {
-		logrus.WithError(err).Warn("platform: could not mark old sessions revoked after password change")
-	}
-	u.PasswordHash = hash
-	if err := p.store.PutUser(u); err != nil {
-		return errInternal(c, err)
-	}
-	session, err := p.createUserSession(u, c.IP(), c.Get(fiber.HeaderUserAgent), p.jwtTTL())
+	rotation, version, err := planPasswordRotation(u, hash, version, isAdmin)
 	if err != nil {
 		return errInternal(c, err)
 	}
-	token, err := p.issueUserToken(u, session.ID, version)
+	ttl := p.jwtTTL()
+	rotation.replacement = newUserSession(&rotation.user, c.IP(), c.Get(fiber.HeaderUserAgent), ttl)
+	token, err := p.issueUserToken(&rotation.user, rotation.replacement.ID, version)
 	if err != nil {
 		return errInternal(c, err)
 	}
-	p.setSessionCookie(c, token, p.jwtTTL())
+	revoked, err := p.commitPasswordRotation(rotation)
+	if err != nil {
+		return errInternal(c, err)
+	}
+	p.setSessionCookie(c, token, ttl)
 	p.auditFrom(c, u.Username, AuditActionPasswordChange, u.Username,
 		fmt.Sprintf("ok,revoked_sessions=%d", revoked))
 	if isAdmin {
@@ -337,7 +316,7 @@ func (p *Platform) handlePasswordChange(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"ok":            true,
 		"token":         token,
-		"expires_in":    int64(p.jwtTTL() / time.Second),
+		"expires_in":    int64(ttl / time.Second),
 		"token_version": version,
 	})
 }

@@ -8,7 +8,7 @@ import (
 // The sync path must collapse duplicates exactly like the async job path does,
 // otherwise an input's cost depends only on how many copies it contains.
 func TestValidateIndexCheckURLsCollapsesDuplicates(t *testing.T) {
-	urls, apiErr := validateIndexCheckURLs([]string{
+	urls, apiErr := ValidateIndexCheckURLs([]string{
 		"https://example.test/a",
 		" https://example.test/a ", // trims to the same URL
 		"HTTPS://Example.Test/a",   // scheme/host case folded by the key
@@ -31,7 +31,7 @@ func TestValidateIndexCheckURLsCollapsesDuplicates(t *testing.T) {
 
 // Distinct pages that only differ by a meaningful path/query must stay distinct.
 func TestValidateIndexCheckURLsKeepsDistinctPages(t *testing.T) {
-	urls, apiErr := validateIndexCheckURLs([]string{
+	urls, apiErr := ValidateIndexCheckURLs([]string{
 		"https://example.test/a?id=1",
 		"https://example.test/a?id=2",
 		"https://example.test/a",
@@ -54,7 +54,7 @@ func TestValidateIndexCheckURLsRejectsUnsupportedSchemes(t *testing.T) {
 		"mailto:someone@example.test",
 	}
 	for _, raw := range bad {
-		_, apiErr := validateIndexCheckURLs([]string{raw})
+		_, apiErr := ValidateIndexCheckURLs([]string{raw})
 		if apiErr == nil {
 			t.Fatalf("%q must be rejected", raw)
 		}
@@ -73,7 +73,7 @@ func TestValidateIndexCheckURLsRejectsUnsupportedSchemes(t *testing.T) {
 		"www.example.test/a?b=1", // bare host with query
 	}
 	for _, raw := range good {
-		if _, apiErr := validateIndexCheckURLs([]string{raw}); apiErr != nil {
+		if _, apiErr := ValidateIndexCheckURLs([]string{raw}); apiErr != nil {
 			t.Fatalf("%q must be accepted, got %+v", raw, apiErr)
 		}
 	}
@@ -83,7 +83,7 @@ func TestValidateIndexCheckURLsRejectsUnsupportedSchemes(t *testing.T) {
 // and billing for it is worse than refusing the input.
 func TestValidateIndexCheckURLsRejectsHostWithoutDomain(t *testing.T) {
 	for _, raw := range []string{"not-a-url", "localhost", "http://intranet/x"} {
-		_, apiErr := validateIndexCheckURLs([]string{raw})
+		_, apiErr := ValidateIndexCheckURLs([]string{raw})
 		if apiErr == nil {
 			t.Fatalf("%q must be rejected", raw)
 		}
@@ -100,7 +100,7 @@ func TestValidateIndexCheckURLsRefusesOversizedRawList(t *testing.T) {
 	for i := range raw {
 		raw[i] = "https://example.test/same"
 	}
-	if _, apiErr := validateIndexCheckURLs(raw); apiErr == nil || apiErr.Reason != ReasonTooManyURLs {
+	if _, apiErr := ValidateIndexCheckURLs(raw); apiErr == nil || apiErr.Reason != ReasonTooManyURLs {
 		t.Fatalf("expected TOO_MANY_URLS, got %+v", apiErr)
 	}
 }

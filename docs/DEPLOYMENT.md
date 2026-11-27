@@ -94,8 +94,8 @@ WorkingDirectory=/opt/web2api
 Environment=WEB2API_SERVER_HOST=127.0.0.1
 Environment=WEB2API_SERVER_PORT=7000
 Environment=WEB2API_PLATFORM_DATA_DIR=/var/lib/web2api
-# 放管理员密码等敏感项，权限 0600（systemd 不支持行尾注释，必须独占一行）
-EnvironmentFile=-/etc/web2api/web2api.env
+# 设置 WEB2API_PLATFORM_ADMIN_PASSWORD 等敏感项，文件权限 0600
+EnvironmentFile=/etc/web2api/web2api.env
 ExecStart=/opt/web2api/web2api serve -c /etc/web2api/config.yaml
 Restart=always
 RestartSec=5
@@ -151,23 +151,35 @@ server {
     client_max_body_size 10m;          # 与 Fiber BodyLimit 对齐
     proxy_request_buffering off;
 
+    proxy_set_header Host              $host;
+    # 用反代观察到的地址覆盖来路请求头。
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
     location = /web-tool {
         return 308 /web-tool/$is_args$args;
     }
 
-    location ^~ /web-tool/ {
+    # 仅向本机和明确授权的管理网段开放后台及登录路由。
+    location ~* ^/web-tool/(api|console)(/|$) {
+        allow 127.0.0.1;
+        allow ::1;
+        # allow <管理 VPN 或堡垒机 CIDR>;
+        deny all;
+        proxy_pass http://127.0.0.1:7000;
+    }
+
+    location /web-tool/ {
         # No URI suffix: preserve /web-tool/ when forwarding to the app.
         proxy_pass http://127.0.0.1:7000;
-        proxy_set_header Host              $host;
-        # Overwrite, not append: client-supplied forwarding headers are untrusted.
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
 > 开了反代后必须设 `security.trust_proxy_headers: true`，并把实际反代地址/CIDR 写入 `security.trusted_proxies`（默认只信任本机 `127.0.0.1/32` 与 `::1/128`）。应用只从受信来源读取被 Nginx 覆盖的 `X-Real-IP`；否则限速、登录审计和来源限制看到的是反代地址。不要把客户端传来的转发头直接当作真实 IP。
+
+启用 `security.trust_proxy_headers` 时，即使应用仅监听回环地址，只要数据库中有启用的管理员仍使用出厂密码，服务就会拒绝启动。远程管理时在管理路由的 `allow` 列表中填入实际管理网段。登录锁定仍按用户名跨来源累计，边缘白名单限制了可触发锁定的来源。公网数据 API 位于 `/web-tool/v1/` 等路径。
 
 共享域名应将上述 `location` 放进现有的 TLS `server`，保留其它应用的规则。绑定 `security.metrics_token`，或在公网反代单独拦截 `/web-tool/metrics`。改动后运行 `node deploy/e2e.mjs https://radar.ydsdoa.cn`，同时检查状态码和响应内容。仅检查 HTTP 200 会把其它应用的 HTML 当成健康响应。
 

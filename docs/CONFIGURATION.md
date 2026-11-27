@@ -51,7 +51,7 @@ CLI 参数  >  WEB2API_* 环境变量  >  config.yaml  >  代码内置默认值
 | `leave_head` | `false` | `false` | 保留标签页（调试用） |
 | `block_resources` | 空 | `image,font,css,media` | 浏览器模式屏蔽的子资源 |
 | `block_trackers` | `false` | `true` | 屏蔽已知追踪域名 |
-| `debug_endpoints` | `false` | — | 开启 `/debug/fingerprint-check` |
+| `debug_endpoints` | `false` | — | 旧配置键，HTTP 调试路由已移除。指纹诊断使用本机 `web2api fingerprint-check` 命令。 |
 | `max_processes` | `4` | `1` | 并发 Chrome 进程上限（代码默认 4；本仓库为低内存场景固定为 1） |
 | `idle_ttl` | `10m` | `45s` | 空闲 Chrome 回收时间（低内存优化；默认 10m） |
 | `max_concurrent_requests` | `0`（不限） | `2` | 在途搜索/收录请求并发上限，0=不限。小内存机器用它压峰值内存，超出排队 |
@@ -83,7 +83,7 @@ app.log_max_mb/log_backups 同轮转机制)。
 | --- | --- | --- | --- |
 | `global` | 空 | 空 | 全局代理（等价 `--proxy`） |
 | `entries[]` | 空 | 空 | 代理池：`{url, tags[]}` |
-| `allow_request_proxy_url` | `false` | `false` | 允许 `X-Proxy-URL` 头覆盖(S4-B-03 出厂默认已翻转;既有部署若依赖自带代理需显式改回 `true`) |
+| `allow_request_proxy_url` | `false` | `false` | 允许请求指定代理，代理主机须为公网 IPv4 或 IPv6 字面地址。需要域名的代理由管理员在 `proxies.entries` 或 `proxies.global` 配置。 |
 | `health.failure_threshold` | `3` | `2` | 连续失败多少次判定代理不健康 |
 | `lanes.enabled` | `true` | `true` | 按“引擎+代理会话”复用浏览器 cookie |
 | `lanes.max_lanes` | `100` | `100` | sticky lane 的 LRU 上限 |
