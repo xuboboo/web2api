@@ -320,20 +320,25 @@
 
   /* 按钮三态:默认 / hover(CSS)/ loading(禁用 + 旋转指示)。
    * loadingText 传入时以纯文字替换按钮内容,结束时恢复原 innerHTML。 */
+  var loadingButtons = new WeakMap();
+
   function setBtnLoading(btn, on, loadingText) {
     if (!btn) return;
+    var state = loadingButtons.get(btn);
     if (on) {
-      if (!btn.dataset.origHtml) btn.dataset.origHtml = btn.innerHTML;
-      if (loadingText !== undefined && loadingText !== null) btn.textContent = String(loadingText);
+      if (state) return;
+      var children = loadingText == null ? null : Array.from(btn.childNodes);
+      loadingButtons.set(btn, { children: children, disabled: btn.disabled });
+      if (children) btn.textContent = String(loadingText);
+      btn.setAttribute('aria-busy', 'true');
       btn.classList.add('is-loading');
       btn.disabled = true;
-    } else {
+    } else if (state) {
+      loadingButtons.delete(btn);
+      btn.removeAttribute('aria-busy');
       btn.classList.remove('is-loading');
-      btn.disabled = false;
-      if (btn.dataset.origHtml) {
-        btn.innerHTML = btn.dataset.origHtml;
-        delete btn.dataset.origHtml;
-      }
+      btn.disabled = state.disabled;
+      if (state.children) btn.replaceChildren.apply(btn, state.children);
     }
   }
 
@@ -854,7 +859,10 @@
     noticeSession++;
     while (modalStack.length) modalStack[modalStack.length - 1]();
     var noticeCount = $('#notice-count');
-    if (noticeCount) noticeCount.textContent = '0';
+    if (noticeCount) {
+      noticeCount.textContent = '0';
+      noticeCount.removeAttribute('data-unread');
+    }
     var noticeButton = $('#btn-notices');
     if (noticeButton) noticeButton.setAttribute('aria-label', '站内通知');
     var login = $('#view-login');
@@ -894,8 +902,10 @@
     var items = document.querySelectorAll('.nav-item');
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
-      if (it.getAttribute('data-route') === hash) it.classList.add('active');
-      else it.classList.remove('active');
+      var active = it.getAttribute('data-route') === hash;
+      it.classList.toggle('active', active);
+      if (active) it.setAttribute('aria-current', 'page');
+      else it.removeAttribute('aria-current');
     }
   }
 
@@ -984,27 +994,29 @@
     var writable = currentRole() !== 'viewer';
     var statuses = { billing_pending: '等待计费确认', queued: '排队中', running: '运行中', waiting: '等待中', done: '已完成', cancelled: '已取消', failed: '失败' };
     var card = el('section', { class: 'card' });
-    var detail = el('section', { class: 'card' });
+    var detail = el('section', { class: 'card', hidden: 'hidden' });
     var selected = '';
     var offset = 0;
     var pageSize = 50;
     var requestSeq = 0;
     var detailSeq = 0;
     var keys = [];
+    var keyError = '';
     var scheduleKey = null;
     var pending = null;
     var submitting = false;
     var retryRequests = new Map();
     var keySelect = el('select', { class: 'input', 'aria-label': '计费密钥' });
-    var urlsInput = el('textarea', { class: 'input', rows: '7', placeholder: '每行一个 http/https URL，最多 5000 条', 'aria-label': '批量 URL' });
+    var urlsInput = el('textarea', { class: 'input', rows: '7', placeholder: 'https://example.com/page', 'aria-label': '批量 URL', 'aria-describedby': 'batch-url-hint batch-preview', spellcheck: 'false' });
     var enginesInput = el('select', { class: 'input', 'aria-label': '批量查询引擎' },
       el('option', { value: 'baidu', text: '百度' }), el('option', { value: 'bing', text: 'Bing' }), el('option', { value: 'baidu,bing', text: '百度 + Bing' }));
-    var preview = el('p', { role: 'status' });
+    var preview = el('p', { id: 'batch-preview', class: 'form-hint', role: 'status' });
     var submit = el('button', { class: 'btn btn-primary', type: 'button', text: '提交批量任务', onclick: submitJob });
     var csv = el('input', { type: 'file', accept: '.csv,text/csv', 'aria-label': '导入 CSV' });
     csv.addEventListener('change', function () {
       var file = csv.files[0];
       if (!file) return;
+      csv.value = '';
       if (file.size > 2 * 1024 * 1024) { toast('CSV 请控制在 2 MB 内', 'error'); return; }
       file.text().then(function (text) {
         // RFC 4180 quoted fields, including escaped quotes and embedded newlines.
@@ -1028,15 +1040,18 @@
     });
     [urlsInput, keySelect, enginesInput].forEach(function (node) { node.addEventListener('input', updatePreview); });
     if (writable) root.appendChild(el('section', { class: 'card' }, el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '创建批量任务' })),
-      el('div', { class: 'card-body' }, el('label', null, '计费密钥', keySelect), el('label', null, '查询引擎', enginesInput),
-        el('label', null, 'URL 列表', urlsInput), el('label', null, 'CSV 导入（URL 列或首列）', csv), preview, submit)));
+      el('div', { class: 'card-body job-form' },
+        el('div', { class: 'job-form-grid' }, el('label', null, '计费密钥', keySelect), el('label', null, '查询引擎', enginesInput)),
+        el('label', null, 'URL 列表', urlsInput, el('span', { id: 'batch-url-hint', class: 'form-hint', text: '每行输入一个 HTTP 或 HTTPS 地址，最多 5000 条。' })),
+        el('label', null, '导入 CSV', csv, el('span', { class: 'form-hint', text: '读取 URL 列或首列，最多 2 MB。导入会替换上方列表。' })),
+        preview, el('div', { class: 'row-actions' }, submit))));
     if (writable) api('GET', '/api/keys').then(function (data) {
       if (!alive()) return;
       keys = Array.isArray(data) ? data : (data.items || data.keys || []);
       keys.filter(isKeyUsableForSubmission).forEach(function (k) { keySelect.appendChild(el('option', { value: k.id, text: k.name + ' · ' + (k.daily_quota ? '日额度 ' + k.daily_quota : '不限额度') })); });
       populateScheduleKey();
       updatePreview();
-    }).catch(function (err) { preview.textContent = err.message; submit.disabled = true; });
+    }).catch(function (err) { keyError = err.message; updatePreview(); });
 
     function isKeyUsableForSubmission(key) {
       if (!key || key.status !== 'active') return false;
@@ -1052,22 +1067,31 @@
     }
 
     function validatedInput() {
-      var lines = urlsInput.value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+      var lines = urlsInput.value.split(/\r?\n/).map(function (s) { return s.trim(); });
       var seen = new Set(), valid = [], invalid = [], duplicates = 0;
+      var count = 0;
       lines.forEach(function (s, i) {
+        if (!s) return;
+        count++;
         try {
           var u = new URL(s);
           if (!/^https?:$/.test(u.protocol) || !u.hostname || u.username || u.password) throw new Error();
           if (seen.has(s)) duplicates++; else { seen.add(s); valid.push(s); }
         } catch (_) { invalid.push(i + 1); }
       });
-      return { urls: valid, invalid: invalid, duplicates: duplicates, count: lines.length, engines: enginesInput.value.split(',') };
+      return { urls: valid, invalid: invalid, duplicates: duplicates, count: count, engines: enginesInput.value.split(',') };
     }
     function updatePreview() {
       var v = validatedInput();
       var units = v.urls.length * v.engines.length;
-      preview.textContent = '有效 ' + v.urls.length + ' 条，重复 ' + v.duplicates + ' 条（提交时去重），预计 ' + units + ' 查询单元。' +
-        (v.invalid.length ? '无效行：' + v.invalid.slice(0, 12).join('、') : '') + (v.count > 5000 ? '超过 5000 条上限。' : '');
+      var inputError = v.invalid.length > 0 || v.count > 5000;
+      urlsInput.setAttribute('aria-invalid', String(inputError));
+      preview.classList.toggle('form-err', inputError || Boolean(keyError));
+      preview.textContent = keyError || (v.invalid.length ? '请检查 URL 第 ' + v.invalid.slice(0, 12).join('、') + ' 行。' :
+        v.count > 5000 ? 'URL 列表超过 5000 条上限。' :
+        !keySelect.value ? '需要可用的 API 密钥才能提交。' :
+        !v.count ? '输入网址或导入 CSV 后可预览查询用量。' :
+        '有效 ' + v.urls.length + ' 条，重复 ' + v.duplicates + ' 条（提交时去重），预计 ' + units + ' 查询单元。');
       submit.disabled = submitting || !keySelect.value || !v.urls.length || v.invalid.length > 0 || v.count > 5000;
     }
     function submitJob() {
@@ -1089,7 +1113,10 @@
           if (alive()) updatePreview();
         });
     }
-    var refresh = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '刷新', onclick: loadJobs });
+    var refresh = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: '刷新', onclick: function () {
+      loadJobs();
+      if (selected) loadDetail();
+    } });
     root.appendChild(el('div', { class: 'card-head' }, el('h2', { class: 'card-title', text: '任务列表' }), refresh));
     root.appendChild(card);
     root.appendChild(detail);
@@ -1124,7 +1151,10 @@
           scheduleCard.appendChild(el('p', { class: 'card-body muted', text: '当前实例未启用定时调度。已启用的计划会在服务开启定时调度后执行。' }));
         }
         if (writable) {
-          scheduleCard.appendChild(el('div', { class: 'card-body' }, el('label', null, '计划名称', scheduleName), el('label', null, '计费密钥', scheduleKey), el('label', null, '查询引擎', scheduleEngines), el('label', null, '周期', scheduleFrequency), el('label', null, 'URL 列表', scheduleURLs), createSchedule));
+          scheduleCard.appendChild(el('div', { class: 'card-body job-form' },
+            el('div', { class: 'job-form-grid' }, el('label', null, '计划名称', scheduleName), el('label', null, '计费密钥', scheduleKey),
+              el('label', null, '查询引擎', scheduleEngines), el('label', null, '周期', scheduleFrequency)),
+            el('label', null, 'URL 列表', scheduleURLs), el('div', { class: 'row-actions' }, createSchedule)));
           populateScheduleKey();
         }
         var rows = items.map(function (item) {
@@ -1202,6 +1232,7 @@
     function loadDetail() {
       var id = selected;
       if (!id) return;
+      detail.hidden = false;
       var seq = ++detailSeq;
       var pageOffset = offset;
       var path = '/api/index/check/jobs/' + encodeURIComponent(id);
@@ -5375,6 +5406,7 @@ async def run():
         if (request === sequence) {
           var unread = items.filter(function (item) { return !item.acknowledged_at; }).length;
           count.textContent = String(unread);
+          count.toggleAttribute('data-unread', unread > 0);
           btn.setAttribute('aria-label', '站内通知，未读 ' + unread + ' 条');
         }
         return items;
@@ -5391,7 +5423,6 @@ async def run():
       btn.setAttribute('aria-busy', 'true');
       fetchNotices().then(function (items) {
         if (!current(session)) return;
-        if (!items.length) { toast('暂无站内通知', 'info'); return; }
         var list = el('ul', { class: 'notice-list' }, items.map(function (item) {
           var title = el('strong', { text: item.title });
           var status = el('span', { class: 'muted', text: item.acknowledged_at ? '已确认' : '未确认' });
@@ -5399,7 +5430,10 @@ async def run():
             class: 'btn btn-secondary btn-sm', type: 'button', text: '确认',
             'aria-label': '确认通知：' + item.title,
             onclick: function () {
-              setBtnLoading(action, true, '确认中…');
+              if (action.getAttribute('aria-busy') === 'true') return;
+              action.setAttribute('aria-busy', 'true');
+              action.setAttribute('aria-disabled', 'true');
+              action.textContent = '确认中…';
               api('POST', '/api/notices/' + encodeURIComponent(item.id) + '/ack', null, { skipAuthRedirect: true })
                 .then(function () {
                   if (!current(session)) return;
@@ -5414,13 +5448,21 @@ async def run():
                 .catch(function (error) {
                   if (current(session)) toast(error.message, 'error');
                 })
-                .finally(function () { if (action.isConnected) setBtnLoading(action, false); });
+                .finally(function () {
+                  if (!action.isConnected) return;
+                  action.removeAttribute('aria-busy');
+                  action.removeAttribute('aria-disabled');
+                  action.textContent = '确认';
+                });
             }
           });
           return el('li', null, title, el('p', { text: item.body }),
-            el('div', { class: 'row-actions' }, status, action));
+            el('div', { class: 'notice-meta' },
+              item.created_at ? el('time', { class: 'muted', datetime: item.created_at, text: fmtDateTime(item.created_at) }) : null,
+              el('div', { class: 'row-actions' }, status, action)));
         }));
-        openModal({ title: '站内通知', body: el('div', { class: 'modal-body' }, list), wide: true });
+        var content = items.length ? list : emptyNode('暂无站内通知');
+        openModal({ title: '站内通知', body: el('div', { class: 'modal-body' }, content), wide: true });
       }).catch(function (error) {
         if (current(session)) toast(error.message, 'error');
       }).finally(function () { btn.removeAttribute('aria-busy'); });
