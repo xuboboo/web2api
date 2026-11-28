@@ -140,30 +140,6 @@ func (p *Platform) revokeSession(sid string) (bool, error) {
 	return true, nil
 }
 
-// revokeOtherSessions revokes every active session except keepID.
-func (p *Platform) revokeOtherSessions(keepID string) (int, error) {
-	p.sessionMu.Lock()
-	defer p.sessionMu.Unlock()
-	sessions, err := p.store.ListSessions()
-	if err != nil {
-		return 0, err
-	}
-	now := time.Now()
-	revoked := 0
-	for i := range sessions {
-		s := &sessions[i]
-		if s.ID == keepID || s.Revoked || !now.Before(s.ExpiresAt) {
-			continue
-		}
-		s.Revoked = true
-		if err := p.store.PutSession(s); err != nil {
-			return revoked, err
-		}
-		revoked++
-	}
-	return revoked, nil
-}
-
 // listSessions returns active (non-revoked, non-expired) sessions newest
 // active first, flagging the requester's own session (constant-time compare).
 func (p *Platform) listSessions(currentID string) []AdminSession {

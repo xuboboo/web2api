@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,7 +22,7 @@ func newFingerprintCommand() *cobra.Command {
 		Use:   "fingerprint-check",
 		Short: "Run browser fingerprint diagnostics locally",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
 			if timeout <= 0 || wait < 0 {
 				return fmt.Errorf("probe timeout must be positive and wait must be non-negative")
 			}
@@ -45,7 +46,9 @@ func newFingerprintCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer browser.Close()
+			defer func() {
+				runErr = errors.Join(runErr, wrapIfError("close diagnostic browser", browser.Close()))
+			}()
 
 			reports := make([]fpcheck.Report, 0, len(selected))
 			for i, detector := range selected {
