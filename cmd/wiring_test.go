@@ -309,7 +309,7 @@ func TestDataPlaneAuthSwitch(t *testing.T) {
 	}
 
 	corsCfg := core.DefaultCORSConfig()
-	serverOpts := buildServerOptions(corsCfg, core.DefaultProxyConfig(), core.BrowserOpts{})
+	serverOpts := buildServerOptions(corsCfg, core.DefaultProxyConfig())
 	serv := core.NewServerWithOptions("127.0.0.1", 7000, serverOpts, &countingEngineMock{name: "baidu"})
 	closePlat, err := mountPlatformAndPanel(serv)
 	if err != nil {

@@ -112,7 +112,7 @@ func (p *Platform) RegisterConsoleJobs(app fiber.Router, h IndexJobHandlers) {
 				if role == RoleAdmin {
 					billingUser, _ = original.ConsoleJobOwner(c.Params("id"))
 				}
-				job, _, err := p.enqueueBilled(ctx, billingUser, keyID, idem, urls, engines, c.IP())
+				job, _, err := p.enqueueBilled(ctx, billingUser, keyID, idem, urls, engines, c.IP(), false)
 				return job, err
 			})
 			job, err := coordinator.RetryFailedIndexJob(ctx, c.Params("id"))

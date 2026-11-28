@@ -385,31 +385,13 @@ func (s *server) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 // failures answer JSON-RPC -32602 (contract: 入参校验失败不回 500); dependency
 // failures answer a normal tool result with isError:true (MCP tools semantics).
 func (s *server) handleToolsCall(c *fiber.Ctx, req rpcRequest) error {
-	var params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams,
-				"invalid params: params must be an object with name and arguments")
-		}
-	}
-	if strings.TrimSpace(params.Name) == "" {
-		return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams,
-			"invalid params: name is required")
-	}
-
-	args := map[string]json.RawMessage{}
-	if len(params.Arguments) > 0 {
-		if err := json.Unmarshal(params.Arguments, &args); err != nil {
-			return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams,
-				"invalid params: arguments must be an object")
-		}
+	name, args, err := parseToolCallParams(req.Params)
+	if err != nil {
+		return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
 
 	ctx := c.UserContext()
-	switch params.Name {
+	switch name {
 	case toolWebSearch:
 		engine, query, limit, err := parseWebSearchArgs(args)
 		if err != nil {
@@ -529,7 +511,7 @@ func (s *server) handleToolsCall(c *fiber.Ctx, req rpcRequest) error {
 
 	default:
 		return respondRPCError(c, fiber.StatusOK, req.ID, codeInvalidParams,
-			"invalid params: unknown tool "+params.Name)
+			"invalid params: unknown tool "+name)
 	}
 }
 

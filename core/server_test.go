@@ -119,76 +119,13 @@ func TestErrorResponseIncludesRequestID(t *testing.T) {
 	}
 }
 
-func TestDebugFingerprintEndpointDisabledByDefault(t *testing.T) {
+func TestFingerprintDiagnosticsAreNotExposedOverHTTP(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 	srv := NewServerWithOptions("127.0.0.1", 7109, DefaultServerOptions(), engine)
 
 	resp := request(t, srv, "/debug/fingerprint-check")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected disabled debug endpoint to return 404, got %d", resp.StatusCode)
-	}
-}
-
-func TestDebugFingerprintEndpointValidatesDetectorParam(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.EnableDebugEndpoints = true
-	srv := NewServerWithOptions("127.0.0.1", 7112, opts, engine)
-
-	resp := request(t, srv, "/debug/fingerprint-check?detector=unknown")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected invalid detector to return 400, got %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-Network-Bytes"); got != "0" {
-		t.Fatalf("expected X-Network-Bytes=0, got %q", got)
-	}
-}
-
-func TestDebugFingerprintEndpointValidatesWaitParam(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.EnableDebugEndpoints = true
-	srv := NewServerWithOptions("127.0.0.1", 7113, opts, engine)
-
-	resp := request(t, srv, "/debug/fingerprint-check?detector=sannysoft&wait_ms=-1")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected invalid wait_ms to return 400, got %d", resp.StatusCode)
-	}
-}
-
-func TestDebugFingerprintEndpointCustomDetectorRequiresURL(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.EnableDebugEndpoints = true
-	srv := NewServerWithOptions("127.0.0.1", 7114, opts, engine)
-
-	resp := request(t, srv, "/debug/fingerprint-check?detector=custom")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected custom detector without url to return 400, got %d", resp.StatusCode)
-	}
-}
-
-func TestDebugFingerprintEndpointCustomDetectorValidatesInsecureParam(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.EnableDebugEndpoints = true
-	srv := NewServerWithOptions("127.0.0.1", 7115, opts, engine)
-
-	resp := request(t, srv, "/debug/fingerprint-check?detector=custom&url=https://localhost:9000&insecure=notabool")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected invalid insecure query value to return 400, got %d", resp.StatusCode)
-	}
-}
-
-func TestDebugFingerprintEndpointCustomDetectorValidatesURL(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.EnableDebugEndpoints = true
-	srv := NewServerWithOptions("127.0.0.1", 7116, opts, engine)
-
-	resp := request(t, srv, "/debug/fingerprint-check?detector=custom&url=not-a-url")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected invalid custom URL to return 400, got %d", resp.StatusCode)
 	}
 }
 
@@ -591,7 +528,7 @@ func TestProxiedRequestWithoutMarketMetadataBypassesCache(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-		req.Header.Set("X-Proxy-URL", "http://proxy.example:8080")
+		req.Header.Set("X-Proxy-URL", "http://1.1.1.1:8080")
 		resp, err := srv.app.Test(req, -1)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
@@ -624,7 +561,7 @@ func TestProxiedRequestWithMarketMetadataUsesCache(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-		req.Header.Set("X-Proxy-URL", "http://proxy.example:8080")
+		req.Header.Set("X-Proxy-URL", "http://1.1.1.1:8080")
 		req.Header.Set("X-Proxy-Country", "us")
 		resp, err := srv.app.Test(req, -1)
 		if err != nil {
@@ -1046,7 +983,7 @@ func TestRequestProxyURLDisabledByDefault(t *testing.T) {
 	engine := &engineMock{name: "google", initialized: true}
 	srv := NewServerWithOptions("127.0.0.1", 7117, DefaultServerOptions(), engine)
 
-	resp := requestWithHeader(t, srv, "/google/search?text=golang", "X-Proxy-URL", "http://user:pass@proxy.example:8080")
+	resp := requestWithHeader(t, srv, "/google/search?text=golang", "X-Proxy-URL", "http://user:pass@1.1.1.1:8080")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected disabled request proxy URL to return 400, got %d", resp.StatusCode)
 	}
@@ -1084,7 +1021,7 @@ func TestRequestProxyURLHonoredWhenEnabled(t *testing.T) {
 	srv := NewServerWithOptions("127.0.0.1", 7118, opts, engine)
 
 	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
+	req.Header.Set("X-Proxy-URL", "http://user:pass@1.1.1.1:8080")
 	req.Header.Set("X-Proxy-Country", " US ")
 	req.Header.Set("X-Proxy-Class", " Residential ")
 	req.Header.Set("X-Proxy-Provider", " WebShare ")
@@ -1096,7 +1033,7 @@ func TestRequestProxyURLHonoredWhenEnabled(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected request proxy URL request to succeed, got %d", resp.StatusCode)
 	}
-	if got.ProxyURL != "http://user:pass@proxy.example:8080" {
+	if got.ProxyURL != "http://user:pass@1.1.1.1:8080" {
 		t.Fatalf("expected raw proxy URL on query, got %q", got.ProxyURL)
 	}
 	if got.ProxyCountry != "us" || got.ProxyClass != "residential" || got.ProxyProvider != "webshare" || got.ProxySessionID != "SID-1" {
@@ -1108,7 +1045,7 @@ func TestRequestProxyURLHonoredWhenEnabled(t *testing.T) {
 	if header := resp.Header.Get("X-Proxy-Tag"); header != "" {
 		t.Fatalf("expected empty X-Proxy-Tag, got %q", header)
 	}
-	if header := resp.Header.Get("X-Proxy-Used"); header != "http://proxy.example:8080" {
+	if header := resp.Header.Get("X-Proxy-Used"); header != "http://1.1.1.1:8080" {
 		t.Fatalf("expected masked X-Proxy-Used, got %q", header)
 	}
 }
@@ -1138,7 +1075,7 @@ func TestRequestProxyURLBeatsTagOverride(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Use-Proxy", "us")
-	req.Header.Set("X-Proxy-URL", "http://request-proxy:8080")
+	req.Header.Set("X-Proxy-URL", "http://8.8.8.8:8080")
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -1146,7 +1083,7 @@ func TestRequestProxyURLBeatsTagOverride(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected request to succeed, got %d", resp.StatusCode)
 	}
-	if googleProxy != "http://request-proxy:8080" {
+	if googleProxy != "http://8.8.8.8:8080" {
 		t.Fatalf("expected request proxy URL to beat tag override, got %q", googleProxy)
 	}
 	if got := resp.Header.Get("X-Proxy-Mode"); got != ProxyModeRequestURL {
@@ -1176,7 +1113,7 @@ func TestRequestProxyOverrideDirectIgnoresRequestProxyURL(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
 	req.Header.Set("X-Use-Proxy", "direct")
-	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
+	req.Header.Set("X-Proxy-URL", "http://user:pass@1.1.1.1:8080")
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -1251,7 +1188,7 @@ func TestCaptchaDropsProxyLaneCookies(t *testing.T) {
 	srv := NewServerWithOptions("127.0.0.1", 7120, opts, engine)
 
 	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
+	req.Header.Set("X-Proxy-URL", "http://user:pass@1.1.1.1:8080")
 	req.Header.Set("X-Proxy-Session-ID", "sid-a")
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
@@ -1292,7 +1229,7 @@ func TestProxyErrorDoesNotDropProxyLaneCookies(t *testing.T) {
 	srv := NewServerWithOptions("127.0.0.1", 7121, opts, engine)
 
 	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-	req.Header.Set("X-Proxy-URL", "http://user:pass@proxy.example:8080")
+	req.Header.Set("X-Proxy-URL", "http://user:pass@1.1.1.1:8080")
 	req.Header.Set("X-Proxy-Session-ID", "sid-a")
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
@@ -1349,7 +1286,7 @@ func TestStableSearchErrorJSONWithProxyMeta(t *testing.T) {
 			srv := NewServerWithOptions("127.0.0.1", 7122, opts, engine)
 
 			req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-			req.Header.Set("X-Proxy-URL", "http://user:sentinel-password@proxy.example:8080")
+			req.Header.Set("X-Proxy-URL", "http://user:sentinel-password@1.1.1.1:8080")
 			req.Header.Set("X-Proxy-Country", "US")
 			req.Header.Set("X-Proxy-Class", "Residential")
 			req.Header.Set("X-Proxy-Provider", "WebShare")
@@ -1386,7 +1323,7 @@ func TestStableSearchErrorJSONWithProxyMeta(t *testing.T) {
 					t.Fatalf("expected upstream_status=429, got %#v", payload.Meta["upstream_status"])
 				}
 			}
-			if payload.Meta["proxy_used"] != "http://proxy.example:8080" {
+			if payload.Meta["proxy_used"] != "http://1.1.1.1:8080" {
 				t.Fatalf("expected masked proxy_used, got %#v", payload.Meta["proxy_used"])
 			}
 			if payload.Meta["proxy_country"] != "us" || payload.Meta["proxy_class"] != "residential" ||
@@ -1453,7 +1390,7 @@ func TestSearchErrorIncludesSanitizedDetail(t *testing.T) {
 	srv := NewServerWithOptions("127.0.0.1", 7123, opts, engine)
 
 	req := httptest.NewRequest(http.MethodGet, BasePath+"/google/search?text=golang", nil)
-	req.Header.Set("X-Proxy-URL", "http://user:sentinel-password@proxy.example:8080")
+	req.Header.Set("X-Proxy-URL", "http://user:sentinel-password@1.1.1.1:8080")
 	resp, err := srv.app.Test(req, -1)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
@@ -1477,7 +1414,7 @@ func TestSearchErrorIncludesSanitizedDetail(t *testing.T) {
 	if payload.Meta["error_detail"] == "" {
 		t.Fatalf("expected error_detail, got %#v", payload.Meta)
 	}
-	if !strings.Contains(payload.Meta["error_detail"].(string), "http://proxy.example:8080") {
+	if !strings.Contains(payload.Meta["error_detail"].(string), "http://1.1.1.1:8080") {
 		t.Fatalf("expected masked proxy in error_detail, got %#v", payload.Meta["error_detail"])
 	}
 }
@@ -2046,18 +1983,6 @@ func TestUseProfileHeaderAcceptsValidID(t *testing.T) {
 	// request was not rejected at the profile-validation layer.
 	if resp.StatusCode == http.StatusBadRequest {
 		t.Fatalf("expected request with valid profile id to pass validation, got 400")
-	}
-}
-
-func TestUseProfileHeaderFingerprintCheckRejectsUnknownID(t *testing.T) {
-	engine := &engineMock{name: "google", initialized: true}
-	opts := DefaultServerOptions()
-	opts.EnableDebugEndpoints = true
-	srv := NewServerWithOptions("127.0.0.1", 7222, opts, engine)
-
-	resp := requestWithHeader(t, srv, "/debug/fingerprint-check?detector=sannysoft", "X-Use-Profile", "does-not-exist")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400 for unknown profile id on fingerprint endpoint, got %d", resp.StatusCode)
 	}
 }
 

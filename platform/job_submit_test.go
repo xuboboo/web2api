@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/mcp"
 	"golang.org/x/time/rate"
 )
 
@@ -24,6 +25,54 @@ func (consoleJobEngine) Search(context.Context, core.Query) ([]core.SearchResult
 }
 func (consoleJobEngine) CheckIndexed(_ context.Context, url string, _ core.Query) ([]core.SearchResult, error) {
 	return []core.SearchResult{{Rank: 1, URL: url, Title: "self"}}, nil
+}
+
+func TestAPIKeyAsyncSubmissionsConsumeOneRateToken(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	env.app = fiber.New(fiber.Config{ErrorHandler: core.JSONErrorMiddleware()})
+	opts := core.DefaultServerOptions()
+	opts.IndexJobDir = filepath.Join(t.TempDir(), "jobs")
+	srv := core.NewServerWithOptions("127.0.0.1", 0, opts, consoleJobEngine{})
+	t.Cleanup(func() { _ = srv.Shutdown() })
+	env.p.RegisterAdmin(env.app, nil, srv)
+	env.p.RegisterPublic(env.app, srv.IndexCheckHandler)
+	if err := mcp.Register(env.app.Group("/web-tool"), env.p.AuthAny(), mcp.Deps{SubmitIndexJob: srv.SubmitIndexJob}); err != nil {
+		t.Fatal(err)
+	}
+	sec := env.p.securityValue()
+	sec.APIRatePerMinute = 1
+	env.p.SetSecurity(sec)
+	admin := login(t, env.app)
+
+	for _, path := range []string{"/v1/index/check?async=1", "/web-tool/mcp"} {
+		t.Run(path, func(t *testing.T) {
+			keyID, key := createKey(t, env, admin, path, 100)
+			urls := []string{"https://example.test/initial"}
+			for i := 0; path == "/web-tool/mcp" && i < 20; i++ {
+				urls = append(urls, fmt.Sprintf("https://example.test/%d", i))
+			}
+			args := map[string]any{"urls": urls, "engines": []string{"baidu"}}
+			payload, expected := any(args), http.StatusAccepted
+			if path == "/web-tool/mcp" {
+				payload = map[string]any{
+					"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+					"params": map[string]any{"name": "check_indexed", "arguments": args},
+				}
+				expected = http.StatusOK
+			}
+			status, body := doJSON(t, env.app, http.MethodPost, path, payload, keyHeaders(key))
+			if status != expected {
+				t.Fatalf("submit status=%d body=%v", status, body)
+			}
+			stored, err := env.p.store.GetKeyByID(keyID)
+			if err != nil || stored == nil || stored.UsedTotal != int64(len(urls)) {
+				t.Fatalf("async submission charge: key=%+v err=%v want %d units", stored, err, len(urls))
+			}
+			if env.p.allowKeyRate(keyID) {
+				t.Fatal("successful submission should have consumed the last rate token")
+			}
+		})
+	}
 }
 
 func TestScheduledBillingUsesStoredKeyWithoutInboundIP(t *testing.T) {
@@ -44,12 +93,12 @@ func TestScheduledBillingUsesStoredKeyWithoutInboundIP(t *testing.T) {
 	env.p.engineControl = srv
 	ctx := core.WithJobUser(core.WithJobOwner(context.Background(), keyID), "operator")
 	urls, engines := []string{"https://example.test/a"}, []string{"baidu"}
-	if _, _, err := env.p.enqueueBilled(ctx, "operator", keyID, "schedule-test-ip-plain-01", urls, engines, ""); err == nil {
+	if _, _, err := env.p.enqueueBilled(ctx, "operator", keyID, "schedule-test-ip-plain-01", urls, engines, "", false); err == nil {
 		t.Fatal("ordinary billed submission bypassed the key IP allowlist")
 	} else if apiErr, ok := err.(*core.APIError); !ok || apiErr.HTTPStatus != http.StatusForbidden {
 		t.Fatalf("ordinary submission error = %T %v, want 403", err, err)
 	}
-	if _, _, err := env.p.enqueueBilled(withScheduledBilling(ctx), "operator", keyID, "schedule-test-ip-cron-01", urls, engines, ""); err != nil {
+	if _, _, err := env.p.enqueueBilled(withScheduledBilling(ctx), "operator", keyID, "schedule-test-ip-cron-01", urls, engines, "", false); err != nil {
 		t.Fatalf("authorized internal schedule was rejected by inbound IP policy: %v", err)
 	}
 }

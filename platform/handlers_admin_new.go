@@ -5,7 +5,6 @@ package platform
 
 import (
 	"encoding/json"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -17,11 +16,6 @@ import (
 	"github.com/xuboboo/web2api/core"
 	"golang.org/x/crypto/bcrypt"
 )
-
-// userMutationMu serializes the "last active admin" check with the write so
-// two concurrent demotions cannot both pass the guard (bbolt is single-writer
-// per transaction but the count check is a separate read).
-var userMutationMu sync.Mutex
 
 // blacklistMutationMu serializes duplicate checks and inserts.
 var blacklistMutationMu sync.Mutex
@@ -62,8 +56,8 @@ func (p *Platform) handleListUsers(c *fiber.Ctx) error {
 }
 
 func (p *Platform) handleCreateUser(c *fiber.Ctx) error {
-	userMutationMu.Lock()
-	defer userMutationMu.Unlock()
+	p.adminAuthMu.Lock()
+	defer p.adminAuthMu.Unlock()
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -106,8 +100,8 @@ func (p *Platform) handleCreateUser(c *fiber.Ctx) error {
 }
 
 func (p *Platform) handleUpdateUser(c *fiber.Ctx) error {
-	userMutationMu.Lock()
-	defer userMutationMu.Unlock()
+	p.adminAuthMu.Lock()
+	defer p.adminAuthMu.Unlock()
 	u, err := p.store.GetUserByID(c.Params("id"))
 	if err != nil {
 		return errInternal(c, err)
@@ -155,8 +149,8 @@ func (p *Platform) handleUpdateUser(c *fiber.Ctx) error {
 }
 
 func (p *Platform) handleDeleteUser(c *fiber.Ctx) error {
-	userMutationMu.Lock()
-	defer userMutationMu.Unlock()
+	p.adminAuthMu.Lock()
+	defer p.adminAuthMu.Unlock()
 	u, err := p.store.GetUserByID(c.Params("id"))
 	if err != nil {
 		return errInternal(c, err)
@@ -184,8 +178,8 @@ func (p *Platform) handleDeleteUser(c *fiber.Ctx) error {
 }
 
 func (p *Platform) handleResetUserPassword(c *fiber.Ctx) error {
-	userMutationMu.Lock()
-	defer userMutationMu.Unlock()
+	p.adminAuthMu.Lock()
+	defer p.adminAuthMu.Unlock()
 	u, err := p.store.GetUserByID(c.Params("id"))
 	if err != nil {
 		return errInternal(c, err)
@@ -210,30 +204,16 @@ func (p *Platform) handleResetUserPassword(c *fiber.Ctx) error {
 	// Resetting the configured bootstrap admin through the user admin API must
 	// follow the same global credential path as self-service password change;
 	// otherwise startup re-syncs the old settings hash and silently restores it.
-	revoked := 0
-	if u.Username == normalizeUsername(p.cfg.AdminUsername) {
-		version, err := p.tokenVersion()
-		if err != nil {
-			return errInternal(c, err)
-		}
-		if version >= 1<<30 {
-			return errInternal(c, fmt.Errorf("admin token version limit reached"))
-		}
-		version++
-		if err := p.store.PutSettings(map[string][]byte{
-			settingAdminHash:           hash,
-			settingAdminPasswordCustom: []byte("1"),
-			settingTokenVersion:        []byte(strconv.Itoa(version)),
-		}); err != nil {
-			return errInternal(c, err)
-		}
-		p.setAdminHash(hash)
-		revoked, _ = p.revokeAllSessions()
-	} else {
-		revoked, _ = p.revokeUserSessions(u.ID)
+	version, err := p.tokenVersion()
+	if err != nil {
+		return errInternal(c, err)
 	}
-	u.PasswordHash = hash
-	if err := p.store.PutUser(u); err != nil {
+	rotation, _, err := planPasswordRotation(u, hash, version, u.Username == normalizeUsername(p.cfg.AdminUsername))
+	if err != nil {
+		return errInternal(c, err)
+	}
+	revoked, err := p.commitPasswordRotation(rotation)
+	if err != nil {
 		return errInternal(c, err)
 	}
 	p.auditFrom(c, "", AuditActionUserPassword, u.Username, "reset,revoked="+itoa(revoked))

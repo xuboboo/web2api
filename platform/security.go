@@ -17,7 +17,6 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/xuboboo/web2api/core"
+	"github.com/xuboboo/web2api/mcp"
 	"golang.org/x/time/rate"
 )
 
@@ -422,8 +422,7 @@ func (p *Platform) AuthAny() fiber.Handler {
 					core.Metrics().IncRateLimited()
 					return errRateLimited(c, retryAfterSecondsForRate(p.securityValue().APIRatePerMinute))
 				}
-				units := p.mcpChargeUnits(c)
-				asyncJob, idempotency := mcpAsyncSubmission(c.Body())
+				units, asyncJob := p.mcpChargeUnits(c)
 				_, billedJobs := p.engineControl.(consoleJobCoordinator)
 				if units > 0 && (!asyncJob || !billedJobs) {
 					release, err := p.reserveQuota(c, key.ID, int64(units))
@@ -439,29 +438,30 @@ func (p *Platform) AuthAny() fiber.Handler {
 				// check_indexed tool submits through this context.
 				c.SetUserContext(core.WithJobOwner(c.UserContext(), key.ID))
 				if asyncJob && billedJobs {
-					if header := c.Get("Idempotency-Key"); header != "" {
-						idempotency = header
-					}
+					idempotency := c.Get("Idempotency-Key")
 					if idempotency == "" {
 						idempotency = "mcp-" + newUserID()
 					}
 					c.SetUserContext(core.WithIndexJobSubmission(c.UserContext(), func(ctx context.Context, urls, engines []string) (*core.IndexJob, error) {
-						job, _, err := p.enqueueBilled(ctx, "", key.ID, idempotency, urls, engines, c.IP())
+						job, _, err := p.enqueueBilled(ctx, "", key.ID, idempotency, urls, engines, c.IP(), true)
 						return job, err
 					}))
 				}
 				started := time.Now()
 				handlerErr := c.Next()
 				if status := c.Response().StatusCode(); status == fiber.StatusOK && handlerErr == nil && units > 0 && (!asyncJob || !billedJobs) {
+					stats, failed := parseMCPUsage(c.Response().Body())
+					if failed && stats == nil {
+						return handlerErr
+					}
 					endpoint := c.Route().Path
 					if endpoint == "" || endpoint == "/" {
 						endpoint = c.Path()
 					}
 					// T-02 与 writeUsage 同口径: 响应体(result.content[].text)携带逐
 					// 引擎明细时按成功单元计费并落 EngineStats(/api/reconcile 可逐
-					// 单元对账);明细不可解析(web_search、工具级错误信封)时保持
+					// 单元对账);成功响应无引擎明细(web_search)时保持
 					// 既有行为——按请求单元全额计费。
-					stats := parseEngineStatsFromMCPBody(c.Response().Body())
 					charged := units
 					if stats != nil {
 						charged = 0
@@ -491,96 +491,31 @@ func (p *Platform) AuthAny() fiber.Handler {
 // (契约 C): web_search=1, check_indexed=len(urls)×len(engines) (engines
 // omitted counts conservatively as the 4 default engines), every other
 // method/tool costs nothing. Only POST paths ending in /mcp are parsed.
-func (p *Platform) mcpChargeUnits(c *fiber.Ctx) int {
+func (p *Platform) mcpChargeUnits(c *fiber.Ctx) (int, bool) {
 	if c.Method() != fiber.MethodPost {
-		return 0
+		return 0, false
 	}
 	path := strings.TrimSuffix(c.Route().Path, "/")
 	if !strings.HasSuffix(path, "/mcp") {
-		return 0
+		return 0, false
 	}
 	return mcpToolUnits(c.Body())
 }
 
 // mcpToolUnits extracts the billed units from one JSON-RPC 2.0 request body.
-func mcpToolUnits(body []byte) int {
-	if len(body) == 0 {
-		return 0
+func mcpToolUnits(body []byte) (int, bool) {
+	call := mcp.ParseToolQuotaRequest(body)
+	if call.Search {
+		return 1, false
 	}
-	var payload struct {
-		Method string `json:"method"`
-		Params struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		} `json:"params"`
+	if call.URLCount == 0 {
+		return 0, false
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return 0
+	engines, ok := ResolveEngines(call.Engines)
+	if !ok {
+		return 0, false
 	}
-	if payload.Method != "tools/call" {
-		return 0
-	}
-	switch payload.Params.Name {
-	case "web_search":
-		return 1
-	case "check_indexed":
-		var args struct {
-			URLs    []string `json:"urls"`
-			Engines []string `json:"engines"`
-		}
-		if len(payload.Params.Arguments) > 0 {
-			if err := json.Unmarshal(payload.Params.Arguments, &args); err != nil {
-				return 0
-			}
-		}
-		units := len(args.URLs) * len(resolveChargeEngines(args.Engines))
-		return units
-	default:
-		return 0
-	}
-}
-
-func mcpAsyncSubmission(body []byte) (bool, string) {
-	var req struct {
-		Method string `json:"method"`
-		Params struct {
-			Name      string `json:"name"`
-			Arguments struct {
-				URLs []string `json:"urls"`
-			} `json:"arguments"`
-		} `json:"params"`
-	}
-	if json.Unmarshal(body, &req) != nil || req.Method != "tools/call" || req.Params.Name != "check_indexed" {
-		return false, ""
-	}
-	return len(req.Params.Arguments.URLs) > 20, ""
-}
-
-// resolveChargeEngines mirrors ResolveEngines sizing (default engines = 4)
-// without rejecting unknown names — quota pre-check stays conservative.
-func resolveChargeEngines(raw []string) []string {
-	if len(raw) == 0 {
-		return DefaultEngines
-	}
-	seen := make(map[string]bool, len(raw))
-	out := make([]string, 0, len(raw))
-	for _, name := range raw {
-		name = strings.ToLower(strings.TrimSpace(name))
-		if name == "" {
-			continue
-		}
-		if mapped, ok := engineAliases[name]; ok {
-			name = mapped
-		}
-		if !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
-	}
-	if len(out) == 0 {
-		return DefaultEngines
-	}
-	return out
+	return call.URLCount * len(engines), call.Async
 }
 
 // ChargeUsage records one billed call (落账) and consumes the units from the

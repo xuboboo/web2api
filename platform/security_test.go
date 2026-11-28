@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/xuboboo/web2api/mcp"
 )
 
 // doJSONErr performs a request and returns status, decoded body and the
@@ -144,17 +145,11 @@ func TestLoginLockoutCannotBeBypassedByRotatingIPs(t *testing.T) {
 	}
 }
 
-func TestUsesDefaultAdminPasswordHonorsCustomMarker(t *testing.T) {
+func TestUsesDefaultAdminPasswordUsesStoredCredentials(t *testing.T) {
 	env := newTestEnv(t, 200, false)
 	env.p.cfg.AdminPassword = DefaultPlatformConfig().AdminPassword
-	if !env.p.UsesDefaultAdminPassword() {
-		t.Fatal("new test platform should report the configured default password")
-	}
-	if err := env.p.store.PutSetting(settingAdminPasswordCustom, []byte("1")); err != nil {
-		t.Fatal(err)
-	}
-	if env.p.UsesDefaultAdminPassword() {
-		t.Fatal("console-changed password must stay custom even if config still has the default")
+	if usesDefault, err := env.p.UsesDefaultAdminPassword(); err != nil || usesDefault {
+		t.Fatalf("stored account has a different password, got usesDefault=%v, err=%v", usesDefault, err)
 	}
 }
 
@@ -261,6 +256,66 @@ func TestSessionRevocationSurvivesConcurrentRefresh(t *testing.T) {
 		if err != nil || saved == nil || !saved.Revoked || env.p.sessionActive(session.ID) {
 			t.Fatalf("persisted session not revoked: %+v, err=%v", saved, err)
 		}
+	}
+}
+
+type credentialLockStore struct {
+	Store
+	check func()
+}
+
+func (s *credentialLockStore) GetUserByUsername(username string) (*User, error) {
+	s.check()
+	return s.Store.GetUserByUsername(username)
+}
+
+func (s *credentialLockStore) RotatePassword(rotation passwordRotation) (int, error) {
+	s.check()
+	return s.Store.RotatePassword(rotation)
+}
+
+func TestLoginAndAdminResetShareCredentialLock(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	admin, err := env.p.store.GetUserByUsername(env.p.cfg.AdminUsername)
+	if err != nil || admin == nil {
+		t.Fatalf("load admin: %v", err)
+	}
+	checks := 0
+	env.p.store = &credentialLockStore{Store: env.p.store, check: func() {
+		if env.p.adminAuthMu.TryLock() {
+			env.p.adminAuthMu.Unlock()
+			t.Error("credential read or write occurred outside the authentication lock")
+		}
+		checks++
+	}}
+	token := login(t, env.app)
+	status, body := doJSON(t, env.app, http.MethodPost, "/api/users/"+admin.ID+"/password",
+		map[string]string{"new_password": "Reset!2026Example"}, adminHeaders(token))
+	if status != http.StatusOK || checks != 2 {
+		t.Fatalf("password reset status=%d body=%v credential operations=%d", status, body, checks)
+	}
+}
+
+type failingPasswordRotationStore struct {
+	Store
+}
+
+func (s failingPasswordRotationStore) RotatePassword(passwordRotation) (int, error) {
+	return 0, errors.New("password rotation storage unavailable")
+}
+
+func TestPasswordChangeFailureDoesNotReplaceSessionOrCachedHash(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	token := login(t, env.app)
+	before := bytes.Clone(env.p.adminHash())
+	env.p.store = failingPasswordRotationStore{Store: env.p.store}
+	status, body, headers := doJSONErr(t, env.app, http.MethodPost, "/api/auth/password",
+		map[string]string{"old_password": env.p.cfg.AdminPassword, "new_password": "Reset!2026Example"}, adminHeaders(token))
+	if status != http.StatusInternalServerError || body["token"] != nil || headers.Get("Set-Cookie") != "" {
+		t.Fatalf("failed rotation returned status=%d or issued a credential", status)
+	}
+	if _, ok := env.p.verifyAdminToken(token); !ok || !bytes.Equal(env.p.adminHash(), before) {
+		t.Fatal("failed rotation changed the existing session or in-memory password hash")
 	}
 }
 
@@ -486,6 +541,56 @@ func TestAuthAnyMCPBillingUnits(t *testing.T) {
 	status, _, _ = doJSONErr(t, app, http.MethodPost, "/web-tool/MCP/", json.RawMessage(mcpSearchBody), keyHeaders(key))
 	if status != http.StatusOK || quotaUsedToday(t, env.app, key) != 10 {
 		t.Fatalf("case-insensitive MCP route did not record its usage: status=%d", status)
+	}
+}
+
+func TestAuthAnyMCPDoesNotChargeErrorResponses(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	token := login(t, env.app)
+	_, key := createKey(t, env, token, "mcp-errors", 0)
+
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"invalid params"}}`,
+		`{"jsonrpc":"2.0","id":2,"result":{"content":[],"isError":true}}`,
+	} {
+		app := fiber.New()
+		app.Post("/web-tool/mcp", env.p.AuthAny(), func(c *fiber.Ctx) error {
+			return c.JSON(json.RawMessage(body))
+		})
+		status, _, _ := doJSONErr(t, app, http.MethodPost, "/web-tool/mcp", json.RawMessage(mcpSearchBody), keyHeaders(key))
+		if status != http.StatusOK {
+			t.Fatalf("MCP error envelope: status=%d", status)
+		}
+		if used := quotaUsedToday(t, env.app, key); used != 0 {
+			t.Fatalf("MCP error envelope charged %v units", used)
+		}
+	}
+}
+
+func TestAuthAnyMCPValidatesParamsBeforeQuota(t *testing.T) {
+	env := newTestEnv(t, 200, false)
+	token := login(t, env.app)
+	keyID, key := createKey(t, env, token, "mcp-invalid-args", 1)
+	if err := env.p.ChargeUsage(keyID, 1, "/web-tool/mcp", http.StatusOK, 0); err != nil {
+		t.Fatal(err)
+	}
+	app := fiber.New()
+	if err := mcp.Register(app.Group("/web-tool"), env.p.AuthAny(), mcp.Deps{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []string{
+		strings.Replace(mcpSearchBody, `"query":"golang"`, `"query":""`, 1),
+		strings.Replace(mcpCheckBody, `"https://a.example.com/"`, `""`, 1),
+		strings.Replace(mcpCheckBody, `"https://a.example.com/"`, `"invalid-url"`, 1),
+	} {
+		status, body, _ := doJSONErr(t, app, http.MethodPost, "/web-tool/mcp", json.RawMessage(request), keyHeaders(key))
+		rpcError, _ := body["error"].(map[string]any)
+		if status != http.StatusOK || rpcError["code"] != float64(-32602) {
+			t.Fatalf("expected MCP parameter error, got status=%d body=%v", status, body)
+		}
+	}
+	if used := quotaUsedToday(t, env.app, key); used != 1 {
+		t.Fatalf("quota changed after invalid MCP calls: got %v, want 1", used)
 	}
 }
 
@@ -790,27 +895,33 @@ func TestSecurityConfigNormalization(t *testing.T) {
 }
 
 func TestMCPToolUnitsParsing(t *testing.T) {
-	if got := mcpToolUnits([]byte(mcpSearchBody)); got != 1 {
+	if got, _ := mcpToolUnits([]byte(mcpSearchBody)); got != 1 {
 		t.Fatalf("web_search units=%d, want 1", got)
 	}
-	if got := mcpToolUnits([]byte(mcpCheckBody)); got != 8 {
+	if got, _ := mcpToolUnits([]byte(mcpCheckBody)); got != 8 {
 		t.Fatalf("check_indexed 2 URLs × default = %d, want 8", got)
 	}
 	custom := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_indexed","arguments":{"urls":["https://a.example.com/"],"engines":["baidu","bing"]}}}`
-	if got := mcpToolUnits([]byte(custom)); got != 2 {
+	if got, _ := mcpToolUnits([]byte(custom)); got != 2 {
 		t.Fatalf("check_indexed 1 URL × 2 engines = %d, want 2", got)
 	}
 	alias := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_indexed","arguments":{"urls":["https://a.example.com/"],"engines":["360"]}}}`
-	if got := mcpToolUnits([]byte(alias)); got != 1 {
+	if got, _ := mcpToolUnits([]byte(alias)); got != 1 {
 		t.Fatalf("alias 360 engines sizing = %d, want 1", got)
 	}
-	if got := mcpToolUnits([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_quota"}}`)); got != 0 {
+	for _, engines := range []string{`["unknown"]`, `["baidu",""]`, `[]`} {
+		body := strings.Replace(alias, `["360"]`, engines, 1)
+		if got, _ := mcpToolUnits([]byte(body)); got != 0 {
+			t.Errorf("invalid engines %s reserve %d units, want 0", engines, got)
+		}
+	}
+	if got, _ := mcpToolUnits([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_quota"}}`)); got != 0 {
 		t.Fatalf("get_quota must be free, got %d", got)
 	}
-	if got := mcpToolUnits([]byte("{not json")); got != 0 {
+	if got, _ := mcpToolUnits([]byte("{not json")); got != 0 {
 		t.Fatalf("malformed body must be free, got %d", got)
 	}
-	if got := mcpToolUnits(nil); got != 0 {
+	if got, _ := mcpToolUnits(nil); got != 0 {
 		t.Fatalf("empty body must be free, got %d", got)
 	}
 	if !strings.Contains(mcpCheckBody, "check_indexed") {

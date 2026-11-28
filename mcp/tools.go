@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/xuboboo/web2api/core"
 )
 
 // Tool names (contract C — the four tools; naming must stay in sync with
@@ -36,7 +38,7 @@ const (
 
 // maxCheckURLs mirrors the platform contract maximum for one synchronous
 // check batch; larger batches become an async job.
-const maxCheckURLs = 20
+const maxCheckURLs = core.MaxIndexCheckURLs
 
 // maxJobURLs mirrors index_jobs.max_urls (the per-job ceiling).
 const maxJobURLs = 5000
@@ -180,6 +182,62 @@ func toolSpecs() []map[string]any {
 // rawArgs is a parsed arguments object.
 type rawArgs map[string]json.RawMessage
 
+func parseToolCallParams(raw json.RawMessage) (string, rawArgs, error) {
+	var params struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &params); err != nil {
+			return "", nil, fmt.Errorf("params must be an object with name and arguments")
+		}
+	}
+	if strings.TrimSpace(params.Name) == "" {
+		return "", nil, fmt.Errorf("name is required")
+	}
+	var args rawArgs
+	if len(params.Arguments) > 0 {
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			return "", nil, fmt.Errorf("arguments must be an object")
+		}
+	}
+	return params.Name, args, nil
+}
+
+// ToolQuotaRequest describes a validated call that may reserve API key quota.
+type ToolQuotaRequest struct {
+	Search   bool
+	URLCount int
+	Engines  []string
+	Async    bool
+}
+
+// ParseToolQuotaRequest leaves invalid and unbilled calls for the RPC handler.
+func ParseToolQuotaRequest(body []byte) ToolQuotaRequest {
+	var req rpcRequest
+	if json.Unmarshal(body, &req) != nil || req.Method != "tools/call" {
+		return ToolQuotaRequest{}
+	}
+	if (req.JSONRPC != "" && req.JSONRPC != "2.0") || len(req.ID) == 0 || string(req.ID) == "null" {
+		return ToolQuotaRequest{}
+	}
+	name, args, err := parseToolCallParams(req.Params)
+	if err != nil {
+		return ToolQuotaRequest{}
+	}
+	switch name {
+	case toolWebSearch:
+		if _, _, _, err := parseWebSearchArgs(args); err == nil {
+			return ToolQuotaRequest{Search: true}
+		}
+	case toolCheckIndexed:
+		if urls, engines, err := parseCheckIndexedArgs(args); err == nil {
+			return ToolQuotaRequest{URLCount: len(urls), Engines: engines, Async: len(urls) > maxCheckURLs}
+		}
+	}
+	return ToolQuotaRequest{}
+}
+
 // parseWebSearchArgs validates web_search arguments:
 //
 //	query  required, non-empty string
@@ -248,6 +306,11 @@ func parseCheckIndexedArgs(args rawArgs) (urls []string, engines []string, err e
 	for i, u := range urls {
 		if strings.TrimSpace(u) == "" {
 			return nil, nil, fmt.Errorf("urls[%d] must not be empty", i)
+		}
+	}
+	if len(urls) <= maxCheckURLs {
+		if _, validationErr := core.ValidateIndexCheckURLs(urls); validationErr != nil {
+			return nil, nil, fmt.Errorf("%s", validationErr.Message)
 		}
 	}
 

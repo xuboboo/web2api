@@ -148,6 +148,8 @@ type Store interface {
 	GetUserByUsername(username string) (*User, error)
 	PutUser(u *User) error
 	DeleteUser(id string) (bool, error)
+	// RotatePassword commits the credential, session revocations, and optional replacement session together.
+	RotatePassword(rotation passwordRotation) (int, error)
 
 	// IP/CIDR blacklist (bucket blacklist; JSON fallback mirrors it).
 	ListBlacklist() ([]BlacklistEntry, error)

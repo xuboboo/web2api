@@ -59,6 +59,25 @@ func TestNormalizeProxyURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequestProxyURLRequiresPublicLiteral(t *testing.T) {
+	for _, raw := range []string{
+		"http://127.0.0.1:8080",
+		"socks5://10.0.0.5:1080",
+		"http://169.254.1.1",
+		"http://[::ffff:127.0.0.1]",
+		"https://proxy.example",
+	} {
+		if _, err := normalizeRequestProxyURL(raw); err == nil {
+			t.Errorf("accepted request proxy %q", raw)
+		}
+	}
+	for _, raw := range []string{"http://1.1.1.1:8080", "socks5://[2606:4700:4700::1111]:1080"} {
+		if got, err := normalizeRequestProxyURL(raw); err != nil || got != raw {
+			t.Errorf("normalizeRequestProxyURL(%q) = %q, %v", raw, got, err)
+		}
+	}
+}
+
 func TestNormalizeProxiesConfigDefaultsAndDeduplicates(t *testing.T) {
 	cfg, err := NormalizeProxiesConfig(ProxiesConfig{
 		Global: " HTTP://proxy-global:8080 ",

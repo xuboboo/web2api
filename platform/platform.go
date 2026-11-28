@@ -386,19 +386,24 @@ func (p *Platform) Close() error {
 	return errors.Join(errs...)
 }
 
-// UsesDefaultAdminPassword reports whether the effective credentials are still
-// the shipped public default. A password changed through the console sets the
-// custom marker and stays custom even if the default string is later restored
-// in config.
-func (p *Platform) UsesDefaultAdminPassword() bool {
-	if p == nil || p.store == nil {
-		return false
+// UsesDefaultAdminPassword checks the credentials that login actually accepts,
+// including persisted administrators whose names differ from the config.
+func (p *Platform) UsesDefaultAdminPassword() (bool, error) {
+	users, err := p.store.ListUsers()
+	if err != nil {
+		return false, err
 	}
-	custom, err := p.store.GetSetting(settingAdminPasswordCustom)
-	if err == nil && len(custom) > 0 {
-		return false
+	password := DefaultPlatformConfig().AdminPassword
+	if len(users) == 0 {
+		return bcrypt.CompareHashAndPassword(p.adminHash(), []byte(password)) == nil, nil
 	}
-	return p.cfg.AdminPassword == DefaultPlatformConfig().AdminPassword
+	for i := range users {
+		user := &users[i]
+		if user.Role == RoleAdmin && user.Status == UserStatusActive && verifyUserPassword(user, password) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // StoreKind reports the active storage backend: "bbolt" or "json" (fallback).

@@ -319,6 +319,9 @@ func maskedProxyForLog(proxyURL string) string {
 // Bind each cobra flag to its associated viper configuration (config file and environment variable)
 func bindFlags(cmd *cobra.Command, vpr *viper.Viper) {
 	cmd.Flags().VisitAll(func(flg *pflag.Flag) {
+		if cmd.Name() == "fingerprint-check" && cmd.LocalNonPersistentFlags().Lookup(flg.Name) == flg {
+			return // Probe arguments belong to the local command, outside service configuration.
+		}
 		configName, ok := flagToConfigKey[flg.Name]
 		if !ok {
 			configName = "app." + flg.Name
@@ -732,7 +735,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&config.App.IsLeaveHead, "leave", "", false, "Leave browser and tabs opened after search is made")
 	RootCmd.PersistentFlags().StringVarP(&config.Config2Capcha.ApiKey, "2captcha_key", "", "", "2 captcha api key")
 	RootCmd.PersistentFlags().StringVarP(&config.Proxies.Global, "proxy", "x", "", "Force a single proxy for all engines (same as proxies.global)")
-	RootCmd.PersistentFlags().BoolVar(&config.App.DebugEndpoints, "debug-endpoints", false, "Enable debug-only HTTP endpoints")
+	RootCmd.PersistentFlags().BoolVar(&config.App.DebugEndpoints, "debug-endpoints", false, "Deprecated: use the local fingerprint-check command")
 	RootCmd.PersistentFlags().BoolVarP(&config.Server.Insecure, "insecure", "k", false, "Allow insecure TLS connections")
 	RootCmd.PersistentFlags().IntVar(&config.Cache.TTLSeconds, "cache_ttl", 300, "Cache TTL in seconds (0 to disable)")
 	RootCmd.PersistentFlags().IntVar(&config.Cache.MaxSize, "cache_max_size", 1000, "Maximum number of cached responses")

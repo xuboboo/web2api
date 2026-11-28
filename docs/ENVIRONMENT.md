@@ -61,7 +61,7 @@ environment:
 | `app.leakless` | `WEB2API_APP_LEAKLESS` | false | 否 | 防僵尸进程模式（容器内由 tini 负责） |
 | `app.block_resources` | `WEB2API_APP_BLOCK_RESOURCES` | "" | 否 | 拦截的资源类型（加速） |
 | `app.block_trackers` | `WEB2API_APP_BLOCK_TRACKERS` | false | 否 | 拦截追踪器 |
-| `app.debug_endpoints` | `WEB2API_APP_DEBUG_ENDPOINTS` | false | 否 | 开启 /debug/fingerprint-check；生产必须关闭 |
+| `app.debug_endpoints` | `WEB2API_APP_DEBUG_ENDPOINTS` | false | 否 | 兼容旧配置。指纹诊断仅可通过本机 `web2api fingerprint-check` 运行。 |
 | `app.max_processes` | `WEB2API_APP_MAX_PROCESSES` | 4 | 是 | 浏览器进程池上限，直接决定并发与内存 |
 | `app.idle_ttl` | `WEB2API_APP_IDLE_TTL` | "10m" | 否 | 空闲浏览器回收时间 |
 | `app.max_concurrent_requests` | `WEB2API_APP_MAX_CONCURRENT_REQUESTS` | 0 | 是 | 在途请求上限，0=不限（不建议） |

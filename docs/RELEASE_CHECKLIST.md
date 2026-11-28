@@ -23,7 +23,7 @@ KEY=<新签发的 API Key>
 | A3 | `secret.key` 权限 0600 | `ls -l $DATA/secret.key` | `-rw-------` | ☑（E60：恢复后的 named volume 中 `secret.key` 为 0600；生产部署仍需核验运行用户） |
 | A4 | 仓库/镜像内无运行态数据 | 最终镜像内检查 `/usr/src/app/data` 与 `web2api.db`/`secret.key` | `data/` 为空初始化目录；无数据库、密钥、审计日志或任务文件 | ☑（E60：数据目录故意预建并由 `chrome` 拥有，内容为空；CI 已增加契约检查） |
 | A5 | 反代后 `trust_proxy_headers` 已开 | 看配置 + 登录失败日志里的 IP | 是真实客户端 IP | ☑（F-52：仅受信 `trusted_proxies` 的 `X-Real-IP` 生效；跨容器 HTTPS 伪造头后，审计仍记录真实调用方 IP，E63） |
-| A6 | `app.debug_endpoints: false` | `curl -s -o /dev/null -w '%{http_code}' $BASE/debug/fingerprint-check` | 404 | ☐ |
+| A6 | 指纹诊断只在本机运行 | `curl -s -o /dev/null -w '%{http_code}' $BASE/debug/fingerprint-check` | 404 | ☐ |
 | A7 | compose 已提供 `ADMIN_PASSWORD` | `docker compose config` | 解析通过（缺失时明确报错） | ☑（E28：必需变量已实测；缺值 exit 1） |
 | A8 | `.env` / `config-*.yaml` 未入库 | `git ls-files | grep -E '^\.env$\|config-audit'` | 空 | ☑（`.env` 已进 `.gitignore` 与 `.dockerignore`） |
 | A9 | `metrics_token` 已设或仅本机采集 | 从外部 `curl $BASE/metrics` | 401 | ☐ |

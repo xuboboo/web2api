@@ -35,7 +35,7 @@ app:
   idle_ttl: 45s # close idle Chrome quickly: saves ~300MB steady-state on small servers
 
 proxies:
-  allow_request_proxy_url: false # B-03 出厂安全姿态(默认翻转): 调用方自带代理 URL 会放大算力滥用面,非必要保持关闭;如需自带代理请显式打开并限制来源
+  allow_request_proxy_url: false # 调用方指定的代理须使用公网 IP 字面地址。域名代理可由管理员配置到代理池。
   # Force a single proxy for all engines.
   # Same behavior as passing --proxy on the CLI.
   #global: http://127.0.0.1:8080
