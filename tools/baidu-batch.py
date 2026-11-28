@@ -9,7 +9,7 @@
 用法：
   python3 baidu-batch.py --urls urls.txt                 # 默认每批 8 条、批间隔 300s、日上限 200
   python3 baidu-batch.py --urls urls.txt --batch 5 --gap 600
-  python3 baidu-batch.py --url https://a.com --url https://b.com --batch 2 --gap 5 --daily-max 10
+  python3 baidu-batch.py --url https://a.com --url https://b.com --batch 2 --gap 5
 
 接口：POST /web-tool/v1/index/check（engines=["baidu"]，同步 ≤20 条）
 依赖：仅 Python3 标准库；API Key 从 --api-key、环境变量 W2A_KEY、
@@ -139,7 +139,7 @@ def main():
     ap.add_argument("--api-key", default=os.environ.get("W2A_KEY"))
     ap.add_argument("--batch", type=int, default=8, help="每批条数，建议 5-10，最大 20")
     ap.add_argument("--gap", type=int, default=300, help="批间隔秒数，默认 300")
-    ap.add_argument("--daily-max", type=int, default=200, help="当日上限条数，默认 200")
+    ap.add_argument("--daily-max", type=int, default=0, help="当日上限条数；0=不限（默认），需要限流时传正整数")
     ap.add_argument("--max-wait", type=int, default=2700, help="等百度冷却的上限秒数，默认 45 分钟")
     ap.add_argument("--timeout", type=int, default=300, help="单批请求超时秒数")
     ap.add_argument("--state", default=STATE_DEFAULT)
@@ -171,13 +171,14 @@ def main():
     done = set(state["done"])
     pending = [u for u in urls if u not in done]
     log(f"共 {len(urls)} 条，已完成 {len(urls)-len(pending)} 条，待查 {len(pending)} 条；"
-        f"每批 {args.batch} 条，间隔 {args.gap}s，日上限 {args.daily_max}")
+        f"每批 {args.batch} 条，间隔 {args.gap}s，日上限 {args.daily_max if args.daily_max > 0 else '不限'}")
 
-    today_left = args.daily_max - state["count"]
-    if today_left <= 0:
-        log(f"今日已达上限 {args.daily_max} 条，明天再跑（state: {args.state}）")
-        return 0
-    pending = pending[:today_left]
+    if args.daily_max > 0:
+        today_left = args.daily_max - state["count"]
+        if today_left <= 0:
+            log(f"今日已达上限 {args.daily_max} 条，明天再跑（state: {args.state}）")
+            return 0
+        pending = pending[:today_left]
 
     if args.dry_run:
         for i in range(0, len(pending), args.batch):
@@ -228,7 +229,7 @@ def main():
             state["count"] += len(batch)
             save_state(args.state, state)
             log(f"第 {batch_no} 批完成：计费 {body.get('meta',{}).get('units')} 单元；"
-                f"今日累计 {state['count']}/{args.daily_max}")
+                f"今日累计 {state['count']}/{args.daily_max if args.daily_max > 0 else '不限'}")
         elif code == 429:
             captcha = True
             log(f"触发风控（429）：{json.dumps(body, ensure_ascii=False)[:200]}")

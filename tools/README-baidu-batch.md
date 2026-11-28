@@ -9,7 +9,7 @@
 | 每批条数 | 8（5–10） | 同步接口上限 20；批越大越接近连续压测 |
 | 批间隔 | 300 秒 | 最低不要低于 120 秒 |
 | 单条节奏 | 12 秒/条 | config.yaml `baidu.rate_requests: 5`、`rate_burst: 1` |
-| 日上限 | 200 条（首周 100） | 按 1/130 触发率估算，约 1–2 次验证码/天 |
+| 日上限 | **默认不限量** | 需要时用 `--daily-max N` 自行限制；不限额时靠批间隔和验证码暂停控制节奏 |
 | 验证码后暂停 | 10 分钟（连续第 2 次 30 分钟） | 与内置冷却 2/10/30 档位配合 |
 | 等冷却上限 | 45 分钟 | 超过则停止，进度已存，可重跑续跑 |
 
@@ -23,11 +23,14 @@
 # 先看计划（不发请求）
 python3 /opt/web2api/tools/baidu-batch.py --urls urls.txt --batch 8 --gap 300 --dry-run
 
-# 正式跑（默认参数即推荐值；自动等冷却、断点续跑、按日限流）
+# 正式跑（默认参数即推荐值；自动等冷却、断点续跑，默认不限量）
 python3 /opt/web2api/tools/baidu-batch.py --urls urls.txt
 
 # 自定义
-python3 /opt/web2api/tools/baidu-batch.py --urls urls.txt --batch 5 --gap 600 --daily-max 100
+python3 /opt/web2api/tools/baidu-batch.py --urls urls.txt --batch 5 --gap 600
+
+# 如需限制当日条数（默认不限）
+python3 /opt/web2api/tools/baidu-batch.py --urls urls.txt --daily-max 100
 ```
 
 - API Key 默认读 `/root/.web2api-e2e-key`，也可 `--api-key` 或 `W2A_KEY`。
