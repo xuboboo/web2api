@@ -178,7 +178,7 @@ func (s *IndexJobStore) SaveMeta(job *IndexJob) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dir := s.jobDir(job.ID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(job)
@@ -186,7 +186,7 @@ func (s *IndexJobStore) SaveMeta(job *IndexJob) error {
 		return err
 	}
 	tmp := filepath.Join(dir, "job.json.tmp")
-	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, "job.json"))
@@ -197,14 +197,14 @@ func (s *IndexJobStore) AppendResult(jobID string, row IndexCheckURLResult) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dir := s.jobDir(jobID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(row)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "results.jsonl"), os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, "results.jsonl"), os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}

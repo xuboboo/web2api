@@ -265,7 +265,7 @@ func (m *IndexJobManager) Start(ctx context.Context) {
 			if runCtx.Err() != nil {
 				return
 			}
-			m.runJob(runCtx, id)
+			m.runJobRecovered(runCtx, id)
 		}
 		m.loop(runCtx)
 	}()
@@ -515,8 +515,19 @@ func (m *IndexJobManager) submit(ctx context.Context, urls []string, engines []s
 		if len(u) > DefaultIndexJobMaxURLBytes {
 			return nil, errInvalidParam(fmt.Sprintf("URL exceeds %d bytes", DefaultIndexJobMaxURLBytes))
 		}
-		if _, ok := indexURLKeyFrom(u); !ok {
+		// Same URL rules as the synchronous path (ValidateIndexCheckURLs): only
+		// http/https and a dot-separated host. Without this the >20-entry async
+		// entrances (REST >20, MCP, console) accepted URLs the sync contract
+		// rejects (ftp://, single-label hosts) and billed units for them.
+		if scheme, bad := unsupportedScheme(u); bad {
+			return nil, errInvalidParam(fmt.Sprintf("%q uses unsupported scheme %q (only http and https can be indexed)", u, scheme))
+		}
+		key, ok := indexURLKeyFrom(u)
+		if !ok {
 			return nil, errInvalidParam(fmt.Sprintf("%q is not a valid absolute URL", u))
+		}
+		if !strings.Contains(strings.SplitN(key.host, ":", 2)[0], ".") {
+			return nil, errInvalidParam(fmt.Sprintf("%q has no public domain (a dot-separated host is required)", u))
 		}
 		seen[u] = true
 		clean = append(clean, u)
@@ -826,7 +837,17 @@ func (m *IndexJobManager) cancelJob(id, ownerKeyID string) (bool, error) {
 	m.residentURLCount.Add(-count)
 	m.evictTerminal()
 	if m.opts.OnFinished != nil {
-		go m.opts.OnFinished(finished)
+		hook := m.opts.OnFinished
+		go func() {
+			// Public seam (SetIndexJobFinishedHook): a panicking hook must not
+			// take the process down.
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					WithRequest(context.Background()).Errorf("Recovered panic in index job OnFinished hook: %v", recovered)
+				}
+			}()
+			hook(finished)
+		}()
 	}
 	return true, nil
 }
@@ -837,9 +858,36 @@ func (m *IndexJobManager) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case id := <-m.queue:
-			m.runJob(ctx, id)
+			m.runJobRecovered(ctx, id)
 		}
 	}
+}
+
+// runJobRecovered runs one job with a panic-to-failure guard. RunIndexCheckUnits
+// already guards each (URL × engine) unit, but the job state machine also
+// touches untrusted content indirectly; without this guard one unexpected panic
+// would kill the runner goroutine — and with it the process. The job is marked
+// failed so accounting (active jobs, resident URL budget) is released; queued
+// work continues with the next job.
+func (m *IndexJobManager) runJobRecovered(ctx context.Context, id string) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			WithRequest(ctx).WithField("job_id", id).
+				Errorf("Recovered panic in index job runner: %v", recovered)
+			m.mu.Lock()
+			st, ok := m.jobs[id]
+			m.mu.Unlock()
+			if ok {
+				st.mu.Lock()
+				terminal := st.job.Status.Terminal()
+				st.mu.Unlock()
+				if !terminal {
+					m.finish(st, IndexJobFailed, "internal error")
+				}
+			}
+		}
+	}()
+	m.runJob(ctx, id)
 }
 
 // runJob drains one job to completion, terminal status, or cancellation.
@@ -1101,7 +1149,17 @@ func (m *IndexJobManager) finish(st *jobState, status IndexJobStatus, lastErr st
 	m.residentURLCount.Add(-count)
 	m.evictTerminal()
 	if m.opts.OnFinished != nil {
-		go m.opts.OnFinished(finished)
+		hook := m.opts.OnFinished
+		go func() {
+			// Public seam (SetIndexJobFinishedHook): a panicking hook must not
+			// take the process down.
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					WithRequest(context.Background()).Errorf("Recovered panic in index job OnFinished hook: %v", recovered)
+				}
+			}()
+			hook(finished)
+		}()
 	}
 }
 
