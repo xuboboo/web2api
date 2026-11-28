@@ -319,7 +319,7 @@ func maskedProxyForLog(proxyURL string) string {
 // Bind each cobra flag to its associated viper configuration (config file and environment variable)
 func bindFlags(cmd *cobra.Command, vpr *viper.Viper) {
 	cmd.Flags().VisitAll(func(flg *pflag.Flag) {
-		if cmd.Name() == "fingerprint-check" && cmd.LocalNonPersistentFlags().Lookup(flg.Name) == flg {
+		if isLocalProbeFlag(cmd, flg) {
 			return // Probe arguments belong to the local command, outside service configuration.
 		}
 		configName, ok := flagToConfigKey[flg.Name]
@@ -340,6 +340,21 @@ func bindFlags(cmd *cobra.Command, vpr *viper.Viper) {
 			vpr.Set(configName, val)
 		}
 	})
+}
+
+// isLocalProbeFlag reports whether flg is a per-invocation argument of a
+// one-shot command that never reads it back from the service config. Binding
+// such flags into viper leaks them into AllKeys() as unknown "app.*" keys: the
+// startup report then warns on every invocation, and WEB2API_STRICT_CONFIG=1
+// makes the command fail before it can run (search's limit/lang/region/...
+// options all read their flag variables directly).
+func isLocalProbeFlag(cmd *cobra.Command, flg *pflag.Flag) bool {
+	switch cmd.Name() {
+	case "fingerprint-check", "search":
+		return cmd.LocalNonPersistentFlags().Lookup(flg.Name) == flg
+	default:
+		return false
+	}
 }
 
 func parseFlagValue(flg *pflag.Flag) (interface{}, error) {

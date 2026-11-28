@@ -50,6 +50,15 @@ func TestIndexJobSubmitValidation(t *testing.T) {
 	if _, apiErr := m.Submit(context.Background(), []string{"not a url"}, nil); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
 		t.Fatalf("invalid url: got %+v", apiErr)
 	}
+	// Async submissions enforce the same URL contract as the synchronous path
+	// (ValidateIndexCheckURLs): only http/https and a dot-separated host.
+	// Before this was enforced in manager.submit, the >20-entry REST/MCP/
+	// console entrances accepted URLs the sync contract rejects.
+	for _, bad := range []string{"ftp://example.test/x", "file:///C:/x", "http://localhost:8080/x", "http://intranet/x"} {
+		if _, apiErr := m.Submit(context.Background(), []string{bad}, nil); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
+			t.Fatalf("async submit must reject %q like the sync path: got %+v", bad, apiErr)
+		}
+	}
 	if _, apiErr := m.Submit(t.Context(), []string{"https://example.test/a"}, []string{"invalid-engine"}); apiErr == nil || apiErr.Reason != "INVALID_PARAM" {
 		t.Fatalf("invalid engine: got %+v", apiErr)
 	}

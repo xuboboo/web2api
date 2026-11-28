@@ -700,6 +700,11 @@ func logSecurityPosture(allowOrigins string) {
 
 	if !isLoopbackHost(config.Server.Host) {
 		logrus.Warn("SECURITY: 服务绑定在非 loopback 地址(" + config.Server.Host + ") — API 可被网络内任意主机访问;单机部署请改绑 127.0.0.1,或在前置反代上限制来源")
+		// serve 只提供明文 HTTP 监听(无 ListenTLS)。未配置受信反代时无法确认
+		// 传输是否经 TLS 终结,把凭据明文暴露的风险在启动横幅里说破(审计 P2)。
+		if !config.Security.TrustProxyHeaders {
+			logrus.Warn("SECURITY: 服务仅提供明文 HTTP 传输 — 非 loopback 部署时管理员口令、JWT 与 X-API-Key 均以明文过网;生产环境务必前置 TLS 反代,并设置 security.trust_proxy_headers=true 使 HSTS 与安全 Cookie 生效")
+		}
 	}
 	if !config.Security.DataPlaneAuth {
 		logrus.Warn("SECURITY: 数据面鉴权未开启(security.data_plane_auth=false)—— /{engine}/search 与 /stats/* 对任何来源匿名可用,浏览器可达的算力放大器;生产环境请开启数据面鉴权")
@@ -928,6 +933,13 @@ func browserLaunchURL(requestProxyURL string) string {
 // get returns a Chrome that can route the supplied request URL. For
 // authenticated HTTP(S) proxies it returns the dedicated Chrome (launching one
 // if needed). For everything else it returns the shared "direct" Chrome.
+//
+// The Chrome launch happens OUTSIDE the pool mutex: starting a process takes
+// seconds and every engine request funnels through this lock, so launching
+// under the lock serialized the whole service behind one cold start (and let
+// request-supplied proxy identities amplify that into a sustained stall).
+// Two concurrent cold starts for the same key each launch a browser; the
+// loser is closed and the winner is shared.
 func (p *browserPool) get(requestProxyURL string) (*core.Browser, error) {
 	key := browserPoolKey(requestProxyURL)
 	launchURL := ""
@@ -936,13 +948,11 @@ func (p *browserPool) get(requestProxyURL string) (*core.Browser, error) {
 	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if entry, ok := p.browsers[key]; ok && entry.browser != nil {
 		entry.lastUsedAt = time.Now()
+		p.mu.Unlock()
 		return entry.browser, nil
 	}
-
 	// Use any pre-bound launchProxyURL on the existing entry (e.g. legacy
 	// global proxy) when the caller didn't supply one.
 	if entry, ok := p.browsers[key]; ok && entry.browser == nil {
@@ -950,6 +960,7 @@ func (p *browserPool) get(requestProxyURL string) (*core.Browser, error) {
 			launchURL = entry.launchProxyURL
 		}
 	}
+	p.mu.Unlock()
 
 	opts := p.base
 	opts.ProxyURL = launchURL
@@ -958,12 +969,21 @@ func (p *browserPool) get(requestProxyURL string) (*core.Browser, error) {
 		return nil, err
 	}
 
+	p.mu.Lock()
+	if existing, ok := p.browsers[key]; ok && existing.browser != nil {
+		// Another goroutine won the race for this key; discard our launch.
+		p.mu.Unlock()
+		_ = browser.Close()
+		existing.lastUsedAt = time.Now()
+		return existing.browser, nil
+	}
 	p.browsers[key] = &pooledBrowser{
 		browser:        browser,
 		launchProxyURL: launchURL,
 		lastUsedAt:     time.Now(),
 	}
 	p.evictLRULocked()
+	p.mu.Unlock()
 	return browser, nil
 }
 

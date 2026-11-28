@@ -758,38 +758,7 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 		go func() {
 			defer wg.Done()
 			for ui := range urls {
-				startedAt := time.Now()
-				var outcome IndexCheckEngineOutcome
-
-				gate, gateErr := rs.GateEngine(ctx, engine.Name())
-				switch {
-				case gateErr != nil:
-					outcome = indexCheckErrorOutcome(ctx, gateErr)
-				case gate.Blocked():
-					// 契约 A batch semantics: cooling engines answer per-unit
-					// engine_cooldown errors; the other engines still judge.
-					outcome = cooldownUnitOutcome(gate)
-				default:
-					serp, runtimeQ, err := rs.CheckIndexWithProtection(ctx, engine, out[ui].URL)
-					if gate.IsProbe() {
-						// The probe must be settled exactly once with the real
-						// search outcome: nil means the engine answered (cooldown
-						// lifts), any error postpones it. There is no early return
-						// between the grant and here, so no defensive default is
-						// needed (server.go has one because it can bail out early).
-						gate.FinishProbe(err)
-					}
-					if err != nil {
-						outcome = indexCheckErrorOutcome(ctx, err)
-					} else {
-						success := EvaluateIndexSERP(ctx, out[ui].URL, serp, IndexResolveOptions{
-							Query:      runtimeQ,
-							TitleMatch: titleMatch,
-						})
-						outcome = IndexCheckEngineOutcome{success: &success}
-					}
-				}
-				outcome.success.setTookIfSuccess(time.Since(startedAt).Milliseconds())
+				outcome := runIndexCheckUnit(ctx, rs, engine, titleMatch, out[ui].URL)
 				writeMu.Lock()
 				out[ui].Engines[engine.Name()] = outcome
 				writeMu.Unlock()
@@ -798,6 +767,51 @@ func RunIndexCheckUnits(ctx context.Context, rs *ResilientSearcher, engines []Se
 	}
 	wg.Wait()
 	return out
+}
+
+// runIndexCheckUnit evaluates one (URL × engine) unit. The recover here is the
+// per-unit safety net for parsing/evaluation of untrusted remote SERP HTML and
+// fetched titles (goquery, normalization): these worker goroutines run outside
+// the fiber recover middleware, so without it one parse panic would kill the
+// whole process on both the synchronous and the async job path.
+func runIndexCheckUnit(ctx context.Context, rs *ResilientSearcher, engine SearchEngine, titleMatch bool, url string) (outcome IndexCheckEngineOutcome) {
+	startedAt := time.Now()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			outcome = indexCheckErrorOutcome(ctx, RecoverEnginePanicWithContext(ctx, engine.Name(), recovered, nil))
+		}
+		outcome.success.setTookIfSuccess(time.Since(startedAt).Milliseconds())
+	}()
+
+	gate, gateErr := rs.GateEngine(ctx, engine.Name())
+	switch {
+	case gateErr != nil:
+		outcome = indexCheckErrorOutcome(ctx, gateErr)
+	case gate.Blocked():
+		// 契约 A batch semantics: cooling engines answer per-unit
+		// engine_cooldown errors; the other engines still judge.
+		outcome = cooldownUnitOutcome(gate)
+	default:
+		serp, runtimeQ, err := rs.CheckIndexWithProtection(ctx, engine, url)
+		if gate.IsProbe() {
+			// The probe must be settled exactly once with the real
+			// search outcome: nil means the engine answered (cooldown
+			// lifts), any error postpones it. There is no early return
+			// between the grant and here, so no defensive default is
+			// needed (server.go has one because it can bail out early).
+			gate.FinishProbe(err)
+		}
+		if err != nil {
+			outcome = indexCheckErrorOutcome(ctx, err)
+		} else {
+			success := EvaluateIndexSERP(ctx, url, serp, IndexResolveOptions{
+				Query:      runtimeQ,
+				TitleMatch: titleMatch,
+			})
+			outcome = IndexCheckEngineOutcome{success: &success}
+		}
+	}
+	return outcome
 }
 
 // engineUsesTitleProbe reports whether engine builds its index-check SERP from

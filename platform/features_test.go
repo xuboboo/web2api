@@ -4,6 +4,9 @@ package platform
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"time"
@@ -284,4 +287,62 @@ func TestLogQueryConfigAndCleanupEndpoints(t *testing.T) {
 	requireStatus(t, status, http.StatusOK, body, "viewer logs")
 	status, body = doJSON(t, env.app, http.MethodPost, "/api/logs/cleanup", nil, adminHeaders(viewerToken))
 	requireStatus(t, status, http.StatusForbidden, body, "viewer logs cleanup")
+}
+
+func countAuditActions(t *testing.T, dir, action string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "audit.log"))
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, `"`+action+`"`) {
+			count++
+		}
+	}
+	return count
+}
+
+// The guard runs before every rate limiter, so a blacklisted client can issue
+// unlimited cheap requests. Audit rows and the bolt hit-counter write used to
+// be per-hit, letting the blocked client flood audit.log's rotation and evict
+// real evidence; they must be sampled while the 403 itself stays per-request.
+func TestBlacklistHitAuditIsSampled(t *testing.T) {
+	env := newTestEnv(t, http.StatusOK, false)
+	app := fiber.New()
+	app.Use(env.p.BlacklistGuard())
+	env.p.RegisterAdmin(app, nil, nil)
+	token := login(t, app)
+
+	status, body := doJSON(t, app, http.MethodPost, "/api/blacklist", map[string]any{
+		"kind": "ip", "value": "0.0.0.0", "reason": "audit sampling", "force": true,
+	}, adminHeaders(token))
+	requireStatus(t, status, http.StatusOK, body, "create blacklist")
+
+	// In-process Fiber tests report 0.0.0.0 as c.IP(): every request below is
+	// denied without ever reaching the rate limiter.
+	const hits = 10
+	for i := 0; i < hits; i++ {
+		status, body = doJSON(t, app, http.MethodGet, "/api/me", nil, adminHeaders(token))
+		requireStatus(t, status, http.StatusForbidden, body, "blacklisted hit")
+	}
+
+	if rows := countAuditActions(t, env.dir, "blacklist.hit"); rows != 1 {
+		t.Fatalf("audit rows for %d blacklisted hits = %d, want 1 (sampled)", hits, rows)
+	}
+	entries, err := env.p.store.ListBlacklist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, e := range entries {
+		total += e.Hits
+	}
+	if total < 1 {
+		t.Fatalf("sampled hit counter not recorded: %+v", entries)
+	}
 }

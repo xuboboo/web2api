@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -716,7 +717,8 @@ func (s *Server) SetStorageKind(kind string) {
 func (s *Server) handleMetrics(c *fiber.Ctx) error {
 	if token := strings.TrimSpace(s.opts.MetricsToken); token != "" {
 		auth := strings.TrimSpace(c.Get(fiber.HeaderAuthorization))
-		if auth != "Bearer "+token {
+		// Constant-time compare so scrape clients cannot time the shared secret.
+		if subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+token)) != 1 {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
 		}
 	} else if !ipIsLoopback(c.IP()) {

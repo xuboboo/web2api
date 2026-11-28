@@ -8,6 +8,7 @@ package platform
 import (
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -112,23 +113,70 @@ func (p *Platform) blacklistMatch(ip string, now time.Time) (*BlacklistEntry, bo
 	return nil, false
 }
 
+// blacklistHitSampleWindow caps how often one entry writes an audit row plus a
+// bbolt hit-counter transaction. The 403 itself is answered on every request —
+// only the diagnostic bookkeeping is sampled.
+const blacklistHitSampleWindow = time.Minute
+
+// blacklistSamplerCap bounds the sampler map; on overflow it resets wholesale
+// (under-counting diagnostics, never affecting the deny decision).
+const blacklistSamplerCap = 1024
+
 // BlacklistGuard rejects blacklisted clients before any other platform
 // middleware runs. Fail-open on storage errors is deliberate: a broken store
 // must not take the whole service offline; the error is logged and audited.
+//
+// The guard runs before every rate limiter (it is the first middleware), so a
+// blacklisted client can issue unlimited cheap requests. Writing an audit row
+// and a bolt transaction per hit let such a client flood audit.log's rotation
+// and evict real evidence, so hit bookkeeping is sampled to one write per
+// entry per window while the accumulated count is still recorded.
 func (p *Platform) BlacklistGuard() fiber.Handler {
+	type hitStamp struct {
+		writtenAt time.Time
+		counted   int64
+	}
+	var (
+		samplerMu sync.Mutex
+		sampler   = map[string]*hitStamp{}
+	)
+	recordHit := func(entryID string) (shouldWrite bool, hitsSince int64) {
+		now := time.Now()
+		samplerMu.Lock()
+		defer samplerMu.Unlock()
+		if len(sampler) >= blacklistSamplerCap {
+			sampler = map[string]*hitStamp{}
+		}
+		st := sampler[entryID]
+		if st == nil {
+			st = &hitStamp{}
+			sampler[entryID] = st
+		}
+		st.counted++
+		if st.writtenAt.IsZero() || now.Sub(st.writtenAt) >= blacklistHitSampleWindow {
+			st.writtenAt = now
+			hits := st.counted
+			st.counted = 0
+			return true, hits
+		}
+		return false, 0
+	}
+
 	return func(c *fiber.Ctx) error {
 		now := time.Now()
 		entry, blocked := p.blacklistMatch(c.IP(), now)
 		if !blocked {
 			return c.Next()
 		}
-		p.auditFrom(c, "", AuditActionBlacklistHit, entry.Value, "403")
-		// Hit counters are diagnostic; a failed update never blocks the deny.
-		if fresh, err := p.store.GetBlacklist(entry.ID); err == nil && fresh != nil {
-			fresh.Hits++
-			hitAt := now
-			fresh.LastHitAt = &hitAt
-			_ = p.store.PutBlacklist(fresh)
+		if shouldWrite, hitsSince := recordHit(entry.ID); shouldWrite {
+			p.auditFrom(c, "", AuditActionBlacklistHit, entry.Value, "403")
+			// Hit counters are diagnostic; a failed update never blocks the deny.
+			if fresh, err := p.store.GetBlacklist(entry.ID); err == nil && fresh != nil {
+				fresh.Hits += hitsSince
+				hitAt := now
+				fresh.LastHitAt = &hitAt
+				_ = p.store.PutBlacklist(fresh)
+			}
 		}
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": "forbidden", "reason": "blacklisted",
